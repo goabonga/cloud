@@ -52,13 +52,13 @@ jobs:
     name: audit
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Pinned by full commit SHA: Plumber's own ruleset flags tag-pinned
       # third-party actions, so anything looser here would be the first
       # finding it reports against itself.
       - name: Run Plumber compliance audit
-        uses: getplumber/plumber@b6fe9f309d4242b82ce83e6e69c563c09792ca97 # v0.4.22
+        uses: getplumber/plumber@d37150cee04d6627497cb4c6a553ef9a2d6c7548 # v0.5.2
         with:
           # `min-points`, not the deprecated `threshold`: the action treats
           # threshold: 100 as unset, so the strict bar we thought we were

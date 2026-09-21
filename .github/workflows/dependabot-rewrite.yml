@@ -89,7 +89,7 @@ jobs:
       # rebase below execs THIS copy, never the PR's.
       - name: Checkout main into trusted/
         if: steps.gate.outputs.skip != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
           path: trusted
@@ -97,7 +97,7 @@ jobs:
       # PR commits: data to be rewritten, never executed.
       - name: Checkout PR head into pr/
         if: steps.gate.outputs.skip != 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # head_sha, not head_branch: pins the rewrite to the exact commits
           # the signal observed, so a Dependabot push landing between signal

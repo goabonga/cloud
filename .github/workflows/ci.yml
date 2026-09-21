@@ -29,7 +29,7 @@ jobs:
     name: validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: goabonga/multicz-action@95e90628797bc7dec0d2ad7d9abc6278f3465ed2 # v1.1.0
@@ -64,7 +64,7 @@ jobs:
       chart_changed: ${{ steps.bypass.outputs.chart_changed || steps.changed.outputs.chart_changed }}
       release_commit: ${{ steps.bypass.outputs.active || 'false' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: goabonga/multicz-action@95e90628797bc7dec0d2ad7d9abc6278f3465ed2 # v1.1.0
@@ -188,7 +188,7 @@ jobs:
     if: needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Check SPDX license headers
         run: |
           python scripts/add_license_header.py --path cmd --types go --check
@@ -209,8 +209,8 @@ jobs:
     if: needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -245,11 +245,11 @@ jobs:
       # fetch-depth: 0 + bump-preview: the production build below is stamped
       # with www/package.json's version, so without the preview a pull request
       # would validate a bundle carrying the previous release's number.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./.github/actions/bump-preview
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -272,13 +272,13 @@ jobs:
     if: needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # Compile against the version the next release will ship, not the last
       # one: `cmd/<component>/version.go` is a bump_files target.
       - uses: ./.github/actions/bump-preview
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -301,18 +301,18 @@ jobs:
     if: needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./.github/actions/bump-preview
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
       - name: Run tests with coverage
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -331,8 +331,8 @@ jobs:
     if: needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -353,8 +353,8 @@ jobs:
     if: needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -375,7 +375,7 @@ jobs:
     if: needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Pinned, not `releases/latest`: a fixed URL whose bytes change is the
       # same class of problem as an unpinned action, and it also makes a
       # scanner behaviour change arrive unannounced in an unrelated pull
@@ -432,8 +432,8 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -466,14 +466,14 @@ jobs:
     if: needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Lint the shared daemon Dockerfile
-        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: packaging/docker/Dockerfile
           format: tty
       - name: Lint the www Dockerfile
-        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: packaging/docker/www.Dockerfile
           format: tty
@@ -514,7 +514,7 @@ jobs:
             cmd_dir: www
             dockerfile: packaging/docker/www.Dockerfile
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # The image carries its version as an OCI label, so it has to be the
@@ -539,9 +539,9 @@ jobs:
         run: |
           set -euo pipefail
           echo "value=$(multicz get '${{ matrix.component }}')" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build ${{ matrix.component }}:ci
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -589,7 +589,7 @@ jobs:
           - infra-controller-manager
           - infra-www
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # No probe: `container` builds every leg on every run, so the artifact is
       # always present, and if its leg failed this job is skipped by
       # `!failure()` before reaching here. A missing artifact is therefore a
@@ -642,7 +642,7 @@ jobs:
           - infra-controller-manager
           - infra-www
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.component }}-sbom
@@ -695,13 +695,13 @@ jobs:
           - infra-container-init
           - terraform-provider-infra
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # The .deb carries the version in its filename and its control file, so
       # it has to be the version the release will publish.
       - uses: ./.github/actions/bump-preview
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -763,7 +763,7 @@ jobs:
             has_unit: "true"
             security_threshold: "75"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # No probe, for the same reason as the sbom job: `deb` builds all eight
       # legs on every run, so a missing artifact means its leg failed - and
       # that already skips this job through `!failure()`.
@@ -795,7 +795,7 @@ jobs:
       && needs.detect.outputs.chart_changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # The chart's appVersion and image tags are multicz bump_files and mirror
@@ -882,7 +882,7 @@ jobs:
       && needs.detect.outputs.chart_changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./.github/actions/bump-preview
@@ -907,7 +907,7 @@ jobs:
           helm template infra charts/infra --namespace infra \
             > .checkov-render/manifests.yaml
           test -s .checkov-render/manifests.yaml
-      - uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
+      - uses: bridgecrewio/checkov-action@444c9db6fa75e2d9c19ebf1fde7322089be9009e # v12.3125.0
         with:
           directory: .checkov-render
           framework: kubernetes
@@ -930,7 +930,7 @@ jobs:
       && needs.detect.outputs.chart_changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./.github/actions/bump-preview
@@ -973,7 +973,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./.github/actions/e2e-stack
@@ -1019,7 +1019,7 @@ jobs:
           - name: www
             port: 8088
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./.github/actions/e2e-stack
@@ -1076,11 +1076,11 @@ jobs:
       bumped: ${{ steps.bump.outputs.bumped }}
       bumped_json: ${{ steps.bump.outputs.bumped_json }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: true
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -1199,18 +1199,18 @@ jobs:
       id-token: write # cosign keyless signing via Sigstore
       actions: write # delete the consumed CI artifacts
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: main
       # No build cache on the publish path. The Go and npm caches are written
       # by pull-request runs, so restoring one here would let a pull request
       # place bytes into a job that signs and pushes release artifacts. Publish
       # compiles from a clean checkout; the minutes are the price of that.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - uses: goabonga/multicz-action@95e90628797bc7dec0d2ad7d9abc6278f3465ed2 # v1.1.0
@@ -1417,13 +1417,13 @@ jobs:
       pages: write
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: main
       - uses: actions/configure-pages@v6
         with:
           enablement: true
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
       - name: Build site
