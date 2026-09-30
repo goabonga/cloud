@@ -51,6 +51,7 @@ run as root.
 | Peering          | a veth pair joining the two VPC bridges |
 | DNS zone/record  | a per-VPC dnsmasq serving the zones' A/AAAA records |
 | Disk             | a backing image, optionally dm-crypt (LUKS) encrypted |
+| Disk file        | the file, written into the disk through the mounts of this host's instances |
 | Security group   | an allow-list iptables chain |
 | WAF policy       | an iptables chain attached inbound to the target |
 | Load balancer    | an IPVS virtual service on a VIP, full-NAT through the node port |
@@ -118,6 +119,18 @@ The master key is supplied to the agent as base64 in `GOA_KMS_KEY`; without it,
 a disk that requests encryption is held in `Error` rather than written in the
 clear. The backend runs `cryptsetup luksFormat`/`open` and lays an ext4
 filesystem on `/dev/mapper/infra-<uid>`.
+
+## Disk files
+
+A disk file puts content at a path of a disk. The agent writes it through the
+mount of every instance on its host that attaches the disk read-write, so the
+instance sees it at `<mount path>/<path>`; a host with no such instance leaves
+it alone. The instance controls its disk, so the path is cleaned against the mount and
+walked one component at a time with `O_NOFOLLOW`, never following a symlink,
+and missing
+directories are created 0755. The mode defaults to `0644` and is set
+explicitly, whatever the agent's umask. The file is rewritten only when its
+content differs. Deleting a disk file leaves its content on the disk.
 
 ## Compute
 

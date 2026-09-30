@@ -69,6 +69,7 @@ func run() error {
 	lbs := registry.New[resource.LoadBalancerSpec, resource.LoadBalancerStatus](store, resource.KindLoadBalancer)
 	lbBackends := registry.New[resource.LBBackendSpec, resource.LBBackendStatus](store, resource.KindLBBackend)
 	nodes := registry.New[resource.NodeSpec, resource.NodeStatus](store, resource.KindNode)
+	diskFiles := registry.New[resource.DiskFileSpec, resource.DiskFileStatus](store, resource.KindDiskFile)
 	nodeID := os.Getenv("GOA_NODE_ID")
 	agent := manager.NewAgent(*interval, logger,
 		manager.NewNodeHeartbeat(nodes, nodeID),
@@ -82,6 +83,7 @@ func run() error {
 		manager.NewSecurityGroupReconciler(sgs, sgRules, manager.NewExecSecurityGroup()),
 		manager.NewACLReconciler(acls, manager.NewExecFirewall()),
 		manager.NewComputeReconciler(computes, subnets, vpcs, disks, sgs, manager.NewExecComputeBackend(*stateDir), nodeID),
+		manager.NewDiskFileReconciler(diskFiles, computes, manager.FSDiskFileWriter{}, nodeID),
 		manager.NewWAFReconciler(wafPolicies, wafRules, computes, subnets, igws, vpcs, manager.NewExecWAF()),
 		manager.NewLoadBalancerReconciler(lbs, lbBackends, computes, vpcs, manager.NewExecLB()),
 	)
