@@ -33,6 +33,14 @@ func TestExecLBService(t *testing.T) {
 		t.Fatalf("ensure bridge: %v", err)
 	}
 	t.Cleanup(func() { _ = net.DeleteBridge(ctx, bridge) })
+	const nodePort = "np-itest-lb"
+	if err := net.EnsureNodePort(ctx, bridge, nodePort, "nb-itest-lb"); err != nil {
+		t.Fatalf("ensure node port: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = net.DeleteNodePort(ctx, nodePort)
+		_ = exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING", "-o", nodePort, "-m", "ipvs", "--ipvs", "-j", "MASQUERADE").Run()
+	})
 
 	be := manager.NewExecLB()
 	const vip = "10.250.0.1"
@@ -40,11 +48,11 @@ func TestExecLBService(t *testing.T) {
 	t.Cleanup(func() { _ = be.DeleteService(ctx, vip, port, "tcp", bridge) })
 
 	servers := []manager.LBRealServer{{IP: "10.250.0.2", Port: 80, Weight: 1}}
-	if err := be.EnsureService(ctx, vip, port, "tcp", "round_robin", bridge, servers); err != nil {
+	if err := be.EnsureService(ctx, vip, port, "tcp", "round_robin", bridge, nodePort, servers); err != nil {
 		t.Fatalf("ensure service: %v", err)
 	}
 	// Idempotent: a second call must converge without error.
-	if err := be.EnsureService(ctx, vip, port, "tcp", "round_robin", bridge, servers); err != nil {
+	if err := be.EnsureService(ctx, vip, port, "tcp", "round_robin", bridge, nodePort, servers); err != nil {
 		t.Fatalf("ensure service (again): %v", err)
 	}
 

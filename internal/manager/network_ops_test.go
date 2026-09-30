@@ -110,7 +110,7 @@ func TestEnsureServiceVIPIsIdempotent(t *testing.T) {
 	be := manager.NewExecLBWithRunner(k.run)
 	servers := []manager.LBRealServer{{IP: "10.0.1.10", Port: 8080, Weight: 1}}
 	for pass := 1; pass <= 2; pass++ {
-		if err := be.EnsureService(context.Background(), "10.0.5.5", 443, "tcp", "round_robin", "br-vpc1", servers); err != nil {
+		if err := be.EnsureService(context.Background(), "10.0.5.5", 443, "tcp", "round_robin", "br-vpc1", "np-vpc1", servers); err != nil {
 			t.Fatalf("pass %d: EnsureService: %v", pass, err)
 		}
 	}
