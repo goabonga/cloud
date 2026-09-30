@@ -42,9 +42,12 @@ func run() error {
 		return err
 	}
 
-	clients, err := auth.ParseTokens(os.Getenv("GOA_IDP_CLIENTS"))
-	if err != nil {
-		return err
+	clients := map[string]string{}
+	if spec := os.Getenv("GOA_IDP_CLIENTS"); spec != "" {
+		clients, err = auth.ParseTokens(spec)
+		if err != nil {
+			return err
+		}
 	}
 
 	store, err := state.Open(*stateDir, *stateDSN)
