@@ -8,11 +8,13 @@
 #   - infra-idp issuing ES256 JWTs, verified by the API,
 #   - the infra-www dashboard (embedded SPA + API reverse proxy),
 #   - a native Prometheus + Grafana stack,
+#   - Terraform with the local provider and a demo workspace (control host),
 #   - infra-agent on every agent host, all sharing the etcd store.
 #
 # Build the artifacts first (from the repository root):
 #   make deb VERSION=<version>   # the .deb packages, into dist/
 #   make build-www              # the dashboard binary, into build/
+#   make build-provider         # the Terraform provider, into build/
 # Keep `version` in group_vars/all.yml in sync with VERSION.
 #
 # Then, as your normal user (not under sudo):
@@ -42,6 +44,7 @@
     - idp
     - dashboard
     - monitoring
+    - tooling
   post_tasks:
     - name: Wait for the API to report healthy
       ansible.builtin.uri:
