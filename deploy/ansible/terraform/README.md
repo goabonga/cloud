@@ -54,21 +54,19 @@ terraform apply -var 'endpoint=http://<control-ip>:8080'
 ```
 
 When it completes, `terraform output` shows the addresses the agents assigned
-to the two instances (`compute_ip`, `whoami_ip`) and to the load balancer
-(`lb_address`), and the dashboard (`http://<control-ip>:8088`) and Grafana
+to the two nginx instances (`web_ips`) and to the load balancer (`lb_address`),
+and the dashboard (`http://<control-ip>:8088`) and Grafana
 (`http://<control-ip>:3000`) reflect the new resources.
 
-The load balancer round-robins port 80 between nginx and traefik/whoami, so
-repeated requests to its address from an agent host alternate between the
-nginx welcome page and a whoami report:
+Each instance serves an `index.html` naming it, put by an `infra_disk_file` on
+its own KMS-encrypted disk mounted over nginx's document root. The load
+balancer round-robins port 80 between them, so repeated requests to its
+address alternate between the two pages, from an agent host or from inside the
+VPC:
 
 ```bash
-ssh ubuntu@<agent-ip> 'for i in 1 2 3 4; do curl -s http://<lb_address>/ | head -1; done'
+ssh ubuntu@<agent-ip> 'for i in 1 2 3 4; do curl -s http://<lb_address>/ | grep h1; done'
 ```
-
-Each agent host realises the VPC on its own bridge, with no overlay between
-hosts, so a load balancer only reaches the backends running on the host the
-request arrives on.
 
 ## Tear down
 
