@@ -44,32 +44,64 @@ cd deploy/ansible
 # 1. Create the VMs (control + two agents) on the libvirt default network.
 ansible-playbook --ask-become-pass create-vms.yml
 
-# 2. Deploy etcd, the control plane, the IdP, the dashboard, monitoring, agents.
+# 2. Deploy etcd, the control plane, the IdP, the dashboard, monitoring,
+#    the Terraform tooling, the agents and the controller-managers.
 ansible-playbook --ask-become-pass site.yml
 ```
 
 `site.yml` first generates local credentials under `.credentials/` (gitignored):
 the KMS key, the IdP ES256 keypair and a Terraform client secret. It then
-deploys, on the control host:
+deploys:
 
-| Component | Address | Notes |
-| --- | --- | --- |
-| etcd | `:2379` | shared state backend; every component uses it |
-| infra-api | `:8080` | verifies IdP JWTs, secret/disk encryption enabled |
-| infra-controller-manager | - | scheduler + reconcilers (leader-elected) |
-| infra-exporter | `:9100` | Prometheus metrics |
-| infra-idp | `:8081` | ES256 JWT issuer (client-credentials grant) |
-| infra-www | `:8088` | dashboard (embedded SPA + API reverse proxy) |
-| Prometheus | `:9090` | scrapes the exporter (native, no Docker) |
-| Grafana | `:3000` | admin / infra; infra dashboard provisioned |
+| Host | Component | Address | Notes |
+| --- | --- | --- | --- |
+| every host | etcd | `:2379` | one member per host; quorum survives one VM down |
+| `infra-control` | infra-api | `:8080` | verifies IdP JWTs, secret/disk encryption enabled |
+| `infra-control` | infra-idp | `:8081` | ES256 JWT issuer (client-credentials grant) |
+| `infra-control` | infra-exporter | `:9100` | Prometheus metrics |
+| `infra-control` | infra-www | `:8088` | dashboard (embedded SPA + API reverse proxy) |
+| `infra-control` | Prometheus | `:9090` | scrapes the exporter (native, no Docker) |
+| `infra-control` | Grafana | `:3000` | admin / infra; infra dashboard provisioned |
+| `infra-control` | Terraform | - | local provider + demo workspace in `~/infra-demo` |
+| `infra-agent-*` | infra-agent | - | registered as a schedulable node |
+| `infra-agent-*` | infra-controller-manager | - | one leader via a lease in etcd, the other on standby |
 
-On each agent host it deploys `infra-agent` (sharing the etcd store, with the
-KMS key and `GOA_NODE_ID`) and registers the host as a schedulable node.
+The API and the IdP run as the unprivileged `infra` user; their PEM keys reach
+them as systemd credentials (`LoadCredential=`), and a missing key stops the
+service from starting rather than letting it run without authentication.
 
-## Provision infra with Terraform
+## Exercise the stack from the control VM
 
-With the stack up, run `terraform apply` from your terminal to build a topology
-against it. See [terraform/README.md](terraform/README.md).
+```bash
+ssh ubuntu@192.168.122.10
+infra-login          # fetch a JWT from the IdP into GOA_API_TOKEN
+cd ~/infra-demo
+terraform apply      # VPC, subnet, gateway, firewall, encrypted disk, compute
+```
+
+The workspace is already initialised against the provider installed in
+`~/.terraform.d/plugins`. The `infra` CLI reads the same `GOA_API_URL` and
+`GOA_API_TOKEN`. To run Terraform from the libvirt host instead, see
+[terraform/README.md](terraform/README.md).
+
+## Verify, and drill a failover
+
+```bash
+ansible-playbook verify.yml                   # checks only
+ansible-playbook verify.yml -e failover=true  # + failover drill
+```
+
+The checks assert that the API refuses a call without a token and accepts an
+IdP one, that both agents are registered nodes, that etcd has a healthy member
+on every host and that an agent host holds the controller-manager lease.
+
+The drill stops the controller-manager and the etcd member on the lease
+holder, waits for the other agent host to take the lease (within the 15s TTL)
+while the API keeps serving from the two remaining members, then starts both
+services again.
+
+What it does not cover: there is no node heartbeat, so compute already placed
+on a stopped agent host stays assigned to it rather than being rescheduled.
 
 ## Access
 
@@ -86,5 +118,6 @@ ansible-playbook --ask-become-pass destroy-vms.yml
 ## Topology
 
 Hosts and addresses are defined in `group_vars/all.yml` (`vms`) and mirrored in
-`inventory.ini`. The default is one control host (`192.168.122.10`) and two
-agents (`192.168.122.21`, `.22`) on the libvirt `default` NAT network.
+`inventory.ini`. The default is one control host (`192.168.122.10`, 3 GiB) and
+two agents (`192.168.122.21`, `.22`, 1.5 GiB each) on the libvirt `default` NAT
+network, about 6 GiB of RAM on the libvirt host in total.
