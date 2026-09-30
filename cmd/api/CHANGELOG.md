@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.1.1] - 2026-09-30
+
+### Fixed
+
+- **core**: bump grpc to v1.83.2 to clear govulncheck (`3ef3cf6`)
+
 ## [0.1.0] - 2026-07-30
 
 ### Added

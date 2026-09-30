@@ -1,57 +1,57 @@
 {
   "version": 1,
-  "git_head": "3d403fc60b4d51121eea015cbb74a273cb1fe140",
-  "git_head_short": "3d403fc",
-  "timestamp": "2026-07-30T09:18:35Z",
+  "git_head": "c0be30fa3e82538ee4fe055a8e8fb6ad33739f44",
+  "git_head_short": "c0be30f",
+  "timestamp": "2026-09-30T10:01:12Z",
   "components": {
     "infra-api": {
-      "version": "0.1.0",
-      "tag": "infra-api-v0.1.0",
+      "version": "0.1.1",
+      "tag": "infra-api-v0.1.1",
       "tag_sha": null
     },
     "infra-controller-manager": {
-      "version": "0.1.0",
-      "tag": "infra-controller-manager-v0.1.0",
+      "version": "0.1.1",
+      "tag": "infra-controller-manager-v0.1.1",
       "tag_sha": null
     },
     "infra-agent": {
-      "version": "0.1.0",
-      "tag": "infra-agent-v0.1.0",
+      "version": "0.1.1",
+      "tag": "infra-agent-v0.1.1",
       "tag_sha": null
     },
     "infra": {
-      "version": "0.1.0",
-      "tag": "infra-v0.1.0",
+      "version": "0.1.1",
+      "tag": "infra-v0.1.1",
       "tag_sha": null
     },
     "terraform-provider-infra": {
-      "version": "0.1.0",
-      "tag": "terraform-provider-infra-v0.1.0",
+      "version": "0.1.1",
+      "tag": "terraform-provider-infra-v0.1.1",
       "tag_sha": null
     },
     "infra-idp": {
-      "version": "0.1.0",
-      "tag": "infra-idp-v0.1.0",
+      "version": "0.1.1",
+      "tag": "infra-idp-v0.1.1",
       "tag_sha": null
     },
     "infra-exporter": {
-      "version": "0.1.0",
-      "tag": "infra-exporter-v0.1.0",
+      "version": "0.1.1",
+      "tag": "infra-exporter-v0.1.1",
       "tag_sha": null
     },
-    "infra-spa": {
+    "infra-container-init": {
       "version": "0.1.0",
-      "tag": "infra-spa-v0.1.0",
+      "tag": "infra-container-init-v0.1.0",
       "tag_sha": null
     },
     "infra-www": {
-      "version": "0.1.0",
-      "tag": "infra-www-v0.1.0",
+      "version": "0.1.1",
+      "tag": "infra-www-v0.1.1",
       "tag_sha": null
     },
     "infra-chart": {
-      "version": "0.0.1",
-      "tag": "infra-chart-v0.0.1",
+      "version": "0.0.2",
+      "tag": "infra-chart-v0.0.2",
       "tag_sha": null
     }
   }

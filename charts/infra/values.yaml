@@ -47,7 +47,7 @@ components:
     enabled: true
     image:
       repository: infra-api
-      tag: 0.1.0
+      tag: 0.1.1
     # One replica by default so the chart installs with no configuration. The
     # file-backed store is per-pod, so raising this requires state.dsn or
     # state.existingSecret - the chart refuses to render otherwise rather than
@@ -72,7 +72,7 @@ components:
     enabled: true
     image:
       repository: infra-controller-manager
-      tag: 0.1.0
+      tag: 0.1.1
     # Leader election means extra replicas are standby, not throughput, so two
     # buys failover and nothing else. Left at one for the same reason as the
     # API server: a default install should not require a database.
@@ -99,7 +99,7 @@ components:
     enabled: false
     image:
       repository: infra-idp
-      tag: 0.1.0
+      tag: 0.1.1
     # infra-idp exits at startup unless at least one client is configured - it
     # has nothing to issue tokens to otherwise. The chart requires one rather
     # than deploying a pod that crash-loops, and refuses to render without it.
@@ -130,7 +130,7 @@ components:
     enabled: true
     image:
       repository: infra-exporter
-      tag: 0.1.0
+      tag: 0.1.1
     # Every replica scrapes the same state and reports the same numbers, so a
     # second one only duplicates the series.
     replicas: 1
@@ -153,7 +153,7 @@ components:
     enabled: true
     image:
       repository: infra-www
-      tag: 0.1.0
+      tag: 0.1.1
     # The dashboard proxies /api to the control plane so the browser talks to
     # one origin. Left empty, the chart points it at the in-cluster api Service,
     # which is what makes the two work together out of the box - the binary's
