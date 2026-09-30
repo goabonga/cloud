@@ -1,7 +1,7 @@
 # A demo topology provisioned against the deployed control plane:
 #   vpc -> subnet -> internet gateway + route -> security group + rules
-#   -> KMS-encrypted disk -> two compute instances, scheduled onto the agent
-#   node pool -> a layer-4 load balancer in front of both.
+#   -> two nginx instances, scheduled onto the agent node pool, each serving a
+#   page from its own KMS-encrypted disk -> a layer-4 load balancer in front.
 
 # The agent hosts are registered as nodes by Ansible with the label role=agent;
 # this pool selects them so the scheduler can place compute.
@@ -63,39 +63,48 @@ resource "infra_kms_key" "disks" {
   algorithm  = "AES-256"
 }
 
-resource "infra_disk" "data" {
-  name       = "data"
-  size_mb    = 1024
+# Two nginx instances behind one load balancer. Each serves its own page from
+# a KMS-encrypted disk mounted over nginx's document root; a disk file puts an
+# index.html naming the instance on it, so a request through the load balancer
+# shows which backend answered.
+locals {
+  web = toset(["web-1", "web-2"])
+}
+
+resource "infra_disk" "site" {
+  for_each   = local.web
+  name       = "${each.key}-site"
+  size_mb    = 64
   kms_key_id = infra_kms_key.disks.id
 }
 
+resource "infra_disk_file" "index" {
+  for_each = local.web
+  disk_id  = infra_disk.site[each.key].id
+  path     = "index.html"
+  mode     = "0644"
+  content  = <<-HTML
+    <!doctype html>
+    <title>${each.key}</title>
+    <h1>Served by ${each.key}</h1>
+  HTML
+}
+
 resource "infra_compute" "web" {
-  name              = "web"
+  for_each          = local.web
+  name              = each.key
+  hostname          = each.key
   subnet_id         = infra_subnet.app.id
   security_group_id = infra_security_group.web.id
   node_pool_id      = infra_node_pool.workers.id
   image             = "docker.io/library/nginx:latest"
   cpu               = 0.5
-  memory_mb         = 256
+  memory_mb         = 128
 
   disks = [{
-    disk_id    = infra_disk.data.id
-    mount_path = "/data"
+    disk_id    = infra_disk.site[each.key].id
+    mount_path = "/usr/share/nginx/html"
   }]
-}
-
-# A second instance behind the same load balancer. traefik/whoami answers with
-# its hostname and addresses, so a request through the load balancer shows
-# which backend served it: nginx's welcome page or a whoami report.
-resource "infra_compute" "whoami" {
-  name              = "whoami"
-  hostname          = "whoami"
-  subnet_id         = infra_subnet.app.id
-  security_group_id = infra_security_group.web.id
-  node_pool_id      = infra_node_pool.workers.id
-  image             = "docker.io/traefik/whoami:latest"
-  cpu               = 0.25
-  memory_mb         = 64
 }
 
 resource "infra_load_balancer" "web" {
@@ -107,35 +116,20 @@ resource "infra_load_balancer" "web" {
 }
 
 resource "infra_lb_backend" "web" {
+  for_each   = local.web
   lb_id      = infra_load_balancer.web.id
-  compute_id = infra_compute.web.id
+  compute_id = infra_compute.web[each.key].id
   port       = 80
 }
 
-resource "infra_lb_backend" "whoami" {
-  lb_id      = infra_load_balancer.web.id
-  compute_id = infra_compute.whoami.id
-  port       = 80
+output "web_ips" {
+  description = "Address assigned to each nginx instance."
+  value       = { for k, c in infra_compute.web : k => c.ip }
 }
 
-output "compute_ip" {
-  description = "Address assigned to the demo compute instance."
-  value       = infra_compute.web.ip
-}
-
-output "compute_phase" {
-  description = "Lifecycle phase of the demo compute instance."
-  value       = infra_compute.web.phase
-}
-
-output "whoami_ip" {
-  description = "Address assigned to the whoami instance."
-  value       = infra_compute.whoami.ip
-}
-
-output "whoami_phase" {
-  description = "Lifecycle phase of the whoami instance."
-  value       = infra_compute.whoami.phase
+output "web_phases" {
+  description = "Lifecycle phase of each nginx instance."
+  value       = { for k, c in infra_compute.web : k => c.phase }
 }
 
 output "lb_address" {
