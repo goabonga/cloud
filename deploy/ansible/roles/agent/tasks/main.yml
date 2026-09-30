@@ -1,6 +1,22 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Chris <goabonga@pm.me>
 ---
+# The reconcilers shell out to these, and the infra-agent package does not
+# depend on them. dnsmasq-base ships the binary without the dnsmasq service,
+# which would otherwise take port 53 from systemd-resolved.
+- name: Install the host tools the agent drives
+  ansible.builtin.apt:
+    name:
+      - iproute2
+      - iptables
+      - conntrack
+      - cryptsetup-bin
+      - dnsmasq-base
+      - e2fsprogs
+      - util-linux
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Copy agent packages
   ansible.builtin.copy:
     src: "{{ deb_dir }}/{{ item }}_{{ version }}_{{ deb_arch }}.deb"
