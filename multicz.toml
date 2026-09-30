@@ -27,6 +27,11 @@ state_file = ".multicz/state.json"
 # whichever component happens to be declared first and silently leave the other
 # three on a stale base.
 #
+# go.mod and go.sum are claimed by every Go component on the same reading:
+# a dependency or toolchain bump changes the binaries linked against it, so a
+# fix touching only them has to release each one. Whether a given bump ships
+# at all is still decided by its commit type: chore(deps) releases nothing.
+#
 # CAUTION: this fans out the BUMP PLAN only. `multicz changed` does not honour
 # it - it attributes a shared file to a single component, and has been observed
 # to name components with no changed file at all. So never gate a per-component
@@ -70,7 +75,7 @@ types = ["perf"]
 # ── Control plane ─────────────────────────────────────────────────────────
 
 [components.infra-api]
-paths = ["cmd/api/**", "internal/handler/**", "internal/httpsrv/**", "internal/httpsec/**", "web/**", "packaging/docker/Dockerfile"]
+paths = ["cmd/api/**", "internal/handler/**", "internal/httpsrv/**", "internal/httpsec/**", "web/**", "packaging/docker/Dockerfile", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/api/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -82,7 +87,7 @@ mirrors = [
 post_bump = ["go mod tidy"]
 
 [components.infra-controller-manager]
-paths = ["cmd/controller-manager/**", "internal/controllers/**", "internal/scheduler/**", "packaging/docker/Dockerfile"]
+paths = ["cmd/controller-manager/**", "internal/controllers/**", "internal/scheduler/**", "packaging/docker/Dockerfile", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/controller-manager/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -95,7 +100,7 @@ post_bump = ["go mod tidy"]
 # ── Data plane ────────────────────────────────────────────────────────────
 
 [components.infra-agent]
-paths = ["cmd/agent/**", "internal/manager/**"]
+paths = ["cmd/agent/**", "internal/manager/**", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/agent/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -105,7 +110,7 @@ post_bump = ["go mod tidy"]
 # ── Clients ───────────────────────────────────────────────────────────────
 
 [components.infra]
-paths = ["cmd/cli/**", "internal/client/**"]
+paths = ["cmd/cli/**", "internal/client/**", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/cli/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -113,7 +118,7 @@ changelog = "cmd/cli/CHANGELOG.md"
 post_bump = ["go mod tidy"]
 
 [components.terraform-provider-infra]
-paths = ["cmd/provider/**", "internal/provider/**", "internal/resources/**"]
+paths = ["cmd/provider/**", "internal/provider/**", "internal/resources/**", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/provider/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -127,7 +132,7 @@ post_bump = ["go mod tidy"]
 [components.infra-idp]
 # internal/auth is shared core (consumed by the API too), so it is intentionally
 # not owned here; it is added back when the IDP itself is built.
-paths = ["cmd/idp/**", "internal/idp/**", "packaging/docker/Dockerfile"]
+paths = ["cmd/idp/**", "internal/idp/**", "packaging/docker/Dockerfile", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/idp/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -140,7 +145,7 @@ post_bump = ["go mod tidy"]
 # ── Observability ─────────────────────────────────────────────────────────
 
 [components.infra-exporter]
-paths = ["cmd/exporter/**", "internal/metrics/**", "packaging/docker/Dockerfile"]
+paths = ["cmd/exporter/**", "internal/metrics/**", "packaging/docker/Dockerfile", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/exporter/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -153,7 +158,7 @@ post_bump = ["go mod tidy"]
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 [components.infra-container-init]
-paths = ["cmd/container-init/**"]
+paths = ["cmd/container-init/**", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/container-init/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -174,7 +179,7 @@ changelog = "www/CHANGELOG.md"
 # The web dashboard server embeds the SPA, so it depends on infra-spa: a SPA
 # change bumps infra-spa and cascades a bump here, rebuilding the embedded binary.
 [components.infra-www]
-paths = ["cmd/www/**", "internal/web/**", "internal/httpsec/**", "packaging/docker/www.Dockerfile"]
+paths = ["cmd/www/**", "internal/web/**", "internal/httpsec/**", "packaging/docker/www.Dockerfile", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/www/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
