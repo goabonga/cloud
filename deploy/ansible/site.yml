@@ -47,6 +47,12 @@
   roles:
     - wan_link
 
+- name: Simulated provider
+  hosts: upstream
+  become: true
+  roles:
+    - upstream
+
 - name: Control plane, identity, dashboard and monitoring
   hosts: control
   become: true

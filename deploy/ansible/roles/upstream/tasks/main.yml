@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# upstream-sim routes the public block to the edges, hosts the "inet" client
+# namespace, and NATs everything but the block towards the real LAN.
+- name: Enable forwarding and L4 multipath hashing
+  ansible.builtin.template:
+    src: 60-upstream-sim.conf.j2
+    dest: /etc/sysctl.d/60-upstream-sim.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply sysctl
+
+- name: Install the upstream-sim setup script
+  ansible.builtin.template:
+    src: upstream-sim-up.j2
+    dest: /usr/local/sbin/upstream-sim-up
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart upstream-sim
+
+- name: Install the upstream-sim unit
+  ansible.builtin.template:
+    src: upstream-sim.service.j2
+    dest: /etc/systemd/system/upstream-sim.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart upstream-sim
+
+- name: Enable and start upstream-sim
+  ansible.builtin.systemd_service:
+    name: upstream-sim
+    enabled: true
+    state: started
+    daemon_reload: true

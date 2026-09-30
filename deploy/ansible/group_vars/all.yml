@@ -34,6 +34,23 @@ wan_sim:
   bridge: "virbr-wansim"
   prefix: 24
 
+# The block the lab treats as its public addresses: TEST-NET-3 (RFC 5737), never
+# routed on the Internet, so it cannot shadow a real address. 198.18.0.0/15
+# (RFC 2544) is the larger alternative for several blocks or upstreams.
+eip_block: "203.0.113.0/24"
+
+# upstream-sim, the provider's router. route_mode picks how it reaches the
+# block: "ecmp" spreads flows over every edge (L4 hash), "floating" sends them
+# to floating_next_hop, which the active edge must hold (nothing in the lab
+# holds it yet). inet is a netns on upstream-sim standing for an Internet
+# client, on the far side of the provider.
+upstream:
+  route_mode: "ecmp"
+  floating_next_hop: "10.99.0.254"
+  inet_cidr: "100.64.0.0/30"
+  inet_gateway: "100.64.0.1"
+  inet_client: "100.64.0.2"
+
 # Deployment: which .deb packages each role installs. Build them first with
 # `make deb VERSION=<version>` so they land in dist/.
 version: "0.1.0"
