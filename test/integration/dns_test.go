@@ -8,47 +8,50 @@ package integration
 import (
 	"context"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/miekg/dns"
 
 	"github.com/goabonga/infrastructure/internal/manager"
 )
 
-// TestExecDNSResolver starts a real dnsmasq for a VPC on a private loopback
-// address and tears it down. It needs root and dnsmasq and skips otherwise.
-func TestExecDNSResolver(t *testing.T) {
+// TestNativeDNSResolver serves a VPC's resolver from the agent on a real
+// bridge address and queries it. It needs root and skips otherwise.
+func TestNativeDNSResolver(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root")
 	}
-	if _, err := exec.LookPath("dnsmasq"); err != nil {
-		t.Skip("dnsmasq not available")
-	}
-
 	ctx := context.Background()
-	dir := t.TempDir()
-	be := manager.NewExecDNS(dir)
-	const vpc = "vpc-itest"
-	t.Cleanup(func() { _ = be.StopResolver(ctx, vpc) })
-
-	zones := []manager.DNSZoneConfig{{
-		Domain: "itest.internal",
-		Hosts:  []string{"10.0.1.10 web.itest.internal"},
-	}}
-	// 127.0.0.99 avoids the systemd-resolved stub on 127.0.0.53.
-	if err := be.EnsureResolver(ctx, vpc, "127.0.0.99", zones); err != nil {
-		t.Fatalf("ensure resolver: %v", err)
+	net := manager.NewExecBackend()
+	const bridge = "br-itest-dns"
+	if err := net.EnsureBridge(ctx, manager.Bridge{Name: bridge}); err != nil {
+		t.Fatalf("ensure bridge: %v", err)
 	}
+	t.Cleanup(func() { _ = net.DeleteBridge(ctx, bridge) })
 
-	pidFile := filepath.Join(dir, vpc+".pid")
-	if _, err := os.Stat(pidFile); err != nil {
-		t.Fatalf("dnsmasq pid file missing: %v", err)
+	be := manager.NewNativeDNS()
+	rr, err := manager.ParseRecord("web", "itest.internal", "A", 0, "10.251.1.10")
+	if err != nil {
+		t.Fatal(err)
 	}
+	view := &manager.DNSView{Forward: true, Zones: []manager.DNSZone{{Domain: "itest.internal", Records: []dns.RR{rr}}}}
+	const vpc, addr = "vpc-itest", "10.251.0.1"
+	if err := be.ServeVPC(ctx, vpc, bridge, addr, view); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	t.Cleanup(func() { _ = be.StopVPC(ctx, vpc) })
 
-	if err := be.StopResolver(ctx, vpc); err != nil {
-		t.Fatalf("stop resolver: %v", err)
+	q := new(dns.Msg)
+	q.SetQuestion("web.itest.internal.", dns.TypeA)
+	var resp *dns.Msg
+	for try := 0; try < 20; try++ {
+		if resp, _, err = (&dns.Client{Timeout: time.Second}).Exchange(q, addr+":53"); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
-		t.Fatalf("pid file should be removed, err = %v", err)
+	if err != nil || len(resp.Answer) != 1 || !resp.Authoritative {
+		t.Fatalf("query: %v %v", err, resp)
 	}
 }

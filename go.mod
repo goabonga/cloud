@@ -9,6 +9,7 @@ require (
 	github.com/google/go-containerregistry v0.22.1
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/miekg/dns v1.1.73
 	github.com/prometheus/client_golang v1.24.1
 	go.etcd.io/etcd/client/v3 v3.7.2
 	golang.org/x/crypto v0.57.0
