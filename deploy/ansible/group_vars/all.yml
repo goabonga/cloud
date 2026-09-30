@@ -24,6 +24,13 @@ vms:
   - { name: "infra-agent-1", ip: "192.168.122.21", memory_mb: 1536, vcpus: 2 }
   - { name: "infra-agent-2", ip: "192.168.122.22", memory_mb: 1536, vcpus: 2 }
 
+# Simulated transit: an isolated libvirt network standing in for the link
+# between the lab's edges and an upstream provider (see upstream-sim).
+wan_sim:
+  network: "wan-sim"
+  bridge: "virbr-wansim"
+  prefix: 24
+
 # Deployment: which .deb packages each role installs. Build them first with
 # `make deb VERSION=<version>` so they land in dist/.
 version: "0.1.0"
