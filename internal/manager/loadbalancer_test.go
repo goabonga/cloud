@@ -6,6 +6,7 @@ package manager_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ type fakeLBBackend struct {
 	deleted bool
 }
 
-func (f *fakeLBBackend) EnsureService(_ context.Context, vip string, port int, _, _, bridge string, servers []manager.LBRealServer) error {
+func (f *fakeLBBackend) EnsureService(_ context.Context, vip string, port int, _, _, bridge, _ string, servers []manager.LBRealServer) error {
 	f.vip, f.port, f.bridge, f.servers = vip, port, bridge, servers
 	return nil
 }
@@ -249,7 +250,7 @@ func TestExecLBEnsureAndDelete(t *testing.T) {
 	rec := &fwRecorder{}
 	be := manager.NewExecLBWithRunner(rec.run)
 	servers := []manager.LBRealServer{{IP: "10.0.1.10", Port: 8080, Weight: 3}}
-	if err := be.EnsureService(context.Background(), "10.0.5.5", 443, "tcp", "round_robin", "br-vpc1", servers); err != nil {
+	if err := be.EnsureService(context.Background(), "10.0.5.5", 443, "tcp", "round_robin", "br-vpc1", "np-vpc1", servers); err != nil {
 		t.Fatalf("ensure service: %v", err)
 	}
 	for _, want := range []string{"ipvsadm", "-A", "-a", "10.0.5.5/32"} {
@@ -264,5 +265,35 @@ func TestExecLBEnsureAndDelete(t *testing.T) {
 	}
 	if !anyCallHas(rec.calls, "-D") {
 		t.Fatalf("expected service deletion: %v", rec.calls)
+	}
+}
+
+func TestExecLBMasqueradesThroughTheNodePort(t *testing.T) {
+	t.Parallel()
+
+	var calls []string
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		calls = append(calls, cmd)
+		if strings.HasPrefix(cmd, "iptables -t nat -C") {
+			return "", errors.New("rule does not exist")
+		}
+		return "", nil
+	}
+	servers := []manager.LBRealServer{{IP: "10.0.1.10", Port: 80, Weight: 1}}
+	if err := manager.NewExecLBWithRunner(run).EnsureService(context.Background(), "10.0.5.5", 80, "tcp", "round_robin", "br-1", "np-1", servers); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"sysctl -w net.ipv4.vs.conntrack=1",
+		"iptables -t nat -A POSTROUTING -o np-1 -m ipvs --ipvs -j MASQUERADE",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in\n%s", want, joined)
+		}
+	}
+	if strings.Index(joined, "ipvsadm -A") > strings.Index(joined, "net.ipv4.vs.conntrack") {
+		t.Fatalf("the ipvs sysctl only exists once ip_vs is loaded by the service:\n%s", joined)
 	}
 }
