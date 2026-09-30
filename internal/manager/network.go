@@ -55,6 +55,13 @@ type NetworkBackend interface {
 // bridgeName derives a valid, deterministic bridge interface name from a UID,
 // hashing when a sanitized "br-<uid>" would exceed the kernel length limit.
 func bridgeName(uid string) string {
+	return ifaceName("br-", uid)
+}
+
+// ifaceName derives a valid, deterministic interface name from a prefix and a
+// UID, hashing when the sanitized "<prefix><uid>" would exceed the kernel
+// length limit.
+func ifaceName(prefix, uid string) string {
 	var b strings.Builder
 	for _, r := range uid {
 		switch {
@@ -64,13 +71,13 @@ func bridgeName(uid string) string {
 			b.WriteRune(r + ('a' - 'A'))
 		}
 	}
-	name := "br-" + b.String()
+	name := prefix + b.String()
 	if len(name) <= maxIfaceName {
 		return name
 	}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(uid))
-	return fmt.Sprintf("br-%08x", h.Sum32())
+	return fmt.Sprintf("%s%08x", prefix, h.Sum32())
 }
 
 // Runner runs an external command and returns its combined output.
