@@ -30,7 +30,7 @@ jobs:
   signal:
     name: signal dependabot PR
     if: github.actor == 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Signal dependabot PR for rewrite
         env:

@@ -27,7 +27,7 @@ jobs:
   # in the change-detection log.
   validate:
     name: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -54,7 +54,7 @@ jobs:
   detect:
     name: detect changed components
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       packages: ${{ steps.bypass.outputs.packages || steps.changed.outputs.packages }}
       has_package_changes: ${{ steps.bypass.outputs.has_package_changes || steps.changed.outputs.has_package_changes }}
@@ -186,7 +186,7 @@ jobs:
     name: license-headers
     needs: detect
     if: needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Check SPDX license headers
@@ -207,7 +207,7 @@ jobs:
     name: lint
     needs: detect
     if: needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -237,7 +237,7 @@ jobs:
       needs.detect.outputs.release_commit != 'true'
       && (needs.detect.outputs.www_changed == 'true'
           || github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: www
@@ -270,7 +270,7 @@ jobs:
     name: vet + build
     needs: detect
     if: needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -299,7 +299,7 @@ jobs:
     name: test
     needs: detect
     if: needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -329,7 +329,7 @@ jobs:
     name: gosec
     needs: detect
     if: needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -351,7 +351,7 @@ jobs:
     name: govulncheck
     needs: detect
     if: needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -373,7 +373,7 @@ jobs:
     name: osv-scanner
     needs: detect
     if: needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       # Pinned, not `releases/latest`: a fixed URL whose bytes change is the
@@ -410,14 +410,14 @@ jobs:
   # when any component changed OR the suite itself changed. NOTE: the real
   # netns / iptables / cgroups tests added from M3 need a privileged host
   # (root + CAP_NET_ADMIN); wire a self-hosted or privileged runner here then.
-  # The M0 smoke test only proves the tag wires up, so ubuntu-latest suffices.
+  # The M0 smoke test only proves the tag wires up, so a hosted runner suffices.
   integration:
     name: integration
     needs: detect
     if: >-
       needs.detect.outputs.has_package_changes == 'true'
       || needs.detect.outputs.integration_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -464,7 +464,7 @@ jobs:
     name: hadolint
     needs: detect
     if: needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Lint the shared daemon Dockerfile
@@ -493,7 +493,7 @@ jobs:
     if: >-
       !cancelled() && !failure()
       && needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -578,7 +578,7 @@ jobs:
     name: sbom (${{ matrix.component }})
     needs: container
     if: "!cancelled() && !failure()"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -631,7 +631,7 @@ jobs:
     name: grype (${{ matrix.component }})
     needs: sbom
     if: "!cancelled() && !failure()"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -681,7 +681,7 @@ jobs:
     if: >-
       !cancelled() && !failure()
       && needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -732,7 +732,7 @@ jobs:
     name: deb-validate (${{ matrix.component }})
     needs: deb
     if: "!cancelled() && !failure()"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: write # delete the artifact of a package that fails validation
@@ -793,7 +793,7 @@ jobs:
     if: >-
       needs.detect.outputs.release_commit != 'true'
       && needs.detect.outputs.chart_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -880,7 +880,7 @@ jobs:
     if: >-
       !cancelled() && !failure()
       && needs.detect.outputs.chart_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -928,7 +928,7 @@ jobs:
     if: >-
       !cancelled() && !failure()
       && needs.detect.outputs.chart_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -969,7 +969,7 @@ jobs:
     if: >-
       !cancelled() && !failure()
       && needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -1007,7 +1007,7 @@ jobs:
     if: >-
       !cancelled() && !failure()
       && needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
@@ -1068,7 +1068,7 @@ jobs:
       && github.event_name == 'push'
       && github.ref == 'refs/heads/main'
       && needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     outputs:
@@ -1188,7 +1188,7 @@ jobs:
       && github.ref == 'refs/heads/main'
       && needs.release.result == 'success'
       && needs.release.outputs.no_bumps == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -1408,7 +1408,7 @@ jobs:
       && github.ref == 'refs/heads/main'
       && needs.release.result == 'success'
       && needs.release.outputs.no_bumps == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
