@@ -95,13 +95,18 @@ The checks assert that the API refuses a call without a token and accepts an
 IdP one, that both agents are registered nodes, that etcd has a healthy member
 on every host and that an agent host holds the controller-manager lease.
 
-The drill stops the controller-manager and the etcd member on the lease
-holder, waits for the other agent host to take the lease (within the 15s TTL)
-while the API keeps serving from the two remaining members, then starts both
-services again.
+The drill simulates the lease holder hanging rather than shutting down cleanly
+(a clean stop releases the lease at once, which would not exercise expiry): it
+freezes the holder's controller-manager with `systemctl freeze` and stops its
+etcd member, waits for the other agent host to take the lease once the 15s TTL
+runs out while the API keeps serving from the two remaining members, then
+thaws the old holder and checks it stays on standby. Both services are
+restored afterwards.
 
 What it does not cover: there is no node heartbeat, so compute already placed
-on a stopped agent host stays assigned to it rather than being rescheduled.
+on a stopped agent host stays assigned to it rather than being rescheduled. And
+the lease carries no fencing token, so a holder that hangs mid-reconcile can
+finish that pass after it thaws, before its next lease check demotes it.
 
 ## Access
 
