@@ -73,6 +73,7 @@ func run() error {
 	agent := manager.NewAgent(*interval, logger,
 		manager.NewNodeHeartbeat(nodes, nodeID),
 		manager.NewVPCReconciler(vpcs, net),
+		manager.NewOverlayReconciler(vpcs, nodes, manager.NewExecOverlay(), nodeID),
 		manager.NewSubnetReconciler(subnets, vpcs, net),
 		manager.NewIGWReconciler(igws, vpcs, net),
 		manager.NewPeeringReconciler(peerings, vpcs, manager.NewExecPeering()),
