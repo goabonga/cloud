@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# infra-controller-manager is installed with agent_packages; this configures
+# it. Each host runs one instance, and the lease in etcd elects the one that
+# reconciles, so stopping either host hands leadership to the other within
+# the lease TTL (15s by default).
+- name: Ensure the infra-controller-manager drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/infra-controller-manager.service.d
+    state: directory
+    mode: "0755"
+
+- name: Write the controller-manager environment file
+  ansible.builtin.template:
+    src: controller-manager.env.j2
+    dest: "{{ infra_conf_dir }}/controller-manager.env"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart infra-controller-manager
+
+- name: Install the infra-controller-manager systemd drop-in
+  ansible.builtin.template:
+    src: infra-controller-manager.override.conf.j2
+    dest: /etc/systemd/system/infra-controller-manager.service.d/override.conf
+    mode: "0644"
+  notify: Restart infra-controller-manager
+
+- name: Enable and start infra-controller-manager
+  ansible.builtin.systemd_service:
+    name: infra-controller-manager
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -26,10 +26,12 @@ vms:
 version: "0.1.0"
 deb_arch: "amd64"
 deb_dir: "{{ playbook_dir }}/../../dist"
-control_packages: ["infra", "infra-api", "infra-controller-manager", "infra-idp", "infra-exporter"]
-control_services: ["infra-api", "infra-controller-manager", "infra-idp", "infra-exporter"]
-agent_packages: ["infra", "infra-container-init", "infra-agent"]
-agent_services: ["infra-agent"]
+control_packages: ["infra", "infra-api", "infra-idp", "infra-exporter"]
+control_services: ["infra-api", "infra-idp", "infra-exporter"]
+# infra-controller-manager runs on both agent hosts: one instance holds the
+# leader lease in etcd and the other takes over when it goes away.
+agent_packages: ["infra", "infra-container-init", "infra-agent", "infra-controller-manager"]
+agent_services: ["infra-agent", "infra-controller-manager"]
 
 # --- Full-stack deployment (site.yml) -------------------------------------
 # The control host that runs etcd, the control plane, the IdP, the dashboard
