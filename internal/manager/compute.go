@@ -561,6 +561,10 @@ type ComputeReconciler struct {
 	// nodeName scopes realization to compute scheduled to this node. When empty
 	// the reconciler realizes every compute (single-host mode).
 	nodeName string
+	// addresses reserves instance addresses in the shared store; nil falls
+	// back to picking one no other instance lists, which is only safe with a
+	// single agent.
+	addresses *addressBook
 }
 
 // NewComputeReconciler returns a reconciler backed by the resource stores and
@@ -568,6 +572,14 @@ type ComputeReconciler struct {
 // node; an empty nodeName realizes every compute.
 func NewComputeReconciler(reg *ComputeRegistry, subnets *SubnetRegistry, vpcs *VPCRegistry, disks *DiskRegistry, sgs *SecurityGroupRegistry, backend ComputeBackend, nodeName string) *ComputeReconciler {
 	return &ComputeReconciler{reg: reg, subnets: subnets, vpcs: vpcs, disks: disks, sgs: sgs, backend: backend, nodeName: nodeName}
+}
+
+// WithAddressStore makes the reconciler reserve each instance address in
+// store before using it, so agents allocating at once on different hosts
+// never hand out the same one.
+func (r *ComputeReconciler) WithAddressStore(store state.Store) *ComputeReconciler {
+	r.addresses = &addressBook{store: store}
+	return r
 }
 
 // Name identifies the reconcile pass.
@@ -624,6 +636,9 @@ func (r *ComputeReconciler) ensure(ctx context.Context, c *resource.Compute) err
 		return r.reg.Put(c)
 	}
 
+	// Record the address before realising the instance, so a failed attempt
+	// retries with the one it already holds instead of reserving another.
+	c.Status.IP = req.IP
 	c.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "starting instance")
 	res, err := r.backend.EnsureCompute(ctx, req)
 	if err != nil {
@@ -706,15 +721,30 @@ func (r *ComputeReconciler) resolve(c *resource.Compute) (ComputeRequest, bool, 
 	}
 
 	ip := c.Status.IP
-	if ip == "" {
+	switch {
+	case ip == "":
 		used, uErr := r.usedIPs(c.Metadata.UID)
 		if uErr != nil {
 			return ComputeRequest{}, false, uErr
 		}
 		used[subnet.Status.Gateway] = true
-		ip, err = allocateIP(subnet.Spec.CIDR, used)
+		if r.addresses != nil {
+			ip, err = r.addresses.allocate(subnet.Spec.CIDR, c.Spec.SubnetID, c.Metadata.UID, used)
+		} else {
+			ip, err = allocateIP(subnet.Spec.CIDR, used)
+		}
 		if err != nil {
 			return ComputeRequest{}, false, err
+		}
+	case r.addresses != nil:
+		// An address given before reservations existed, or kept across a
+		// restart: hold it, unless another instance already does.
+		ok, owner, cErr := r.addresses.claim(c.Spec.SubnetID, ip, c.Metadata.UID)
+		if cErr != nil {
+			return ComputeRequest{}, false, cErr
+		}
+		if !ok {
+			return ComputeRequest{}, false, fmt.Errorf("address %s is reserved by %s; recreate this instance to get another", ip, owner)
 		}
 	}
 
@@ -755,6 +785,11 @@ func (r *ComputeReconciler) finalize(ctx context.Context, c *resource.Compute) e
 			c.Status.SetPhase(resource.PhaseError, "ComputeError", err.Error())
 			_ = r.reg.Put(c)
 			return err
+		}
+		if r.addresses != nil && c.Status.IP != "" {
+			if err := r.addresses.release(c.Spec.SubnetID, c.Status.IP, c.Metadata.UID); err != nil {
+				return err
+			}
 		}
 		c.Metadata.RemoveFinalizer(resource.ComputeFinalizer)
 		c.Status.SetPhase(resource.PhaseDeleting, "Deleting", "instance removed")
