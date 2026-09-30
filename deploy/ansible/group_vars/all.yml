@@ -38,6 +38,9 @@ wan_sim:
 # routed on the Internet, so it cannot shadow a real address. 198.18.0.0/15
 # (RFC 2544) is the larger alternative for several blocks or upstreams.
 eip_block: "203.0.113.0/24"
+# The address of the block the edges answer public DNS zones on. Every edge
+# holds it, and upstream-sim's route spreads queries over them.
+dns_public_addr: "203.0.113.53"
 
 # upstream-sim, the provider's router. route_mode picks how it reaches the
 # block: "ecmp" spreads flows over every edge (L4 hash), "floating" sends them

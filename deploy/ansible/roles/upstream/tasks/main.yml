@@ -3,6 +3,13 @@
 ---
 # upstream-sim routes the public block to the edges, hosts the "inet" client
 # namespace, and NATs everything but the block towards the real LAN.
+# dig, for verify-upstream.yml to query the public DNS from the inet client.
+- name: Install the DNS tools
+  ansible.builtin.apt:
+    name: bind9-dnsutils
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Enable forwarding and L4 multipath hashing
   ansible.builtin.template:
     src: 60-upstream-sim.conf.j2

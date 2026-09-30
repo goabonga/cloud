@@ -9,8 +9,9 @@
 # public block is routed to the edges (every edge a next hop in ECMP mode, with
 # flows spread over them by the L4 hash); a packet for the block from inet is
 # answered by an edge, which marks it unreachable until the edges realise
-# public addresses; and the NAT towards the real LAN leaves the block alone
-# while inet can still reach the LAN through it.
+# public addresses; the public DNS the edges hold in the block answers and
+# refuses recursion; and the NAT towards the
+# real LAN leaves the block alone while inet can still reach the LAN through it.
 ---
 - name: Simulated provider
   hosts: upstream
@@ -69,6 +70,18 @@
       ansible.builtin.assert:
         that: verify_block_ping.stdout is search('From (' ~ (edge_ips | map('regex_escape') | join('|')) ~ ') .*[Uu]nreachable')
         fail_msg: "no edge answered: {{ verify_block_ping.stdout }}"
+
+    # The zone need not exist: an authoritative server refuses a name outside
+    # its zones, and never recurses for the client.
+    - name: Ask the public DNS for a name outside its zones
+      ansible.builtin.command: "ip netns exec inet dig +time=2 +tries=2 @{{ dns_public_addr }} example.org A"
+      register: verify_public_dns
+      changed_when: false
+
+    - name: The public DNS answers on the block and is not an open resolver
+      ansible.builtin.assert:
+        that: "verify_public_dns.stdout is search('status: REFUSED')"
+        fail_msg: "{{ verify_public_dns.stdout }}"
 
     - name: Read the NAT rules
       ansible.builtin.command: iptables -t nat -S POSTROUTING
