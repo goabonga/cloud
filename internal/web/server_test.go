@@ -16,11 +16,16 @@ import (
 
 func newServer(t *testing.T, apiURL string) http.Handler {
 	t.Helper()
+	return newServerWithIDP(t, apiURL, "")
+}
+
+func newServerWithIDP(t *testing.T, apiURL, idpURL string) http.Handler {
+	t.Helper()
 	static := fstest.MapFS{
 		"index.html":    {Data: []byte("<!doctype html><title>infra</title>")},
 		"assets/app.js": {Data: []byte("console.log('app')")},
 	}
-	srv, err := web.New(static, web.Options{APIBaseURL: apiURL})
+	srv, err := web.New(static, web.Options{APIBaseURL: apiURL, IDPBaseURL: idpURL})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -95,6 +100,27 @@ func TestProxiesAPI(t *testing.T) {
 	}
 	if gotAuth != "Bearer tok" {
 		t.Fatalf("authorization not forwarded: %q", gotAuth)
+	}
+}
+
+func TestProxiesIDPWithPrefixStripped(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	h := newServerWithIDP(t, "", backend.URL)
+	rec := get(t, h, "/idp/login")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("proxy status = %d", rec.Code)
+	}
+	if gotPath != "/login" {
+		t.Fatalf("proxied path = %q, want /login (prefix stripped)", gotPath)
 	}
 }
 

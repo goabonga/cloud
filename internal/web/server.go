@@ -32,9 +32,14 @@ type Server struct {
 type Options struct {
 	// APIBaseURL is the control-plane API to proxy /api requests to.
 	APIBaseURL string
+	// IDPBaseURL is the identity provider to proxy /idp requests to (its
+	// own routes sit at its origin's root, e.g. /login, /userinfo - the
+	// /idp prefix is stripped before forwarding).
+	IDPBaseURL string
 }
 
-// New builds a Server serving the SPA from static and proxying /api to the API.
+// New builds a Server serving the SPA from static and proxying /api to the API
+// and /idp to the identity provider.
 func New(static fs.FS, opts Options) (*Server, error) {
 	s := &Server{mux: http.NewServeMux(), static: static}
 
@@ -44,6 +49,14 @@ func New(static fs.FS, opts Options) (*Server, error) {
 			return nil, fmt.Errorf("web: invalid API URL %q: %w", opts.APIBaseURL, err)
 		}
 		s.mux.Handle("/api/", httputil.NewSingleHostReverseProxy(target))
+	}
+
+	if opts.IDPBaseURL != "" {
+		target, err := url.Parse(opts.IDPBaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("web: invalid IDP URL %q: %w", opts.IDPBaseURL, err)
+		}
+		s.mux.Handle("/idp/", http.StripPrefix("/idp", httputil.NewSingleHostReverseProxy(target)))
 	}
 
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
