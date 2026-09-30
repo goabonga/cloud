@@ -2,6 +2,13 @@
 
 All notable changes to this component are documented here.
 
+## [0.1.1] - 2026-09-30
+
+### Fixed
+
+- **deps**: bump the www-runtime group in /www with 3 updates (`7fbe9c2`)
+- **deps**: bump vite in /www in the www-bundler group (`1594d2f`)
+
 ## [0.1.0] - 2026-07-30
 
 ### Added

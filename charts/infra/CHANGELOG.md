@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.0.4] - 2026-09-30
+
+### Dependencies
+
+- Track `infra-www` `0.1.3`
+
 ## [0.0.2] - 2026-09-30
 
 ### Dependencies
