@@ -19,8 +19,8 @@ export default function Settings() {
     <section>
       <h2>Settings</h2>
       <p>
-        The dashboard talks to the control plane through this server&apos;s <code>/api</code> proxy. Paste a bearer token
-        issued by the identity provider (or a static API token); it is stored in your browser only.
+        Advanced: override the bearer token the dashboard uses to talk to the control plane, e.g. to use a static
+        machine token instead of your own signed-in session. This is stored in your browser only.
       </p>
       <form className="row" onSubmit={onSave}>
         <label>
