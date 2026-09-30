@@ -2,8 +2,7 @@
 # Copyright (c) 2026 Chris <goabonga@pm.me>
 ---
 # The reconcilers shell out to these, and the infra-agent package does not
-# depend on them. dnsmasq-base ships the binary without the dnsmasq service,
-# which would otherwise take port 53 from systemd-resolved.
+# depend on them.
 - name: Install the host tools the agent drives
   ansible.builtin.apt:
     name:
@@ -11,7 +10,6 @@
       - iptables
       - conntrack
       - cryptsetup-bin
-      - dnsmasq-base
       - ipvsadm
       - e2fsprogs
       - util-linux
