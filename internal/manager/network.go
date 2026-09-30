@@ -163,9 +163,22 @@ func (b *ExecBackend) EnsureAddress(ctx context.Context, iface, addrCIDR string)
 }
 
 // DeleteAddress removes addrCIDR from iface, ignoring an absent address.
+//
+// Whether the address is there is read first rather than inferred from the
+// error of `ip addr del`, whose wording for an absent address changed across
+// kernels ("Cannot assign requested address", then "Address not found").
 func (b *ExecBackend) DeleteAddress(ctx context.Context, iface, addrCIDR string) error {
-	out, err := b.run(ctx, "ip", "addr", "del", addrCIDR, "dev", iface)
-	if err != nil && !strings.Contains(out, "Cannot assign") && !strings.Contains(out, "does not exist") {
+	out, err := b.run(ctx, "ip", "-o", "addr", "show", "dev", iface)
+	if err != nil {
+		if strings.Contains(out, "does not exist") || strings.Contains(out, "Cannot find device") {
+			return nil
+		}
+		return fmt.Errorf("manager: show addresses of %s: %w: %s", iface, err, strings.TrimSpace(out))
+	}
+	if !strings.Contains(out, " "+addrCIDR+" ") {
+		return nil
+	}
+	if out, err := b.run(ctx, "ip", "addr", "del", addrCIDR, "dev", iface); err != nil {
 		return fmt.Errorf("manager: del address %s on %s: %w: %s", addrCIDR, iface, err, strings.TrimSpace(out))
 	}
 	return nil
