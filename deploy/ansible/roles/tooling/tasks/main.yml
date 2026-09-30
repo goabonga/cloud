@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# Terraform, the locally built provider and a ready-to-run demo workspace for
+# the lab user on the control host, so the stack can be exercised end to end
+# from inside the lab: ssh in, `infra-login`, `terraform apply`.
+- name: Check the provider binary was built
+  ansible.builtin.stat:
+    path: "{{ provider_binary }}"
+  delegate_to: localhost
+  become: false
+  register: tooling_provider_bin_stat
+
+- name: Fail when the provider binary is missing
+  ansible.builtin.fail:
+    msg: "Provider binary {{ provider_binary }} not found. Build it first with `make build-provider`."
+  when: not tooling_provider_bin_stat.stat.exists
+
+- name: Add the HashiCorp APT repository
+  ansible.builtin.deb822_repository:
+    name: hashicorp
+    types: deb
+    uris: https://apt.releases.hashicorp.com
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    signed_by: https://apt.releases.hashicorp.com/gpg
+
+- name: Install Terraform
+  ansible.builtin.apt:
+    name: terraform
+    update_cache: true
+
+# The provider is not published to a registry. Terraform searches
+# ~/.terraform.d/plugins as an implicit filesystem mirror, so a binary laid out
+# as <host>/<namespace>/<type>/<version>/<os_arch>/ is found by a plain
+# `terraform init`, without dev_overrides.
+- name: Create the provider mirror directory
+  ansible.builtin.file:
+    path: "{{ tooling_provider_dir }}"
+    state: directory
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0755"
+
+- name: Install the provider into the mirror
+  ansible.builtin.copy:
+    src: "{{ provider_binary }}"
+    dest: "{{ tooling_provider_dir }}/terraform-provider-infra_v{{ version }}"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0755"
+
+- name: Create the demo workspace and the infra config directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0700"
+  loop:
+    - "{{ tooling_workspace }}"
+    - "{{ tooling_config_dir }}"
+
+- name: Copy the Terraform demo into the workspace
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/terraform/{{ item.name }}"
+    dest: "{{ tooling_workspace }}/{{ item.name }}"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: main.tf, mode: "0644" }
+    - { name: provider.tf, mode: "0644" }
+    - { name: get-token.sh, mode: "0755" }
+
+- name: Deploy the Terraform IdP client secret
+  ansible.builtin.copy:
+    src: "{{ idp_client_secret_file }}"
+    dest: "{{ tooling_config_dir }}/terraform-client.secret"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0600"
+
+- name: Write the infra shell environment
+  ansible.builtin.template:
+    src: env.sh.j2
+    dest: "{{ tooling_config_dir }}/env.sh"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0644"
+
+- name: Source the infra shell environment from the lab user's bashrc
+  ansible.builtin.lineinfile:
+    path: "/home/{{ vm_user }}/.bashrc"
+    line: "[ -f {{ tooling_config_dir }}/env.sh ] && . {{ tooling_config_dir }}/env.sh"
+
+# Proves the mirror layout: init fails if Terraform cannot resolve the provider.
+- name: Initialise the demo workspace
+  ansible.builtin.command: terraform init -input=false -no-color
+  args:
+    chdir: "{{ tooling_workspace }}"
+  become: true
+  become_user: "{{ vm_user }}"
+  register: tooling_tf_init
+  changed_when: "'Installing goabonga/infra' in tooling_tf_init.stdout"

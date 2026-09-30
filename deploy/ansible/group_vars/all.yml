@@ -92,3 +92,11 @@ grafana_admin_password: "infra"
 
 # The dashboard binary, built beforehand with `make build-www`.
 www_binary: "{{ playbook_dir }}/../../build/infra-www"
+
+# Terraform tooling on the control host (tooling role). The provider binary is
+# built beforehand with `make build-provider`; the demo in terraform/ is copied
+# into the lab user's home, next to the IdP client secret it logs in with.
+provider_binary: "{{ playbook_dir }}/../../build/terraform-provider-infra"
+tooling_provider_dir: "/home/{{ vm_user }}/.terraform.d/plugins/registry.terraform.io/goabonga/infra/{{ version }}/linux_{{ deb_arch }}"
+tooling_workspace: "/home/{{ vm_user }}/infra-demo"
+tooling_config_dir: "/home/{{ vm_user }}/.config/infra"
