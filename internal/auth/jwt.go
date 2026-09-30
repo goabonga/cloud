@@ -25,20 +25,27 @@ func NewJWTAuthenticator(pub *ecdsa.PublicKey, issuer string) *JWTAuthenticator 
 	return &JWTAuthenticator{pub: pub, issuer: issuer}
 }
 
-// Authenticate verifies the bearer JWT and resolves its subject.
+// claims is the JWT payload issued by internal/idp: the standard registered
+// claims plus the subject's roles.
+type claims struct {
+	jwt.RegisteredClaims
+	Roles []string `json:"roles,omitempty"`
+}
+
+// Authenticate verifies the bearer JWT and resolves its subject and roles.
 func (a *JWTAuthenticator) Authenticate(r *http.Request) (*Identity, error) {
 	token, ok := bearerToken(r.Header.Get("Authorization"))
 	if !ok {
 		return nil, ErrUnauthenticated
 	}
-	claims := &jwt.RegisteredClaims{}
-	_, err := jwt.ParseWithClaims(token, claims, func(*jwt.Token) (any, error) {
+	c := &claims{}
+	_, err := jwt.ParseWithClaims(token, c, func(*jwt.Token) (any, error) {
 		return a.pub, nil
 	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithIssuer(a.issuer), jwt.WithExpirationRequired())
-	if err != nil || claims.Subject == "" {
+	if err != nil || c.Subject == "" {
 		return nil, ErrUnauthenticated
 	}
-	return &Identity{Subject: claims.Subject}, nil
+	return &Identity{Subject: c.Subject, Roles: c.Roles}, nil
 }
 
 // ParseECPublicKeyPEM decodes a PKIX PEM-encoded EC public key.

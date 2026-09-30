@@ -18,6 +18,17 @@ var ErrUnauthenticated = errors.New("auth: unauthenticated")
 // Identity is the authenticated principal behind a request.
 type Identity struct {
 	Subject string
+	Roles   []string
+}
+
+// HasRole reports whether the identity carries the named role.
+func (id *Identity) HasRole(role string) bool {
+	for _, r := range id.Roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
 }
 
 // Authenticator validates a request and resolves its identity.
