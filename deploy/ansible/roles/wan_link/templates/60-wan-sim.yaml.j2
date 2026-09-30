@@ -10,3 +10,13 @@ network:
         macaddress: "{{ me.wan_mac }}"
       addresses:
         - "{{ me.wan_ip }}/{{ wan_sim.prefix }}"
+{% if inventory_hostname in groups['edges'] %}
+      routes:
+        # The edges do not realise public addresses yet: answer for the block
+        # instead of sending it out the default route to the real LAN.
+        - to: "{{ eip_block }}"
+          type: unreachable
+        # The simulated Internet client sits behind upstream-sim.
+        - to: "{{ upstream.inet_cidr }}"
+          via: "{{ (vms | selectattr('name', 'equalto', groups['upstream'] | first) | first).wan_ip }}"
+{% endif %}

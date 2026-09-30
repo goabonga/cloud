@@ -1,0 +1,37 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+#
+# Managed by Ansible. Idempotent: every step replaces or checks before adding.
+set -eu
+
+# The public block, towards the edges.
+{% if upstream.route_mode == 'ecmp' %}
+ip route replace {{ eip_block }}{% for h in groups['edges'] %} nexthop via {{ (vms | selectattr('name', 'equalto', h) | first).wan_ip }}{% endfor %}
+
+{% else %}
+ip route replace {{ eip_block }} via {{ upstream.floating_next_hop }}
+{% endif %}
+
+# The "inet" client: a namespace on the far side of the provider.
+ip netns add inet 2>/dev/null || true
+if ! ip link show veth-u >/dev/null 2>&1; then
+    ip link add veth-u type veth peer name veth-i
+    ip link set veth-i netns inet
+fi
+ip addr replace {{ upstream.inet_gateway }}/{{ upstream.inet_cidr.split('/')[1] }} dev veth-u
+ip link set veth-u up
+ip -n inet link set lo up
+ip -n inet addr replace {{ upstream.inet_client }}/{{ upstream.inet_cidr.split('/')[1] }} dev veth-i
+ip -n inet link set veth-i up
+ip -n inet route replace default via {{ upstream.inet_gateway }}
+
+# NAT to the real LAN for the inet client and the transit, never for the
+# public block: those addresses have to stay the lab's "public" ones.
+lan=$(ip route show default | awk '{print $5; exit}')
+for rule in "-s {{ eip_block }} -j RETURN" "-d {{ eip_block }} -j RETURN"; do
+    # shellcheck disable=SC2086 # the rule is split into iptables arguments on purpose
+    iptables -t nat -C POSTROUTING $rule 2>/dev/null || iptables -t nat -I POSTROUTING 1 $rule
+done
+iptables -t nat -C POSTROUTING -o "$lan" -j MASQUERADE 2>/dev/null ||
+    iptables -t nat -A POSTROUTING -o "$lan" -j MASQUERADE
