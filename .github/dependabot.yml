@@ -115,11 +115,23 @@ updates:
       time: "06:00"
       timezone: "Europe/Paris"
     open-pull-requests-limit: 5
+    # Split by whether the bump reaches the shipped bundle, so one PR never
+    # mixes a change that needs an infra-spa release with one that does not.
+    # A dependency joins the first group it matches, so www-bundler must stay
+    # ahead of www-tooling: vite and its plugins are devDependencies, but they
+    # decide the emitted assets.
     groups:
-      www-deps:
+      www-runtime:
+        applies-to: version-updates
+        dependency-type: production
+      www-bundler:
         applies-to: version-updates
         patterns:
-          - "*"
+          - "vite"
+          - "@vitejs/*"
+      www-tooling:
+        applies-to: version-updates
+        dependency-type: development
     commit-message:
       prefix: "chore(deps)"
     labels:
