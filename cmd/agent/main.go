@@ -78,7 +78,7 @@ func run() error {
 		manager.NewSubnetReconciler(subnets, vpcs, net).WithNodeIdentity(nodes, nodeID),
 		manager.NewIGWReconciler(igws, vpcs, net),
 		manager.NewPeeringReconciler(peerings, vpcs, manager.NewExecPeering()),
-		manager.NewDNSReconciler(dnsZones, dnsRecords, vpcs, manager.NewExecDNS(filepath.Join(*stateDir, "dns"))),
+		manager.NewDNSReconciler(dnsZones, dnsRecords, vpcs, manager.NewNativeDNS()),
 		manager.NewDiskReconciler(disks, manager.NewExecDiskBackend(filepath.Join(*stateDir, "disks")), master),
 		manager.NewSecurityGroupReconciler(sgs, sgRules, manager.NewExecSecurityGroup()),
 		manager.NewACLReconciler(acls, manager.NewExecFirewall()),
