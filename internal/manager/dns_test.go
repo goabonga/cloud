@@ -24,11 +24,12 @@ import (
 type fakeDNSBackend struct {
 	vpc     map[string]*manager.DNSView
 	addrs   map[string]string
+	public  map[string]*manager.DNSView
 	stopped []string
 }
 
 func newFakeDNSBackend() *fakeDNSBackend {
-	return &fakeDNSBackend{vpc: map[string]*manager.DNSView{}, addrs: map[string]string{}}
+	return &fakeDNSBackend{vpc: map[string]*manager.DNSView{}, addrs: map[string]string{}, public: map[string]*manager.DNSView{}}
 }
 
 func (f *fakeDNSBackend) ServeVPC(_ context.Context, vpcID, _, addr string, view *manager.DNSView) error {
@@ -48,6 +49,11 @@ func (f *fakeDNSBackend) ServedVPCs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func (f *fakeDNSBackend) ServePublic(_ context.Context, addr string, view *manager.DNSView) error {
+	f.public[addr] = view
+	return nil
 }
 
 func domains(v *manager.DNSView) []string {
@@ -71,7 +77,7 @@ func TestDNSGivesEachVPCItsPrivateZonesPlusThePublicOnes(t *testing.T) {
 	env.putRecord(t, "r-www", "z-pub", "www", "A", "203.0.113.10")
 
 	be := newFakeDNSBackend()
-	if err := manager.NewDNSReconciler(env.zones, env.records, env.vpcs, be).ReconcileAll(context.Background()); err != nil {
+	if err := manager.NewDNSReconciler(env.zones, env.records, env.vpcs, be).WithPublicAddress("203.0.113.53").ReconcileAll(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if got := domains(be.vpc["vpc-1"]); !slices.Equal(got, []string{"example.test", "internal.example"}) || !be.vpc["vpc-1"].Forward {
@@ -82,6 +88,10 @@ func TestDNSGivesEachVPCItsPrivateZonesPlusThePublicOnes(t *testing.T) {
 	}
 	if be.addrs["vpc-1"] != "10.20.0.1" {
 		t.Fatalf("vpc-1 resolver on %q, want its first address 10.20.0.1", be.addrs["vpc-1"])
+	}
+	pub := be.public["203.0.113.53"]
+	if pub == nil || pub.Forward || !slices.Equal(domains(pub), []string{"example.test"}) {
+		t.Fatalf("public view: %+v", pub)
 	}
 	for _, uid := range []string{"z-priv", "z-pub"} {
 		if z, _ := env.zones.Get(uid); z.Status.Phase != resource.PhaseReady {

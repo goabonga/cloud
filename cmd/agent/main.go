@@ -78,7 +78,8 @@ func run() error {
 		manager.NewSubnetReconciler(subnets, vpcs, net).WithNodeIdentity(nodes, nodeID),
 		manager.NewIGWReconciler(igws, vpcs, net),
 		manager.NewPeeringReconciler(peerings, vpcs, manager.NewExecPeering()),
-		manager.NewDNSReconciler(dnsZones, dnsRecords, vpcs, manager.NewNativeDNS()),
+		// GOA_DNS_PUBLIC_ADDR (set on the edges) answers the public zones.
+		manager.NewDNSReconciler(dnsZones, dnsRecords, vpcs, manager.NewNativeDNS()).WithPublicAddress(os.Getenv("GOA_DNS_PUBLIC_ADDR")),
 		manager.NewDiskReconciler(disks, manager.NewExecDiskBackend(filepath.Join(*stateDir, "disks")), master),
 		manager.NewSecurityGroupReconciler(sgs, sgRules, manager.NewExecSecurityGroup()),
 		manager.NewACLReconciler(acls, manager.NewExecFirewall()),

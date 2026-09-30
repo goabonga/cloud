@@ -25,12 +25,14 @@ type DNSBackend interface {
 	StopVPC(ctx context.Context, vpcID string) error
 	// ServedVPCs lists the VPCs whose resolver runs on this host.
 	ServedVPCs() []string
+	// ServePublic makes addr, held by the host, answer from view.
+	ServePublic(ctx context.Context, addr string, view *DNSView) error
 }
 
 // NativeDNS is the DNSBackend that serves from the agent process itself, on
-// each VPC's resolver address, which it assigns as a /32 on the VPC bridge -
-// on every host, like the subnet gateways, so an instance always queries its
-// own host.
+// addresses it assigns with iproute2: a VPC's resolver address as a /32 on the
+// VPC bridge - on every host, like the subnet gateways, so an instance always
+// queries its own host - and the public address as a /32 on the loopback.
 type NativeDNS struct {
 	run       Runner
 	listeners *DNSListeners
@@ -79,6 +81,14 @@ func (d *NativeDNS) ServedVPCs() []string {
 	return out
 }
 
+// ServePublic implements DNSBackend.
+func (d *NativeDNS) ServePublic(ctx context.Context, addr string, view *DNSView) error {
+	if out, err := d.run(ctx, "ip", "addr", "replace", addr+"/32", "dev", "lo"); err != nil {
+		return fmt.Errorf("manager: add public dns address %s: %w: %s", addr, err, strings.TrimSpace(out))
+	}
+	return d.listeners.Serve(addr, view)
+}
+
 // DNSZoneRegistry is the typed store of DNS zones.
 type DNSZoneRegistry = registry.Registry[resource.DNSZoneSpec, resource.DNSZoneStatus]
 
@@ -89,19 +99,28 @@ type DNSRecordRegistry = registry.Registry[resource.DNSRecordSpec, resource.DNSR
 // first address - the address its instances are handed as their nameserver -
 // that answers authoritatively for the private zones attached to the VPC and
 // for every public zone, and forwards any other name to the host's resolvers.
-// Views are rebuilt from the store
+// With a public address configured, the host also answers every public zone
+// there, authoritatively and nothing else. Views are rebuilt from the store
 // every pass, so a zone or record change (neither carries a finalizer) is
 // served on the next tick.
 type DNSReconciler struct {
-	zones   *DNSZoneRegistry
-	records *DNSRecordRegistry
-	vpcs    *VPCRegistry
-	backend DNSBackend
+	zones      *DNSZoneRegistry
+	records    *DNSRecordRegistry
+	vpcs       *VPCRegistry
+	backend    DNSBackend
+	publicAddr string
 }
 
 // NewDNSReconciler returns a DNS pass backed by backend.
 func NewDNSReconciler(zones *DNSZoneRegistry, records *DNSRecordRegistry, vpcs *VPCRegistry, backend DNSBackend) *DNSReconciler {
 	return &DNSReconciler{zones: zones, records: records, vpcs: vpcs, backend: backend}
+}
+
+// WithPublicAddress makes the host answer the public zones on addr, e.g. an
+// address of the public block routed to the edges.
+func (r *DNSReconciler) WithPublicAddress(addr string) *DNSReconciler {
+	r.publicAddr = addr
+	return r
 }
 
 // Name identifies the reconcile pass.
@@ -151,7 +170,16 @@ func (r *DNSReconciler) ReconcileAll(ctx context.Context) error {
 			}
 		}
 	}
-	r.updateStatuses(zones, records, served, badRecords)
+	publicServed := false
+	if r.publicAddr != "" {
+		if err := r.backend.ServePublic(ctx, r.publicAddr, &DNSView{Zones: public}); err != nil {
+			errs = append(errs, fmt.Errorf("public dns: %w", err))
+		} else {
+			publicServed = true
+		}
+	}
+
+	r.updateStatuses(zones, records, served, publicServed, badRecords)
 	return errors.Join(errs...)
 }
 
@@ -206,14 +234,14 @@ func privateZonesOf(vpcID string, zones []resource.DNSZone, built map[string]DNS
 }
 
 // updateStatuses records each zone's and record's phase, writing only on change.
-func (r *DNSReconciler) updateStatuses(zones []resource.DNSZone, records []resource.DNSRecord, served map[string]bool, bad map[string]error) {
+func (r *DNSReconciler) updateStatuses(zones []resource.DNSZone, records []resource.DNSRecord, served map[string]bool, publicServed bool, bad map[string]error) {
 	zoneReady := map[string]bool{}
 	for i := range zones {
 		z := &zones[i]
 		if z.Metadata.IsDeleting() {
 			continue
 		}
-		phase, reason, msg := zonePhaseFor(z, served)
+		phase, reason, msg := zonePhaseFor(z, served, publicServed)
 		zoneReady[z.Metadata.UID] = phase == resource.PhaseReady
 		if z.Status.Phase == phase {
 			continue
@@ -248,11 +276,11 @@ func (r *DNSReconciler) updateStatuses(zones []resource.DNSZone, records []resou
 }
 
 // zonePhaseFor derives a zone's phase: a private zone is served once every
-// VPC it is attached to has a resolver on this host; a public zone once some
-// VPC resolver serves it.
-func zonePhaseFor(z *resource.DNSZone, served map[string]bool) (resource.Phase, string, string) {
+// VPC it is attached to has a resolver on this host; a public zone once the
+// public listener or some VPC resolver serves it.
+func zonePhaseFor(z *resource.DNSZone, served map[string]bool, publicServed bool) (resource.Phase, string, string) {
 	if z.Spec.Visibility == "public" {
-		if len(served) > 0 {
+		if publicServed || len(served) > 0 {
 			return resource.PhaseReady, "Served", "public zone served"
 		}
 		return resource.PhasePending, "WaitingForResolver", "no resolver serves it yet"
