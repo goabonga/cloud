@@ -35,6 +35,7 @@ func run() error {
 	ttl := flag.Duration("ttl", time.Hour, "token lifetime")
 	stateDir := flag.String("state-dir", envOr("GOA_IDP_STATE_DIR", "./idp-state"), "state directory")
 	stateDSN := flag.String("state-dsn", envOr("GOA_IDP_STATE_DSN", ""), "PostgreSQL DSN (enables the HA backend)")
+	consoleURL := flag.String("console-url", envOr("GOA_WWW_URL", "http://localhost:8088"), "console URL where a human approves a device authorization")
 	flag.Parse()
 
 	key, err := loadOrGenerateKey()
@@ -59,7 +60,7 @@ func run() error {
 		return err
 	}
 
-	server := idp.NewServer(idp.NewIssuer(key, *issuerURL, *ttl), clients, users, &key.PublicKey, *issuerURL)
+	server := idp.NewServer(idp.NewIssuer(key, *issuerURL, *ttl), clients, users, &key.PublicKey, *issuerURL, *consoleURL)
 
 	log.Printf("%s listening on %s (issuer %s)", meta.Line("infra-idp", Version), *addr, *issuerURL)
 	pub, err := idp.MarshalPublicKeyPEM(&key.PublicKey)
