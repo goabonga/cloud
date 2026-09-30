@@ -591,7 +591,7 @@ jobs:
   sbom:
     name: sbom (${{ matrix.component }})
     needs: container
-    if: "!cancelled() && !failure()"
+    if: needs.container.result == 'success'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -644,7 +644,7 @@ jobs:
   grype:
     name: grype (${{ matrix.component }})
     needs: sbom
-    if: "!cancelled() && !failure()"
+    if: needs.sbom.result == 'success'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -745,7 +745,7 @@ jobs:
   deb-validate:
     name: deb-validate (${{ matrix.component }})
     needs: deb
-    if: "!cancelled() && !failure()"
+    if: needs.deb.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
