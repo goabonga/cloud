@@ -50,6 +50,6 @@ LABEL org.opencontainers.image.title="infra-www" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.vendor="Chris <goabonga@pm.me>"
 COPY --from=build /out/app /usr/local/bin/app
-USER nonroot:nonroot
+USER 65532:65532
 EXPOSE 8088
 ENTRYPOINT ["/usr/local/bin/app"]

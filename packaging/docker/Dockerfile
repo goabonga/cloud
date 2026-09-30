@@ -50,8 +50,9 @@ LABEL org.opencontainers.image.title="${COMPONENT}" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.vendor="Chris <goabonga@pm.me>"
 COPY --from=build /out/app /usr/local/bin/app
-# The distroless nonroot user is uid 65532. State is written under /var/lib
+# Numeric uid/gid of the distroless nonroot user, so runAsNonRoot can
+# verify it without resolving a name. State is written under /var/lib
 # when GOA_STATE_DIR points there; mount it as a volume with matching
 # ownership, or point the daemon at Postgres via GOA_STATE_DSN.
-USER nonroot:nonroot
+USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/app"]
