@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: dependabot-auto-merge
+
+# Applies the `auto-merge` label to a Dependabot PR once its `ci` run has
+# gone green, so the PR flows into auto-merge-signed.yml without a maintainer
+# labelling it by hand.
+#
+# Triggered by `workflow_run` on ci.yml rather than `pull_request_target`: the
+# same fork-safety argument as dependabot-rewrite.yml applies - a fork can
+# only ever complete a `pull_request`-triggered run, and this listens for that
+# completion in the base-repo context instead of running PR content directly.
+#
+# The label must be applied by a token that is a repository collaborator:
+# auto-merge-signed.yml's own gate re-verifies the labeller's write access via
+# `collaborators/{login}/permission`, and github-actions[bot] is not a
+# collaborator. RELEASE_PAT (the maintainer's classic PAT) is used instead, so
+# the resulting `labeled` event's sender passes that check.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    name: label green Dependabot PRs for auto-merge
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Add the auto-merge label
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::RELEASE_PAT is not configured; cannot label as a collaborator identity, skipping"
+            exit 0
+          fi
+          if [ -z "$PR_NUMBER" ]; then
+            echo "::error::workflow_run carried no pull request"
+            exit 1
+          fi
+          gh pr edit "$PR_NUMBER" --add-label auto-merge
