@@ -53,9 +53,22 @@ Override the endpoint if your control host differs:
 terraform apply -var 'endpoint=http://<control-ip>:8080'
 ```
 
-When it completes, `terraform output compute_ip` shows the address the agent
-assigned to the instance, and the dashboard (`http://<control-ip>:8088`) and
-Grafana (`http://<control-ip>:3000`) reflect the new resources.
+When it completes, `terraform output` shows the addresses the agents assigned
+to the two instances (`compute_ip`, `whoami_ip`) and to the load balancer
+(`lb_address`), and the dashboard (`http://<control-ip>:8088`) and Grafana
+(`http://<control-ip>:3000`) reflect the new resources.
+
+The load balancer round-robins port 80 between nginx and traefik/whoami, so
+repeated requests to its address from an agent host alternate between the
+nginx welcome page and a whoami report:
+
+```bash
+ssh ubuntu@<agent-ip> 'for i in 1 2 3 4; do curl -s http://<lb_address>/ | head -1; done'
+```
+
+Each agent host realises the VPC on its own bridge, with no overlay between
+hosts, so a load balancer only reaches the backends running on the host the
+request arrives on.
 
 ## Tear down
 
