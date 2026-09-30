@@ -144,10 +144,12 @@ func (b *ExecBackend) DeleteBridge(ctx context.Context, name string) error {
 	return nil
 }
 
-// EnsureAddress assigns addrCIDR to iface, treating an existing address as ok.
+// EnsureAddress assigns addrCIDR to iface. `ip addr replace` succeeds whether
+// or not the address is already there, so every reconcile pass can call it;
+// matching the error text of `ip addr add` instead breaks whenever the kernel
+// rewords it, as it did from "File exists" to "Address already assigned".
 func (b *ExecBackend) EnsureAddress(ctx context.Context, iface, addrCIDR string) error {
-	out, err := b.run(ctx, "ip", "addr", "add", addrCIDR, "dev", iface)
-	if err != nil && !strings.Contains(out, "File exists") {
+	if out, err := b.run(ctx, "ip", "addr", "replace", addrCIDR, "dev", iface); err != nil {
 		return fmt.Errorf("manager: add address %s on %s: %w: %s", addrCIDR, iface, err, strings.TrimSpace(out))
 	}
 	return nil

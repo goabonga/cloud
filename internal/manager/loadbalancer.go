@@ -79,7 +79,9 @@ func NewExecLBWithRunner(run Runner) *ExecLB {
 // EnsureService binds the VIP, ensures the virtual service and reconciles its
 // real servers to match the desired set.
 func (b *ExecLB) EnsureService(ctx context.Context, vip string, port int, protocol, algorithm, bridge string, servers []LBRealServer) error {
-	if out, err := b.run(ctx, "ip", "addr", "add", vip+"/32", "dev", bridge); err != nil && !strings.Contains(out, "File exists") {
+	// replace, not add: idempotent without matching iproute2's error text
+	// (see ExecBackend.EnsureAddress).
+	if out, err := b.run(ctx, "ip", "addr", "replace", vip+"/32", "dev", bridge); err != nil {
 		return fmt.Errorf("manager: add vip %s on %s: %w: %s", vip, bridge, err, strings.TrimSpace(out))
 	}
 	proto := ipvsProtoFlag(protocol)
