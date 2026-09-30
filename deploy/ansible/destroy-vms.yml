@@ -50,3 +50,26 @@
         path: "{{ images_dir }}/{{ item.name }}.ci"
         state: absent
       loop: "{{ vms }}"
+
+    - name: Look up the wan-sim transit network
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} net-info {{ wan_sim.network }}"
+      register: wan_sim_info
+      changed_when: false
+      failed_when: false
+
+    - name: Stop and remove the wan-sim network
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} {{ item }} {{ wan_sim.network }}"
+      loop:
+        - net-destroy
+        - net-undefine
+      when: wan_sim_info.rc == 0
+      register: wan_sim_removal
+      failed_when:
+        - wan_sim_removal.rc != 0
+        - "'network is not active' not in wan_sim_removal.stderr"
+      changed_when: wan_sim_removal.rc == 0
+
+    - name: Remove the wan-sim network definition file
+      ansible.builtin.file:
+        path: "{{ images_dir }}/{{ wan_sim.network }}.xml"
+        state: absent

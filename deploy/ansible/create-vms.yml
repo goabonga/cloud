@@ -38,6 +38,32 @@
         msg: "Base image {{ base_image }} not found. Place an Ubuntu 24.04 cloud qcow2 into {{ images_dir }}."
       when: not base_image_stat.stat.exists
 
+    - name: Look up the wan-sim transit network
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} net-info {{ wan_sim.network }}"
+      register: wan_sim_info
+      changed_when: false
+      failed_when: false
+
+    - name: Render the wan-sim network definition
+      ansible.builtin.template:
+        src: wan-sim-network.xml.j2
+        dest: "{{ images_dir }}/{{ wan_sim.network }}.xml"
+        mode: "0644"
+      when: wan_sim_info.rc != 0
+
+    - name: Define the wan-sim network
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} net-define {{ images_dir }}/{{ wan_sim.network }}.xml"
+      when: wan_sim_info.rc != 0
+      changed_when: true
+
+    - name: Start the wan-sim network and start it with libvirtd
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} {{ item }} {{ wan_sim.network }}"
+      loop:
+        - net-autostart
+        - net-start
+      when: "wan_sim_info.rc != 0 or wan_sim_info.stdout is search('Active:\\s+no')"
+      changed_when: true
+
     - name: List existing domains
       ansible.builtin.command: "virsh --connect {{ libvirt_uri }} list --all --name"
       register: existing_domains
