@@ -20,10 +20,15 @@
 # Then, as your normal user (not under sudo):
 #   ansible-playbook --ask-become-pass site.yml
 ---
+# ansible.cfg turns become on for every play, which this one must not inherit:
+# it writes into the operator's checkout, where root-owned credentials would be
+# unreadable to the later lookups, and it would prompt for a sudo password it
+# has no use for.
 - name: Generate local credentials
   hosts: localhost
   connection: local
   gather_facts: false
+  become: false
   roles:
     - credentials
 
