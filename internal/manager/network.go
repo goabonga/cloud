@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -50,7 +51,30 @@ type NetworkBackend interface {
 	DeleteNAT(ctx context.Context, sourceCIDR, hostIface string) error
 	// DefaultInterface returns the host's default-route interface.
 	DefaultInterface(ctx context.Context) (string, error)
+	// EnsureNodePort gives the host a port of its own on the VPC bridge: a
+	// veth pair whose peer end is enslaved to bridge and whose port end, with
+	// a MAC of its own, carries this host's address in each subnet. Idempotent.
+	EnsureNodePort(ctx context.Context, bridge, port, peer string) error
+	// DeleteNodePort removes the pair. Removing an absent port is not an error.
+	DeleteNodePort(ctx context.Context, port string) error
+	// EnsureGatewayAddress assigns a subnet gateway to the bridge without the
+	// subnet's connected route, which the node port carries instead. An
+	// existing address lacking that flag is re-added with it. Idempotent.
+	EnsureGatewayAddress(ctx context.Context, bridge, addrCIDR string) error
 }
+
+// The subnet gateways sit on the VPC bridge, which takes the same anycast MAC
+// on every host (see overlay.go). Traffic the host itself sends into the VPC -
+// to an instance on another host, or on behalf of a load balancer - must not
+// leave with that MAC: the reply would be taken by the receiving host's own
+// bridge. It leaves through the node port instead, a veth whose host end has
+// a MAC of its own and one address per subnet unique to this host, and which
+// carries the subnets' connected routes. arp_ignore=1 on both keeps each one
+// answering ARP only for the addresses it holds.
+
+// nodePortName and nodePortPeerName derive the two ends of a VPC's node port.
+func nodePortName(uid string) string     { return ifaceName("np-", uid) }
+func nodePortPeerName(uid string) string { return ifaceName("nb-", uid) }
 
 // bridgeName derives a valid, deterministic bridge interface name from a UID,
 // hashing when a sanitized "br-<uid>" would exceed the kernel length limit.
@@ -222,4 +246,64 @@ func (b *ExecBackend) DefaultInterface(ctx context.Context) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("manager: no default-route interface found")
+}
+
+// EnsureNodePort creates, attaches and brings up the node port.
+func (b *ExecBackend) EnsureNodePort(ctx context.Context, bridge, port, peer string) error {
+	exists, err := b.BridgeExists(ctx, port)
+	if err != nil {
+		return err
+	}
+	mtu := strconv.Itoa(overlayMTU)
+	steps := [][]string{}
+	if !exists {
+		steps = append(steps, []string{"ip", "link", "add", port, "mtu", mtu, "type", "veth", "peer", "name", peer, "mtu", mtu})
+	}
+	steps = append(steps,
+		[]string{"ip", "link", "set", peer, "master", bridge},
+		[]string{"ip", "link", "set", peer, "up"},
+		[]string{"ip", "link", "set", port, "up"},
+		[]string{"sysctl", "-w", "net.ipv4.conf." + bridge + ".arp_ignore=1"},
+		[]string{"sysctl", "-w", "net.ipv4.conf." + port + ".arp_ignore=1"},
+	)
+	for _, st := range steps {
+		if out, err := b.run(ctx, st[0], st[1:]...); err != nil {
+			return fmt.Errorf("manager: node port %q %v: %w: %s", port, st, err, strings.TrimSpace(out))
+		}
+	}
+	return nil
+}
+
+// DeleteNodePort removes the node port's veth pair.
+func (b *ExecBackend) DeleteNodePort(ctx context.Context, port string) error {
+	out, err := b.run(ctx, "ip", "link", "del", port)
+	if err != nil && !strings.Contains(out, "Cannot find device") && !strings.Contains(out, "does not exist") {
+		return fmt.Errorf("manager: delete node port %q: %w: %s", port, err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// EnsureGatewayAddress assigns addrCIDR to bridge with noprefixroute. `ip addr
+// replace` does not update the flags of an address already present, so one
+// assigned before the node port existed is deleted and added again.
+func (b *ExecBackend) EnsureGatewayAddress(ctx context.Context, bridge, addrCIDR string) error {
+	out, err := b.run(ctx, "ip", "-o", "-4", "addr", "show", "dev", bridge)
+	if err != nil {
+		return fmt.Errorf("manager: show addresses of %q: %w: %s", bridge, err, strings.TrimSpace(out))
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, " inet "+addrCIDR+" ") {
+			continue
+		}
+		if strings.Contains(line, " noprefixroute ") {
+			return nil
+		}
+		if err := b.DeleteAddress(ctx, bridge, addrCIDR); err != nil {
+			return err
+		}
+	}
+	if out, err := b.run(ctx, "ip", "addr", "add", addrCIDR, "dev", bridge, "noprefixroute"); err != nil {
+		return fmt.Errorf("manager: add gateway %s on %s: %w: %s", addrCIDR, bridge, err, strings.TrimSpace(out))
+	}
+	return nil
 }

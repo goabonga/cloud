@@ -5,6 +5,7 @@ package manager
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -799,7 +800,46 @@ func (r *ComputeReconciler) usedIPs(exclude string) (map[string]bool, error) {
 	return used, nil
 }
 
-// allocateIP returns the first free host address in cidr, scanning .10 upward.
+// maxNodePorts is how many hosts get an address of their own in each subnet
+// (see nodeAddress). allocateIP never hands those addresses out.
+const maxNodePorts = 5
+
+// nodeAddress returns the address the host ranked rank holds in cidr on its
+// node port: counting down from the last usable host, so the addresses stay
+// clear of allocateIP, which counts up from .10.
+func nodeAddress(cidr string, rank int) (string, error) {
+	if rank < 0 || rank >= maxNodePorts {
+		return "", fmt.Errorf("manager: node rank %d has no address: only %d hosts get one per subnet", rank, maxNodePorts)
+	}
+	last, ipnet, err := lastHost(cidr)
+	if err != nil {
+		return "", err
+	}
+	addr := last - uint32(rank)                                               // #nosec G115 -- rank is bounded to [0, maxNodePorts) above
+	ip := net.IPv4(byte(addr>>24), byte(addr>>16), byte(addr>>8), byte(addr)) // #nosec G115 -- extracting octets of a uint32
+	if !ipnet.Contains(ip) {
+		return "", fmt.Errorf("manager: subnet %s is too small for node addresses", cidr)
+	}
+	return ip.String(), nil
+}
+
+// lastHost returns the last usable IPv4 host of cidr as an integer.
+func lastHost(cidr string) (uint32, *net.IPNet, error) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return 0, nil, fmt.Errorf("manager: invalid cidr %q: %w", cidr, err)
+	}
+	base := ipnet.IP.To4()
+	if base == nil {
+		return 0, nil, fmt.Errorf("manager: only IPv4 subnets are supported: %q", cidr)
+	}
+	ones, bits := ipnet.Mask.Size()
+	size := uint32(1) << uint(bits-ones) // #nosec G115 -- bits-ones is in [0, 32] for IPv4
+	return binary.BigEndian.Uint32(base) + size - 2, ipnet, nil
+}
+
+// allocateIP returns the first free host address in cidr, scanning .10 upward
+// and skipping the addresses reserved for node ports.
 func allocateIP(cidr string, used map[string]bool) (string, error) {
 	_, ipnet, err := net.ParseCIDR(cidr)
 	if err != nil {
@@ -812,6 +852,9 @@ func allocateIP(cidr string, used map[string]bool) (string, error) {
 	for i := 10; i < 250; i++ {
 		cand := net.IPv4(base[0], base[1], base[2], byte(i))
 		if !ipnet.Contains(cand) {
+			continue
+		}
+		if last, _, lErr := lastHost(cidr); lErr == nil && binary.BigEndian.Uint32(cand.To4()) > last-maxNodePorts {
 			continue
 		}
 		if s := cand.String(); !used[s] {

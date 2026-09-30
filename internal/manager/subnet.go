@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
+	"strconv"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/registry"
@@ -20,9 +22,11 @@ type SubnetRegistry = registry.Registry[resource.SubnetSpec, resource.SubnetStat
 // SubnetReconciler realizes a subnet by assigning its gateway address to the
 // parent VPC's bridge.
 type SubnetReconciler struct {
-	reg  *SubnetRegistry
-	vpcs *VPCRegistry
-	net  NetworkBackend
+	reg      *SubnetRegistry
+	vpcs     *VPCRegistry
+	net      NetworkBackend
+	nodes    *NodeRegistry
+	nodeName string
 }
 
 // NewSubnetReconciler returns a reconciler backed by reg, the VPC store and net.
@@ -30,8 +34,69 @@ func NewSubnetReconciler(reg *SubnetRegistry, vpcs *VPCRegistry, net NetworkBack
 	return &SubnetReconciler{reg: reg, vpcs: vpcs, net: net}
 }
 
+// WithNodeIdentity tells the reconciler which registered node it runs on, so
+// the host takes its own rank's address on the node port. Without it, or before
+// the node is registered, the host takes rank 0: right for a single host.
+func (r *SubnetReconciler) WithNodeIdentity(nodes *NodeRegistry, nodeName string) *SubnetReconciler {
+	r.nodes, r.nodeName = nodes, nodeName
+	return r
+}
+
 // Name identifies the reconcile pass.
 func (r *SubnetReconciler) Name() string { return resource.KindSubnet }
+
+// nodeRank is this host's position among the registered nodes, by UID.
+func (r *SubnetReconciler) nodeRank() (int, error) {
+	if r.nodes == nil || r.nodeName == "" {
+		return 0, nil
+	}
+	nodes, err := r.nodes.List()
+	if err != nil {
+		return 0, fmt.Errorf("manager: list nodes: %w", err)
+	}
+	uids := make([]string, 0, len(nodes))
+	for i := range nodes {
+		uids = append(uids, nodes[i].Metadata.UID)
+	}
+	slices.Sort(uids)
+	if i := slices.Index(uids, r.nodeName); i >= 0 {
+		return i, nil
+	}
+	return 0, nil
+}
+
+// syncNodeAddress puts this host's address for cidr on the node port and
+// removes the other ranks' addresses, which a change in the node set can leave
+// behind.
+func (r *SubnetReconciler) syncNodeAddress(ctx context.Context, port, cidr string) error {
+	rank, err := r.nodeRank()
+	if err != nil {
+		return err
+	}
+	prefix := "/" + strconv.Itoa(prefixLen(cidr))
+	for i := 0; i < maxNodePorts; i++ {
+		addr, aErr := nodeAddress(cidr, i)
+		if aErr != nil {
+			if i == rank {
+				return aErr
+			}
+			continue
+		}
+		if i == rank {
+			err = r.net.EnsureAddress(ctx, port, addr+prefix)
+		} else {
+			err = r.net.DeleteAddress(ctx, port, addr+prefix)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if rank >= maxNodePorts {
+		_, err = nodeAddress(cidr, rank)
+		return err
+	}
+	return nil
+}
 
 // ReconcileAll reconciles every subnet, collecting per-subnet errors.
 func (r *SubnetReconciler) ReconcileAll(ctx context.Context) error {
@@ -88,8 +153,13 @@ func (r *SubnetReconciler) ensure(ctx context.Context, sn *resource.Subnet) erro
 		return err
 	}
 	sn.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "assigning gateway")
-	if err := r.net.EnsureAddress(ctx, bridge, gwCIDR); err != nil {
+	if err := r.net.EnsureGatewayAddress(ctx, bridge, gwCIDR); err != nil {
 		sn.Status.SetPhase(resource.PhaseError, "AddressError", err.Error())
+		_ = r.reg.Put(sn)
+		return err
+	}
+	if err := r.syncNodeAddress(ctx, nodePortName(sn.Spec.VPCID), sn.Spec.CIDR); err != nil {
+		sn.Status.SetPhase(resource.PhaseError, "NodeAddressError", err.Error())
 		_ = r.reg.Put(sn)
 		return err
 	}
@@ -106,6 +176,12 @@ func (r *SubnetReconciler) ensure(ctx context.Context, sn *resource.Subnet) erro
 func (r *SubnetReconciler) finalize(ctx context.Context, sn *resource.Subnet) error {
 	if sn.Metadata.HasFinalizer(resource.SubnetFinalizer) {
 		if bridge, ok, err := r.vpcBridge(sn.Spec.VPCID); err == nil && ok {
+			prefix := "/" + strconv.Itoa(prefixLen(sn.Spec.CIDR))
+			for i := 0; i < maxNodePorts; i++ {
+				if addr, aErr := nodeAddress(sn.Spec.CIDR, i); aErr == nil {
+					_ = r.net.DeleteAddress(ctx, nodePortName(sn.Spec.VPCID), addr+prefix)
+				}
+			}
 			if gwCIDR, gwErr := gatewayCIDR(sn.Spec.CIDR); gwErr == nil {
 				if err := r.net.DeleteAddress(ctx, bridge, gwCIDR); err != nil {
 					sn.Status.SetPhase(resource.PhaseError, "AddressError", err.Error())
