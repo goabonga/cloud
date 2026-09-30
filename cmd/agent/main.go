@@ -74,7 +74,7 @@ func run() error {
 		manager.NewNodeHeartbeat(nodes, nodeID),
 		manager.NewVPCReconciler(vpcs, net),
 		manager.NewOverlayReconciler(vpcs, nodes, manager.NewExecOverlay(), nodeID),
-		manager.NewSubnetReconciler(subnets, vpcs, net),
+		manager.NewSubnetReconciler(subnets, vpcs, net).WithNodeIdentity(nodes, nodeID),
 		manager.NewIGWReconciler(igws, vpcs, net),
 		manager.NewPeeringReconciler(peerings, vpcs, manager.NewExecPeering()),
 		manager.NewDNSReconciler(dnsZones, dnsRecords, vpcs, manager.NewExecDNS(filepath.Join(*stateDir, "dns"))),
