@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,7 @@ type computeEnv struct {
 	disks    *manager.DiskRegistry
 	sgs      *manager.SecurityGroupRegistry
 	computes *manager.ComputeRegistry
+	store    state.Store
 }
 
 func newComputeEnv(t *testing.T) *computeEnv {
@@ -54,6 +56,7 @@ func newComputeEnv(t *testing.T) *computeEnv {
 		disks:    registry.New[resource.DiskSpec, resource.DiskStatus](store, resource.KindDisk),
 		sgs:      registry.New[resource.SecurityGroupSpec, resource.SecurityGroupStatus](store, resource.KindSecurityGroup),
 		computes: registry.New[resource.ComputeSpec, resource.ComputeStatus](store, resource.KindCompute),
+		store:    store,
 	}
 	v := &resource.VPC{Metadata: resource.ObjectMeta{UID: "vpc-1", Generation: 1}, Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}
 	v.Status.BridgeName = "br-vpc1"
@@ -350,5 +353,78 @@ func TestExecComputeBackendDelete(t *testing.T) {
 	}
 	if !anyCallHas(rec.calls, "-D") {
 		t.Fatalf("expected iptables rule removal: %v", rec.calls)
+	}
+}
+
+// Another agent is mid-allocation: it has reserved 10.0.1.10 but not yet
+// written the instance's status, so nothing lists the address as used.
+func TestComputeSkipsAnAddressReservedByAnotherAgent(t *testing.T) {
+	t.Parallel()
+
+	env := newComputeEnv(t)
+	if ok, err := env.store.CompareAndSwap("ipam/sn-1/10.0.1.10", nil, []byte("compute-on-another-host")); err != nil || !ok {
+		t.Fatalf("seed reservation: %v %v", ok, err)
+	}
+	env.putCompute(t, basicCompute("i-1"))
+	if err := env.reconciler(&fakeComputeBackend{}).WithAddressStore(env.store).Reconcile(context.Background(), "i-1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	got, _ := env.computes.Get("i-1")
+	if got.Status.IP == "" || got.Status.IP == "10.0.1.10" {
+		t.Fatalf("IP = %q, want an address other than the reserved 10.0.1.10", got.Status.IP)
+	}
+}
+
+func TestComputeRefusesAnAddressAnotherInstanceHolds(t *testing.T) {
+	t.Parallel()
+
+	env := newComputeEnv(t)
+	if ok, err := env.store.CompareAndSwap("ipam/sn-1/10.0.1.10", nil, []byte("i-other")); err != nil || !ok {
+		t.Fatalf("seed reservation: %v %v", ok, err)
+	}
+	c := basicCompute("i-1")
+	c.Status.IP = "10.0.1.10" // given before reservations, and lost the race
+	env.putCompute(t, c)
+	if err := env.reconciler(&fakeComputeBackend{}).WithAddressStore(env.store).Reconcile(context.Background(), "i-1"); err == nil {
+		t.Fatal("expected an address conflict")
+	}
+	got, _ := env.computes.Get("i-1")
+	named := false
+	for _, cond := range got.Status.Conditions {
+		named = named || strings.Contains(cond.Message, "reserved by i-other")
+	}
+	if got.Status.Phase != resource.PhaseError || !named {
+		t.Fatalf("status %+v, want Error naming the holder", got.Status)
+	}
+}
+
+func TestComputeKeepsItsReservationAcrossAFailureAndReleasesItOnDelete(t *testing.T) {
+	t.Parallel()
+
+	env := newComputeEnv(t)
+	env.putCompute(t, basicCompute("i-1"))
+	failing := &fakeComputeBackend{ensureErr: errors.New("image pull failed")}
+	if err := env.reconciler(failing).WithAddressStore(env.store).Reconcile(context.Background(), "i-1"); err == nil {
+		t.Fatal("expected the failure to surface")
+	}
+	first, _ := env.computes.Get("i-1")
+	if err := env.reconciler(&fakeComputeBackend{}).WithAddressStore(env.store).Reconcile(context.Background(), "i-1"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	second, _ := env.computes.Get("i-1")
+	if first.Status.IP == "" || second.Status.IP != first.Status.IP {
+		t.Fatalf("retry moved from %q to %q", first.Status.IP, second.Status.IP)
+	}
+
+	now := time.Now()
+	second.Metadata.DeletionTimestamp = &now
+	if err := env.computes.Put(second); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.reconciler(&fakeComputeBackend{}).WithAddressStore(env.store).Reconcile(context.Background(), "i-1"); err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	if _, err := env.store.Get("ipam/sn-1/" + second.Status.IP); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("reservation of %s kept after delete: %v", second.Status.IP, err)
 	}
 }

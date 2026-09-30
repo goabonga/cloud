@@ -147,7 +147,10 @@ disks:     attached devices mounted into the rootfs
 ```
 
 The reconciler resolves the subnet gateway, the VPC bridge, an address (the first
-free host in the subnet), the security-group chain and each disk's device path,
+free host in the subnet, reserved in the shared store under `ipam/<subnet>/<ip>`
+with a create-if-absent compare-and-swap, so agents allocating at once on
+different hosts never take the same one; a reservation is released when the
+instance is deleted), the security-group chain and each disk's device path,
 then asks the backend to bring the namespace up. Creation happens once; later
 ticks are a no-op while the namespace exists. The finalizer kills the cgroup,
 removes the veth, deletes the namespace and the firewall rules, and unmounts the
