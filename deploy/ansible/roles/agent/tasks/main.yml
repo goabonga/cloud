@@ -12,6 +12,7 @@
       - conntrack
       - cryptsetup-bin
       - dnsmasq-base
+      - ipvsadm
       - e2fsprogs
       - util-linux
     update_cache: true
