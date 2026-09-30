@@ -5,6 +5,7 @@ import { Route, Routes } from "react-router-dom";
 
 import Layout from "./components/Layout";
 import Acls from "./pages/Acls";
+import Device from "./pages/Device";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Profile from "./pages/Profile";
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="resources" element={<Resources />} />
         <Route path="acls" element={<Acls />} />
         <Route path="profile" element={<Profile />} />
+        <Route path="device" element={<Device />} />
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>

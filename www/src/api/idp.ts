@@ -27,6 +27,9 @@ async function idpRequest<T>(path: string, opts: { method?: string; body?: unkno
   if (!resp.ok) {
     throw new Error(`${opts.method ?? "GET"} ${path}: ${resp.status}`);
   }
+  if (resp.status === 204) {
+    return undefined as T;
+  }
   return (await resp.json()) as T;
 }
 
@@ -43,4 +46,14 @@ export async function login(username: string, password: string): Promise<string>
 // userinfo resolves the caller's own identity from the stored bearer token.
 export async function userinfo(): Promise<UserInfo> {
   return idpRequest<UserInfo>("/userinfo", { authenticated: true });
+}
+
+// deviceVerify approves or denies a pending device authorization on behalf of
+// the signed-in caller.
+export async function deviceVerify(userCode: string, approve: boolean): Promise<void> {
+  await idpRequest<void>("/device/verify", {
+    method: "POST",
+    authenticated: true,
+    body: { user_code: userCode, approve },
+  });
 }
