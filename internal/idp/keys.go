@@ -73,15 +73,23 @@ type JWKS struct {
 }
 
 // PublicJWKS builds a JWKS exposing pub for ES256 signature verification.
-func PublicJWKS(pub *ecdsa.PublicKey, kid string) JWKS {
+func PublicJWKS(pub *ecdsa.PublicKey, kid string) (JWKS, error) {
 	const coordLen = 32 // P-256
+	// Uncompressed SEC 1 point: 0x04 || X || Y, each coordinate fixed-width.
+	point, err := pub.Bytes()
+	if err != nil {
+		return JWKS{}, fmt.Errorf("encode public key: %w", err)
+	}
+	if len(point) != 1+2*coordLen {
+		return JWKS{}, fmt.Errorf("encode public key: not a P-256 point (%d bytes)", len(point))
+	}
 	return JWKS{Keys: []jwk{{
 		Kty: "EC",
 		Crv: "P-256",
-		X:   base64.RawURLEncoding.EncodeToString(pub.X.FillBytes(make([]byte, coordLen))),
-		Y:   base64.RawURLEncoding.EncodeToString(pub.Y.FillBytes(make([]byte, coordLen))),
+		X:   base64.RawURLEncoding.EncodeToString(point[1 : 1+coordLen]),
+		Y:   base64.RawURLEncoding.EncodeToString(point[1+coordLen:]),
 		Use: "sig",
 		Alg: "ES256",
 		Kid: kid,
-	}}}
+	}}}, nil
 }

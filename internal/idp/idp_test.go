@@ -51,7 +51,10 @@ func TestPublicJWKSEncodesKeyCoordinates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	ks := idp.PublicJWKS(&key.PublicKey, "kid")
+	ks, err := idp.PublicJWKS(&key.PublicKey, "kid")
+	if err != nil {
+		t.Fatalf("jwks: %v", err)
+	}
 	if len(ks.Keys) != 1 {
 		t.Fatalf("expected one key, got %d", len(ks.Keys))
 	}

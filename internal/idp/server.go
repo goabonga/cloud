@@ -96,7 +96,12 @@ func (s *Server) validClient(id, secret string) bool {
 }
 
 func (s *Server) jwks(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, PublicJWKS(s.pub, "infra-idp"))
+	ks, err := PublicJWKS(s.pub, "infra-idp")
+	if err != nil {
+		http.Error(w, "jwks unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, ks)
 }
 
 func (s *Server) discovery(w http.ResponseWriter, _ *http.Request) {
