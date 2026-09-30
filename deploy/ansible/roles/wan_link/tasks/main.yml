@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# Addresses the host's NIC on the wan-sim transit network. create-vms.yml
+# attaches the NIC with the MAC listed in `vms`; netplan finds it by that MAC.
+- name: Configure the wan-sim interface
+  ansible.builtin.template:
+    src: 60-wan-sim.yaml.j2
+    dest: /etc/netplan/60-wan-sim.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Apply netplan
