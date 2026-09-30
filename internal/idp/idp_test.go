@@ -4,6 +4,9 @@
 package idp_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -38,6 +41,36 @@ func TestKeyPEMRoundtrip(t *testing.T) {
 	}
 	if _, err := idp.MarshalPublicKeyPEM(&key.PublicKey); err != nil {
 		t.Fatalf("marshal pub: %v", err)
+	}
+}
+
+func TestPublicJWKSEncodesKeyCoordinates(t *testing.T) {
+	t.Parallel()
+
+	key, err := idp.GenerateKey()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	ks := idp.PublicJWKS(&key.PublicKey, "kid")
+	if len(ks.Keys) != 1 {
+		t.Fatalf("expected one key, got %d", len(ks.Keys))
+	}
+	x, err := base64.RawURLEncoding.DecodeString(ks.Keys[0].X)
+	if err != nil {
+		t.Fatalf("decode x: %v", err)
+	}
+	y, err := base64.RawURLEncoding.DecodeString(ks.Keys[0].Y)
+	if err != nil {
+		t.Fatalf("decode y: %v", err)
+	}
+	// Uncompressed SEC 1 point: 0x04 || X || Y.
+	point := append(append([]byte{4}, x...), y...)
+	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
+	if err != nil {
+		t.Fatalf("parse jwk point: %v", err)
+	}
+	if !pub.Equal(&key.PublicKey) {
+		t.Fatal("jwk coordinates do not match the signing key")
 	}
 }
 
