@@ -10,13 +10,13 @@ User=etcd
 Group=etcd
 Type=notify
 ExecStart=/usr/local/bin/etcd \
-  --name {{ control_host }} \
+  --name {{ inventory_hostname }} \
   --data-dir {{ etcd_data_dir }} \
   --listen-client-urls http://0.0.0.0:{{ etcd_client_port }} \
-  --advertise-client-urls http://{{ control_ip }}:{{ etcd_client_port }} \
-  --listen-peer-urls http://{{ control_ip }}:{{ etcd_peer_port }} \
-  --initial-advertise-peer-urls http://{{ control_ip }}:{{ etcd_peer_port }} \
-  --initial-cluster {{ control_host }}=http://{{ control_ip }}:{{ etcd_peer_port }} \
+  --advertise-client-urls http://{{ ansible_host }}:{{ etcd_client_port }} \
+  --listen-peer-urls http://{{ ansible_host }}:{{ etcd_peer_port }} \
+  --initial-advertise-peer-urls http://{{ ansible_host }}:{{ etcd_peer_port }} \
+  --initial-cluster {{ etcd_initial_cluster }} \
   --initial-cluster-state new \
   --initial-cluster-token infra-etcd
 Restart=on-failure
