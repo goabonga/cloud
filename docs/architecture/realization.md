@@ -53,7 +53,7 @@ run as root.
 | Disk             | a backing image, optionally dm-crypt (LUKS) encrypted |
 | Security group   | an allow-list iptables chain |
 | WAF policy       | an iptables chain attached inbound to the target |
-| Load balancer    | an IPVS virtual service on a VIP, real servers from backends |
+| Load balancer    | an IPVS virtual service on a VIP, full-NAT through the node port |
 | Compute          | a network namespace running an OCI image |
 
 ## VPCs across hosts
@@ -80,14 +80,30 @@ bridge. The bridge takes the same MAC on every host, derived from the VPC, and
 a `tc` filter keeps frames from that MAC off the overlay: the gateway is an
 anycast gateway, and an instance always routes through the host it runs on.
 
-What this does not cover yet:
+What the host itself sends into the VPC must not carry that MAC, or the reply
+would stay on the receiving host. It leaves through the VPC's node port:
 
-- A host cannot reach an instance on another host directly: the instance
-  replies to the gateway MAC, which its own host takes.
-- A load balancer reaches only the backends on the host it runs on, and an
-  instance in a backend's own subnet cannot use it: IPVS runs in NAT mode, so a
-  backend's reply only returns through the director when the client is routed
-  through it.
+```
+np-<uid> <-> nb-<uid>  veth pair, nb-<uid> enslaved to br-<uid>
+  np-<uid>  a MAC of its own; this host's address in each subnet; the subnets'
+            connected routes (the gateways sit on the bridge as noprefixroute)
+  address   counted down from the subnet's last usable host by the host's rank
+            among the registered nodes: .254, .253, ... in a /24
+  ARP       arp_ignore=1 on the bridge and the node port
+```
+
+At most five hosts get an address per subnet, and the compute allocator never
+hands those top addresses out.
+
+## Load balancers
+
+A load balancer is an IPVS virtual service on a VIP held by every host's
+bridge, so an instance reaches it through its own host. IPVS forwards in NAT
+mode, and the connections it forwards leave through the node port masqueraded
+to this host's address there (`net.ipv4.vs.conntrack=1` exposes them to
+netfilter). Every backend therefore replies to the host that took the
+connection: backends on other hosts and clients in a backend's own subnet are
+both served.
 
 ## Encrypted disks
 
