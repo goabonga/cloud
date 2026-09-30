@@ -77,7 +77,7 @@ types = ["perf"]
 # ── Control plane ─────────────────────────────────────────────────────────
 
 [components.infra-api]
-paths = ["cmd/api/**", "internal/handler/**", "internal/httpsrv/**", "internal/httpsec/**", "web/**", "packaging/docker/Dockerfile", "go.mod", "go.sum"]
+paths = ["cmd/api/**", "internal/handler/**", "internal/httpsrv/**", "internal/httpsec/**", "web/**", "packaging/docker/Dockerfile", "go.mod", "go.sum", "deploy/systemd/infra-api.service"]
 bump_files = [
     { file = "cmd/api/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -89,7 +89,7 @@ mirrors = [
 post_bump = ["go mod tidy"]
 
 [components.infra-controller-manager]
-paths = ["cmd/controller-manager/**", "internal/controllers/**", "internal/scheduler/**", "packaging/docker/Dockerfile", "go.mod", "go.sum"]
+paths = ["cmd/controller-manager/**", "internal/controllers/**", "internal/scheduler/**", "packaging/docker/Dockerfile", "go.mod", "go.sum", "deploy/systemd/infra-controller-manager.service"]
 bump_files = [
     { file = "cmd/controller-manager/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -102,7 +102,7 @@ post_bump = ["go mod tidy"]
 # ── Data plane ────────────────────────────────────────────────────────────
 
 [components.infra-agent]
-paths = ["cmd/agent/**", "internal/manager/**", "go.mod", "go.sum"]
+paths = ["cmd/agent/**", "internal/manager/**", "go.mod", "go.sum", "deploy/systemd/infra-agent.service"]
 bump_files = [
     { file = "cmd/agent/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -134,7 +134,7 @@ post_bump = ["go mod tidy"]
 [components.infra-idp]
 # internal/auth is shared core (consumed by the API too), so it is intentionally
 # not owned here; it is added back when the IDP itself is built.
-paths = ["cmd/idp/**", "internal/idp/**", "packaging/docker/Dockerfile", "go.mod", "go.sum"]
+paths = ["cmd/idp/**", "internal/idp/**", "packaging/docker/Dockerfile", "go.mod", "go.sum", "deploy/systemd/infra-idp.service"]
 bump_files = [
     { file = "cmd/idp/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -147,7 +147,7 @@ post_bump = ["go mod tidy"]
 # ── Observability ─────────────────────────────────────────────────────────
 
 [components.infra-exporter]
-paths = ["cmd/exporter/**", "internal/metrics/**", "packaging/docker/Dockerfile", "go.mod", "go.sum"]
+paths = ["cmd/exporter/**", "internal/metrics/**", "packaging/docker/Dockerfile", "go.mod", "go.sum", "deploy/systemd/infra-exporter.service"]
 bump_files = [
     { file = "cmd/exporter/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
