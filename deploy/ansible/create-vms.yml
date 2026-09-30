@@ -11,6 +11,12 @@
   connection: local
   gather_facts: false
   become: true
+  vars:
+    # Ubuntu's default sudo is now sudo-rs, which ignores the `-p` prompt Ansible
+    # passes and prints its own, so -K times out waiting for the expected
+    # prompt. Prefer the classic sudo it ships as sudo.ws when present. Scoped
+    # to this local play: the VMs have only the classic sudo.
+    ansible_become_exe: "{{ 'sudo.ws' if lookup('ansible.builtin.pipe', 'command -v sudo.ws || true') else 'sudo' }}"
   tasks:
     - name: Ensure required tools are installed
       ansible.builtin.shell: "command -v {{ item }}"
