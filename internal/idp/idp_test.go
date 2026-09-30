@@ -18,8 +18,18 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/goabonga/infrastructure/internal/domain/resource"
+	"github.com/goabonga/infrastructure/internal/identity"
 	"github.com/goabonga/infrastructure/internal/idp"
+	"github.com/goabonga/infrastructure/internal/registry"
+	"github.com/goabonga/infrastructure/internal/state"
 )
+
+func newIdentityService(t *testing.T) *identity.Service {
+	t.Helper()
+	store := state.NewFileStore(t.TempDir())
+	return identity.NewService(registry.New[resource.UserSpec, resource.UserStatus](store, resource.KindUser))
+}
 
 func TestKeyPEMRoundtrip(t *testing.T) {
 	t.Parallel()
@@ -82,11 +92,14 @@ func TestIssueProducesVerifiableToken(t *testing.T) {
 
 	key, _ := idp.GenerateKey()
 	issuer := idp.NewIssuer(key, "http://idp", time.Hour)
-	token, err := issuer.Issue("alice")
+	token, err := issuer.Issue("alice", []string{"admin"})
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
-	claims := &jwt.RegisteredClaims{}
+	claims := &struct {
+		jwt.RegisteredClaims
+		Roles []string `json:"roles,omitempty"`
+	}{}
 	if _, err := jwt.ParseWithClaims(token, claims, func(*jwt.Token) (any, error) {
 		return &key.PublicKey, nil
 	}, jwt.WithValidMethods([]string{"ES256"})); err != nil {
@@ -94,6 +107,9 @@ func TestIssueProducesVerifiableToken(t *testing.T) {
 	}
 	if claims.Subject != "alice" || claims.Issuer != "http://idp" {
 		t.Fatalf("unexpected claims: %+v", claims)
+	}
+	if len(claims.Roles) != 1 || claims.Roles[0] != "admin" {
+		t.Fatalf("roles = %v, want [admin]", claims.Roles)
 	}
 }
 
@@ -103,12 +119,151 @@ func newServer(t *testing.T) *httptest.Server {
 	srv := idp.NewServer(
 		idp.NewIssuer(key, "http://idp", time.Hour),
 		map[string]string{"svc": "s3cret"},
+		newIdentityService(t),
 		&key.PublicKey,
 		"http://idp",
 	)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
+}
+
+func newServerWithUsers(t *testing.T) (*httptest.Server, *identity.Service) {
+	t.Helper()
+	key, _ := idp.GenerateKey()
+	users := newIdentityService(t)
+	srv := idp.NewServer(
+		idp.NewIssuer(key, "http://idp", time.Hour),
+		map[string]string{"svc": "s3cret"},
+		users,
+		&key.PublicKey,
+		"http://idp",
+	)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts, users
+}
+
+func TestServerLoginEndpoint(t *testing.T) {
+	t.Parallel()
+
+	ts, users := newServerWithUsers(t)
+	if _, err := users.Put("user-1", resource.UserSpec{Username: "alice", Password: "s3cr3t", Roles: []string{"admin"}}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	body := strings.NewReader(`{"username":"alice","password":"s3cr3t"}`)
+	resp, err := http.Post(ts.URL+"/login", "application/json", body)
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d", resp.StatusCode)
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.AccessToken == "" {
+		t.Fatal("expected an access token")
+	}
+
+	// Wrong password.
+	bad, err := http.Post(ts.URL+"/login", "application/json", strings.NewReader(`{"username":"alice","password":"nope"}`))
+	if err != nil {
+		t.Fatalf("login bad: %v", err)
+	}
+	defer func() { _ = bad.Body.Close() }()
+	if bad.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bad password status = %d, want 401", bad.StatusCode)
+	}
+
+	// userinfo with the issued token.
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/userinfo", nil)
+	req.Header.Set("Authorization", "Bearer "+out.AccessToken)
+	info, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("userinfo: %v", err)
+	}
+	defer func() { _ = info.Body.Close() }()
+	if info.StatusCode != http.StatusOK {
+		t.Fatalf("userinfo status = %d", info.StatusCode)
+	}
+	var who struct {
+		Subject string   `json:"subject"`
+		Roles   []string `json:"roles"`
+	}
+	if err := json.NewDecoder(info.Body).Decode(&who); err != nil {
+		t.Fatalf("decode userinfo: %v", err)
+	}
+	if who.Subject != "user-1" || len(who.Roles) != 1 || who.Roles[0] != "admin" {
+		t.Fatalf("unexpected userinfo: %+v", who)
+	}
+
+	// userinfo without a token is unauthorized.
+	anon, err := http.Get(ts.URL + "/userinfo")
+	if err != nil {
+		t.Fatalf("anon userinfo: %v", err)
+	}
+	defer func() { _ = anon.Body.Close() }()
+	if anon.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anon userinfo status = %d, want 401", anon.StatusCode)
+	}
+}
+
+func TestServerUserEndpointsRequireAdmin(t *testing.T) {
+	t.Parallel()
+
+	ts, users := newServerWithUsers(t)
+	if _, err := users.Put("user-1", resource.UserSpec{Username: "alice", Password: "s3cr3t", Roles: []string{"admin"}}); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	if _, err := users.Put("user-2", resource.UserSpec{Username: "bob", Password: "s3cr3t"}); err != nil {
+		t.Fatalf("seed bob: %v", err)
+	}
+
+	login := func(username, password string) string {
+		resp, err := http.Post(ts.URL+"/login", "application/json",
+			strings.NewReader(`{"username":"`+username+`","password":"`+password+`"}`))
+		if err != nil {
+			t.Fatalf("login %s: %v", username, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out struct {
+			AccessToken string `json:"access_token"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out.AccessToken
+	}
+	adminToken := login("alice", "s3cr3t")
+	bobToken := login("bob", "s3cr3t")
+
+	get := func(path, token string) int {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("get %s: %v", path, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+
+	if got := get("/user", adminToken); got != http.StatusOK {
+		t.Fatalf("admin list users = %d, want 200", got)
+	}
+	if got := get("/user", bobToken); got != http.StatusForbidden {
+		t.Fatalf("non-admin list users = %d, want 403", got)
+	}
+	if got := get("/user/user-2", bobToken); got != http.StatusOK {
+		t.Fatalf("bob reading own record = %d, want 200", got)
+	}
+	if got := get("/user/user-1", bobToken); got != http.StatusForbidden {
+		t.Fatalf("bob reading alice's record = %d, want 403", got)
+	}
 }
 
 func TestServerTokenEndpoint(t *testing.T) {
