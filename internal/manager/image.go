@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -42,7 +43,46 @@ func (p *imagePuller) rootfsPath(uid string) string {
 // traverse it. These paths hold an OCI rootfs and the agent's image cache under
 // the state dir; they are not host-sensitive.
 func mkdirTraversable(dir string) error {
-	return os.MkdirAll(dir, 0o755) // #nosec G301 -- container rootfs and cache paths must be traversable by the contained process
+	return mkdirAll(dir, 0o755)
+}
+
+// The agent's unit runs it under UMask=0077, and the kernel applies the umask
+// to the mode of every file and directory it creates: an image extracted
+// without correcting for it comes out 0600/0700 and root-only, so a process
+// that drops to another user (nginx's workers, for one) cannot read its own
+// files. Modes are therefore set explicitly after creation, which the umask
+// does not affect, and always through an open descriptor so a symlink planted
+// in the rootfs is never followed.
+
+// mkdirAll is os.MkdirAll that sets mode on every directory it creates, the
+// missing parents included, instead of leaving them to the umask. Directories
+// that already exist keep their mode.
+func mkdirAll(dir string, mode os.FileMode) error {
+	if info, err := os.Stat(dir); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("manager: %s exists and is not a directory", dir)
+		}
+		return nil
+	}
+	if parent := filepath.Dir(dir); parent != dir {
+		if err := mkdirAll(parent, 0o755|mode); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(dir, mode); err != nil && !os.IsExist(err) { // #nosec G301 -- rootfs directories must be traversable by the contained process
+		return err
+	}
+	return chmodDir(dir, mode)
+}
+
+// chmodDir sets dir's mode without following a symlink at its path.
+func chmodDir(dir string, mode os.FileMode) error {
+	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0) // #nosec G304 -- dir is confined under the rootfs by the caller
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.Chmod(mode)
 }
 
 // imageConfig holds the runtime configuration extracted from an OCI image.
@@ -195,7 +235,12 @@ func extractTar(reader io.Reader, destDir string) error {
 		}
 		// #nosec G301 G115 -- container rootfs dirs must be traversable by the
 		// contained process; the mode is a permission value from the tar header.
-		_ = os.MkdirAll(filepath.Join(destDir, filepath.Clean(d.hdr.Name)), os.FileMode(d.hdr.Mode)|0o755)
+		mode := os.FileMode(d.hdr.Mode).Perm() | 0o755
+		dir := filepath.Join(destDir, filepath.Clean(d.hdr.Name))
+		if mkdirAll(dir, mode) == nil {
+			// Also correct a directory an earlier entry created implicitly.
+			_ = chmodDir(dir, mode)
+		}
 	}
 	for _, sl := range symlinks {
 		target := filepath.Join(destDir, filepath.Clean(sl.hdr.Name))
@@ -217,13 +262,14 @@ func extractTar(reader io.Reader, destDir string) error {
 			_ = mkdirTraversable(filepath.Dir(target))
 		}
 		_ = os.Remove(target)
-		// #nosec G304 G115 -- target is confined under destDir by the traversal
-		// guard above; the mode is a file-permission value from the tar header.
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(f.hdr.Mode))
+		mode := os.FileMode(f.hdr.Mode).Perm() // #nosec G115 -- a file-permission value from the tar header
+		// #nosec G304 -- target is confined under destDir by the traversal guard above.
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, mode)
 		if err != nil {
 			continue
 		}
 		_, _ = out.Write(f.data)
+		_ = out.Chmod(mode)
 		_ = out.Close()
 	}
 	for _, hl := range hardlinks {
