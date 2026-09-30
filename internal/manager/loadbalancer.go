@@ -25,8 +25,11 @@ type LBRealServer struct {
 // LoadBalancerBackend abstracts the IPVS operations a load balancer needs.
 type LoadBalancerBackend interface {
 	// EnsureService binds the VIP to the bridge, ensures the IPVS virtual service
-	// and syncs its real servers to the desired set. Idempotent.
-	EnsureService(ctx context.Context, vip string, port int, protocol, algorithm, bridge string, servers []LBRealServer) error
+	// and syncs its real servers to the desired set. Traffic to the real servers
+	// leaves through nodePort, masqueraded to this host's address there, so
+	// every reply returns through this host whichever host the backend runs on
+	// and whichever subnet the client sits in. Idempotent.
+	EnsureService(ctx context.Context, vip string, port int, protocol, algorithm, bridge, nodePort string, servers []LBRealServer) error
 	// DeleteService removes the virtual service and the VIP. Idempotent.
 	DeleteService(ctx context.Context, vip string, port int, protocol, bridge string) error
 }
@@ -78,7 +81,7 @@ func NewExecLBWithRunner(run Runner) *ExecLB {
 
 // EnsureService binds the VIP, ensures the virtual service and reconciles its
 // real servers to match the desired set.
-func (b *ExecLB) EnsureService(ctx context.Context, vip string, port int, protocol, algorithm, bridge string, servers []LBRealServer) error {
+func (b *ExecLB) EnsureService(ctx context.Context, vip string, port int, protocol, algorithm, bridge, nodePort string, servers []LBRealServer) error {
 	if out, err := b.run(ctx, "ip", "addr", "add", vip+"/32", "dev", bridge); err != nil && !strings.Contains(out, "File exists") {
 		return fmt.Errorf("manager: add vip %s on %s: %w: %s", vip, bridge, err, strings.TrimSpace(out))
 	}
@@ -90,6 +93,9 @@ func (b *ExecLB) EnsureService(ctx context.Context, vip string, port int, protoc
 		if out, eErr := b.run(ctx, "ipvsadm", "-E", proto, svc, "-s", sched); eErr != nil {
 			return fmt.Errorf("manager: ensure ipvs service %s: %w: %s", svc, eErr, strings.TrimSpace(out))
 		}
+	}
+	if err := b.ensureFullNAT(ctx, nodePort); err != nil {
+		return err
 	}
 
 	out, _ := b.run(ctx, "ipvsadm", "-Ln", proto, svc)
@@ -237,7 +243,7 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 	}
 
 	lb.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "configuring service")
-	if err := r.backend.EnsureService(ctx, vip, lb.Spec.Port, lb.Spec.Protocol, lb.Spec.Algorithm, vpc.Status.BridgeName, servers); err != nil {
+	if err := r.backend.EnsureService(ctx, vip, lb.Spec.Port, lb.Spec.Protocol, lb.Spec.Algorithm, vpc.Status.BridgeName, nodePortName(lb.Spec.VPCID), servers); err != nil {
 		lb.Status.SetPhase(resource.PhaseError, "IPVSError", err.Error())
 		_ = r.reg.Put(lb)
 		return err
@@ -366,4 +372,24 @@ func (r *LoadBalancerReconciler) usedAddresses(excludeLB string) (map[string]boo
 		}
 	}
 	return used, nil
+}
+
+// ensureFullNAT masquerades the connections IPVS forwards through nodePort to
+// this host's address there. In plain IPVS-NAT a backend answers the client
+// directly, which bypasses the director whenever the client shares the
+// backend's subnet or the backend runs on another host. net.ipv4.vs.conntrack
+// exposes IPVS connections to netfilter so the MASQUERADE applies; it only
+// exists once ip_vs is loaded, hence after the virtual service is created.
+func (b *ExecLB) ensureFullNAT(ctx context.Context, nodePort string) error {
+	if out, err := b.run(ctx, "sysctl", "-w", "net.ipv4.vs.conntrack=1"); err != nil {
+		return fmt.Errorf("manager: enable ipvs conntrack: %w: %s", err, strings.TrimSpace(out))
+	}
+	rule := []string{"POSTROUTING", "-o", nodePort, "-m", "ipvs", "--ipvs", "-j", "MASQUERADE"}
+	if _, err := b.run(ctx, "iptables", append([]string{"-t", "nat", "-C"}, rule...)...); err == nil {
+		return nil
+	}
+	if out, err := b.run(ctx, "iptables", append([]string{"-t", "nat", "-A"}, rule...)...); err != nil {
+		return fmt.Errorf("manager: masquerade ipvs via %s: %w: %s", nodePort, err, strings.TrimSpace(out))
+	}
+	return nil
 }
