@@ -134,11 +134,27 @@ jobs:
           git config user.signingkey "$KEY_ID"
           git config commit.gpgsign true
 
+      # The rewrite script compares what the binaries link before and after
+      # a go.mod bump with `go list`, which only resolves the module graph:
+      # no PR code is built or run. Versioned from main's go.mod; a PR that
+      # raises the toolchain directive gets it through GOTOOLCHAIN=auto (set on
+      # the rewrite step, since setup-go exports GOTOOLCHAIN=local), which
+      # verifies the download against the checksum database. No cache: this
+      # job holds the signing key, so it restores nothing a PR could have
+      # written.
+      - name: Set up Go
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: trusted/go.mod
+          cache: false
+
       - name: Rewrite commits with scope-aware messages
         if: steps.gate.outputs.skip != 'true'
         working-directory: pr
         env:
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          GOTOOLCHAIN: auto
         run: |
           set -euo pipefail
           BASE_SHA=$(git merge-base "origin/$BASE_REF" HEAD)

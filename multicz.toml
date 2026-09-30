@@ -30,7 +30,9 @@ state_file = ".multicz/state.json"
 # go.mod and go.sum are claimed by every Go component on the same reading:
 # a dependency or toolchain bump changes the binaries linked against it, so a
 # fix touching only them has to release each one. Whether a given bump ships
-# at all is still decided by its commit type: chore(deps) releases nothing.
+# at all is still decided by its commit type: chore(deps) releases nothing,
+# and scripts/rewrite-dependabot-commit.sh types a Dependabot bump fix(deps)
+# only when it changes what the binaries link.
 #
 # CAUTION: this fans out the BUMP PLAN only. `multicz changed` does not honour
 # it - it attributes a shared file to a single component, and has been observed
