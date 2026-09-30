@@ -108,6 +108,49 @@ on a stopped agent host stays assigned to it rather than being rescheduled. And
 the lease carries no fencing token, so a holder that hangs mid-reconcile can
 finish that pass after it thaws, before its next lease check demotes it.
 
+## Simulated provider (upstream-sim)
+
+A fourth VM, `upstream-sim` (`192.168.122.30`), plays the provider's router.
+It and both agents - which double as the edges - are attached to `wan-sim`, an
+isolated libvirt network standing in for the transit link:
+
+```
+[inet netns] -- [upstream-sim .100] -- wan-sim 10.99.0.0/24 -- [infra-agent-1 .1]
+ 100.64.0.2       100.64.0.1                                  [infra-agent-2 .2]
+```
+
+- **Public block**: `203.0.113.0/24` (TEST-NET-3, RFC 5737), never routed on
+  the Internet, so it cannot shadow a real address. `upstream.route_mode` in
+  `group_vars/all.yml` picks how upstream-sim routes it: `ecmp` (default)
+  spreads flows over both edges with an L4 hash; `floating` sends them to
+  `upstream.floating_next_hop`, which the active edge has to hold - nothing in
+  the lab holds it yet.
+- **Internet client**: the `inet` namespace on upstream-sim, on the far side of
+  the provider: `ssh ubuntu@192.168.122.30 sudo ip netns exec inet ...`.
+- **NAT**: upstream-sim masquerades towards the real LAN, but never the public
+  block, so those addresses stay the lab's public ones.
+- **Edges**: the agents do not realise public addresses yet. Until they do,
+  they answer the block with ICMP unreachable rather than sending it out their
+  default route to the real LAN.
+
+`create-vms.yml` defines `wan-sim`, creates upstream-sim and plugs each VM
+listed with a `wan_ip` into it, first pinning every VM's primary interface to
+its MAC: cloud-init matches it by name (`e*`), which would otherwise hand the
+new NIC the same static address. `site.yml` addresses the transit legs and sets
+up upstream-sim. Then:
+
+```bash
+ansible-playbook verify-upstream.yml
+```
+
+checks, from the `inet` client: its gateway and both edges are reachable; the
+block is routed to every edge, 64 TCP flows spread over both; a packet for the
+block is answered by an edge; and the NAT exempts the block while `inet` still
+reaches the LAN.
+
+To reach the block from your workstation, route it through upstream-sim:
+`sudo ip route add 203.0.113.0/24 via 192.168.122.30`.
+
 ## Access
 
 - Dashboard: `http://192.168.122.10:8088`
@@ -123,6 +166,7 @@ ansible-playbook --ask-become-pass destroy-vms.yml
 ## Topology
 
 Hosts and addresses are defined in `group_vars/all.yml` (`vms`) and mirrored in
-`inventory.ini`. The default is one control host (`192.168.122.10`, 3 GiB) and
-two agents (`192.168.122.21`, `.22`, 1.5 GiB each) on the libvirt `default` NAT
-network, about 6 GiB of RAM on the libvirt host in total.
+`inventory.ini`. The default is one control host (`192.168.122.10`, 3 GiB),
+two agents (`192.168.122.21`, `.22`, 1.5 GiB each) and upstream-sim
+(`192.168.122.30`, 768 MiB) on the libvirt `default` NAT network, about 7 GiB of
+RAM on the libvirt host in total.
