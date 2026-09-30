@@ -3,7 +3,7 @@
 A declarative, Linux-native cloud control plane. It provisions VPCs, compute,
 networking, DNS, KMS, secrets, SSL, WAF, ACL and load balancers using only
 Linux kernel primitives - network namespaces, bridges and VXLAN, iptables,
-cgroups v2, dm-crypt, dnsmasq and OCI images. There is no Docker daemon,
+cgroups v2, dm-crypt and OCI images, with DNS served by the agent itself. There is no Docker daemon,
 libvirt or OVS in the data path.
 
 ## How it fits together

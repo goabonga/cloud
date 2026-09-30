@@ -12,7 +12,7 @@ infra (cli)              ->        |                              |
                               state store                   Linux kernel
                               (file | etcd | postgres)      (netns, bridges, VXLAN,
                                    ^                          iptables, cgroups v2,
-infra-idp (identity)               |                          dm-crypt, dnsmasq, OCI)
+infra-idp (identity)               |                          dm-crypt, DNS, OCI)
 infra-exporter (metrics) <- controller-manager
                               (scheduler + reconcilers)
 ```

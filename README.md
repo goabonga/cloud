@@ -8,7 +8,8 @@
 A declarative, Linux-native cloud control plane. It provisions VPCs, compute,
 networking, DNS, KMS, secrets, SSL, WAF, ACL and load balancers using only
 kernel primitives (network namespaces, bridges/VXLAN, iptables, cgroups v2,
-dm-crypt, dnsmasq, OCI images) - no Docker daemon, libvirt or OVS.
+dm-crypt, OCI images) - no Docker daemon, libvirt or OVS; DNS is served by the
+agent itself.
 
 Resources follow a Kubernetes-style `metadata` / `spec` / `status` model: a
 control plane (API + controller-manager) records desired state and a per-host
