@@ -6,6 +6,8 @@ package manager_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/goabonga/infrastructure/internal/manager"
@@ -111,5 +113,52 @@ func TestEnsureServiceVIPIsIdempotent(t *testing.T) {
 		if err := be.EnsureService(context.Background(), "10.0.5.5", 443, "tcp", "round_robin", "br-vpc1", servers); err != nil {
 			t.Fatalf("pass %d: EnsureService: %v", pass, err)
 		}
+	}
+}
+
+// addrTable answers `ip -o addr show` from a set of assigned addresses and
+// fails `ip addr del` of an absent one the way a current kernel does.
+type addrTable struct {
+	assigned map[string]bool // "iface addr/prefix"
+	dels     []string
+}
+
+func (a *addrTable) run(_ context.Context, name string, args ...string) (string, error) {
+	switch {
+	case name == "ip" && len(args) == 5 && args[0] == "-o" && args[1] == "addr" && args[2] == "show":
+		var out strings.Builder
+		for k := range a.assigned {
+			if iface, addr, _ := strings.Cut(k, " "); iface == args[4] {
+				fmt.Fprintf(&out, "5: %s    inet %s scope global %s\\       valid_lft forever\n", iface, addr, iface)
+			}
+		}
+		return out.String(), nil
+	case name == "ip" && len(args) == 5 && args[0] == "addr" && args[1] == "del":
+		key := args[4] + " " + args[2]
+		a.dels = append(a.dels, key)
+		if !a.assigned[key] {
+			return "Error: ipv4: Address not found.", errors.New("exit status 2")
+		}
+		delete(a.assigned, key)
+	}
+	return "", nil
+}
+
+func TestDeleteAddressIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	a := &addrTable{assigned: map[string]bool{"np0 10.0.1.254/24": true}}
+	be := manager.NewExecBackendWithRunner(a.run)
+	for pass := 1; pass <= 2; pass++ {
+		if err := be.DeleteAddress(context.Background(), "np0", "10.0.1.254/24"); err != nil {
+			t.Fatalf("pass %d: DeleteAddress: %v", pass, err)
+		}
+	}
+	// An address that was never there.
+	if err := be.DeleteAddress(context.Background(), "np0", "10.0.1.253/24"); err != nil {
+		t.Fatalf("absent address: %v", err)
+	}
+	if len(a.dels) != 1 {
+		t.Fatalf("ip addr del should only run for the present address: %v", a.dels)
 	}
 }
