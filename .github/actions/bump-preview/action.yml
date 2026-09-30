@@ -25,7 +25,13 @@ description: |
 runs:
   using: composite
   steps:
-    - uses: goabonga/multicz-action@95e90628797bc7dec0d2ad7d9abc6278f3465ed2 # v1.1.0
+    - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      with:
+        enable-cache: false
+        python-version: "3.12"
+    - name: Install multicz
+      shell: bash
+      run: uv tool install multicz
     - name: Bump (write only - no commit / tag / push / hooks / CHANGELOG)
       shell: bash
       run: multicz bump --no-post-bump --no-changelog
