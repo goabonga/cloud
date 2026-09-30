@@ -21,11 +21,22 @@ import (
 
 func mintToken(t *testing.T, key *ecdsa.PrivateKey, subject, issuer string, exp time.Time) string {
 	t.Helper()
-	claims := jwt.RegisteredClaims{
-		Subject:   subject,
-		Issuer:    issuer,
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		ExpiresAt: jwt.NewNumericDate(exp),
+	return mintTokenWithRoles(t, key, subject, issuer, exp, nil)
+}
+
+func mintTokenWithRoles(t *testing.T, key *ecdsa.PrivateKey, subject, issuer string, exp time.Time, roles []string) string {
+	t.Helper()
+	claims := struct {
+		jwt.RegisteredClaims
+		Roles []string `json:"roles,omitempty"`
+	}{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   subject,
+			Issuer:    issuer,
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(exp),
+		},
+		Roles: roles,
 	}
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodES256, claims).SignedString(key)
 	if err != nil {
@@ -51,6 +62,18 @@ func TestJWTAuthenticator(t *testing.T) {
 		}
 		if id.Subject != "alice" {
 			t.Fatalf("subject = %q", id.Subject)
+		}
+	})
+
+	t.Run("carries roles", func(t *testing.T) {
+		t.Parallel()
+		tok := mintTokenWithRoles(t, key, "alice", issuer, time.Now().Add(time.Hour), []string{"admin", "operator"})
+		id, err := a.Authenticate(reqWithToken(tok))
+		if err != nil {
+			t.Fatalf("authenticate: %v", err)
+		}
+		if !id.HasRole("admin") || !id.HasRole("operator") || id.HasRole("nope") {
+			t.Fatalf("roles = %v", id.Roles)
 		}
 	})
 
