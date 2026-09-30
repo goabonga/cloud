@@ -28,6 +28,8 @@ type fakeBackend struct {
 	natErr      error
 	ensureCalls []string
 	deleteCalls []string
+	nodePorts   map[string]string // port -> "bridge peer"
+	gateways    map[string]bool   // "bridge addr/prefix" assigned with noprefixroute
 }
 
 func newFakeBackend() *fakeBackend {
@@ -94,6 +96,29 @@ func (f *fakeBackend) DeleteBridge(_ context.Context, name string) error {
 
 func (f *fakeBackend) BridgeExists(_ context.Context, name string) (bool, error) {
 	return f.bridges[name], nil
+}
+
+func (f *fakeBackend) EnsureNodePort(_ context.Context, bridge, port, peer string) error {
+	if f.nodePorts == nil {
+		f.nodePorts = map[string]string{}
+	}
+	f.nodePorts[port] = bridge + " " + peer
+	return nil
+}
+
+func (f *fakeBackend) DeleteNodePort(_ context.Context, port string) error {
+	delete(f.nodePorts, port)
+	return nil
+}
+
+// EnsureGatewayAddress records the gateway like EnsureAddress; gateways
+// records which addresses were assigned without a prefix route.
+func (f *fakeBackend) EnsureGatewayAddress(ctx context.Context, bridge, addrCIDR string) error {
+	if f.gateways == nil {
+		f.gateways = map[string]bool{}
+	}
+	f.gateways[bridge+" "+addrCIDR] = true
+	return f.EnsureAddress(ctx, bridge, addrCIDR)
 }
 
 func newVPCRegistry(t *testing.T) *manager.VPCRegistry {
