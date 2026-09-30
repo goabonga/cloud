@@ -58,7 +58,7 @@ jobs:
       # third-party actions, so anything looser here would be the first
       # finding it reports against itself.
       - name: Run Plumber compliance audit
-        uses: getplumber/plumber@d37150cee04d6627497cb4c6a553ef9a2d6c7548 # v0.5.2
+        uses: getplumber/plumber@6b7122f0d1f68f92595ad7c375a9d6841f00cee8 # v0.5.10
         with:
           # `min-points`, not the deprecated `threshold`: the action treats
           # threshold: 100 as unset, so the strict bar we thought we were
