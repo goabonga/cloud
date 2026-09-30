@@ -20,7 +20,6 @@
     mode: "0755"
   loop:
     - infra-api
-    - infra-controller-manager
     - infra-exporter
 
 - name: Deploy the JWT verification public key
@@ -48,9 +47,7 @@
     owner: root
     group: root
     mode: "0640"
-  notify:
-    - Restart infra-controller-manager
-    - Restart infra-exporter
+  notify: Restart infra-exporter
 
 - name: Install the infra-api systemd drop-in
   ansible.builtin.template:
@@ -59,17 +56,12 @@
     mode: "0644"
   notify: Restart infra-api
 
-- name: Install the controller-manager and exporter drop-ins
+- name: Install the exporter drop-in
   ansible.builtin.template:
     src: state.override.conf.j2
-    dest: "/etc/systemd/system/{{ item }}.service.d/override.conf"
+    dest: /etc/systemd/system/infra-exporter.service.d/override.conf
     mode: "0644"
-  loop:
-    - infra-controller-manager
-    - infra-exporter
-  notify:
-    - Restart infra-controller-manager
-    - Restart infra-exporter
+  notify: Restart infra-exporter
 
 - name: Enable and start control-plane services
   ansible.builtin.systemd_service:
@@ -79,5 +71,4 @@
     daemon_reload: true
   loop:
     - infra-api
-    - infra-controller-manager
     - infra-exporter

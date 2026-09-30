@@ -7,12 +7,6 @@
     state: restarted
     daemon_reload: true
 
-- name: Restart infra-controller-manager
-  ansible.builtin.systemd_service:
-    name: infra-controller-manager
-    state: restarted
-    daemon_reload: true
-
 - name: Restart infra-exporter
   ansible.builtin.systemd_service:
     name: infra-exporter

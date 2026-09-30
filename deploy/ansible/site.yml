@@ -3,7 +3,8 @@
 
 # Full-stack deployment onto the provisioned VMs:
 #   - etcd as the shared state backend, one member on every host,
-#   - the control plane: infra-api, infra-controller-manager, infra-exporter,
+#   - the control plane: infra-api and infra-exporter on the control host,
+#     infra-controller-manager on both agent hosts under leader election,
 #   - infra-idp issuing ES256 JWTs, verified by the API,
 #   - the infra-www dashboard (embedded SPA + API reverse proxy),
 #   - a native Prometheus + Grafana stack,
@@ -56,3 +57,4 @@
   become: true
   roles:
     - agent
+    - controller_manager
