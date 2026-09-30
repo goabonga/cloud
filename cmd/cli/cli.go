@@ -25,9 +25,21 @@ func apiURL() string {
 	return "http://localhost:8080"
 }
 
+// resolveToken returns the bearer token to use: GOA_API_TOKEN always wins
+// (unchanged behavior), otherwise a still-valid `infra login` credential.
+func resolveToken() string {
+	if token := os.Getenv("GOA_API_TOKEN"); token != "" {
+		return token
+	}
+	if creds, ok := loadCredentials(); ok {
+		return creds.Token
+	}
+	return ""
+}
+
 func newVPCClient() *vpcClient {
 	var opts []client.Option
-	if token := os.Getenv("GOA_API_TOKEN"); token != "" {
+	if token := resolveToken(); token != "" {
 		opts = append(opts, client.WithToken(token))
 	}
 	return client.New[resource.VPCSpec, resource.VPCStatus](apiURL(), resource.KindVPC, opts...)
@@ -36,9 +48,11 @@ func newVPCClient() *vpcClient {
 // run dispatches a CLI invocation. args excludes the program name.
 func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: infra <vpc> <command> [args]")
+		return fmt.Errorf("usage: infra <login|vpc> [args]")
 	}
 	switch args[0] {
+	case "login":
+		return runLogin(ctx, stdout)
 	case "vpc":
 		return runVPC(ctx, args[1:], stdout)
 	default:
