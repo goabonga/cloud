@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Chris <goabonga@pm.me>
 
 # Full-stack deployment onto the provisioned VMs:
-#   - etcd as the shared HA state backend (control host),
+#   - etcd as the shared state backend, one member on every host,
 #   - the control plane: infra-api, infra-controller-manager, infra-exporter,
 #   - infra-idp issuing ES256 JWTs, verified by the API,
 #   - the infra-www dashboard (embedded SPA + API reverse proxy),
@@ -24,12 +24,19 @@
   roles:
     - credentials
 
-- name: Control plane, identity, dashboard and monitoring
-  hosts: control
+# Every member has to be started in the same run for the cluster to form, so
+# etcd gets a play of its own across the whole inventory.
+- name: Shared state
+  hosts: infra
   become: true
   roles:
     - common
     - etcd
+
+- name: Control plane, identity, dashboard and monitoring
+  hosts: control
+  become: true
+  roles:
     - control_plane
     - idp
     - dashboard
@@ -48,5 +55,4 @@
   hosts: agents
   become: true
   roles:
-    - common
     - agent

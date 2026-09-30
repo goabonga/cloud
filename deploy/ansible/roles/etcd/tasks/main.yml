@@ -48,15 +48,23 @@
     mode: "0644"
   notify: Restart etcd
 
+# A new member only reports ready once it reaches quorum, so a blocking start
+# on the first host would wait on members not started yet. Start every member
+# without waiting, then wait for the whole cluster to be healthy.
 - name: Enable and start etcd
   ansible.builtin.systemd_service:
     name: etcd
     enabled: true
     state: started
     daemon_reload: true
+    no_block: true
 
-- name: Wait for the etcd client port
-  ansible.builtin.wait_for:
-    host: "{{ control_ip }}"
-    port: "{{ etcd_client_port }}"
-    timeout: 60
+- name: Wait for every etcd member to be healthy
+  ansible.builtin.command: >-
+    /usr/local/bin/etcdctl --endpoints={{ state_dsn | regex_replace('^etcd://', '') }}
+    endpoint health
+  register: etcd_health
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: etcd_health.rc == 0

@@ -40,13 +40,24 @@ control_ip: "{{ hostvars[control_host].ansible_host }}"
 # Shared configuration directory on every managed host.
 infra_conf_dir: "/etc/infra"
 
-# etcd: the shared, HA state backend. Every component points at it through
+# etcd: the shared state backend. Every component points at it through
 # GOA_STATE_DSN, so the API, controllers, exporter and agents see one store.
+# One member runs on every host in the `infra` group, so the cluster keeps its
+# quorum - and the control plane keeps working - with any one VM down.
 etcd_version: "v3.6.11"
 etcd_client_port: 2379
 etcd_peer_port: 2380
 etcd_data_dir: "/var/lib/etcd"
-state_dsn: "etcd://{{ control_ip }}:{{ etcd_client_port }}"
+etcd_hosts: "{{ groups['infra'] }}"
+etcd_initial_cluster: >-
+  {%- for h in etcd_hosts -%}
+  {{ h }}=http://{{ hostvars[h].ansible_host }}:{{ etcd_peer_port }}{{ '' if loop.last else ',' }}
+  {%- endfor -%}
+state_dsn: >-
+  etcd://
+  {%- for h in etcd_hosts -%}
+  {{ hostvars[h].ansible_host }}:{{ etcd_client_port }}{{ '' if loop.last else ',' }}
+  {%- endfor -%}
 
 # Credentials are generated once on the controller and reused across runs.
 # Keep this directory out of git (see .gitignore).
