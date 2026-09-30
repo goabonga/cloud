@@ -44,17 +44,21 @@ Prometheus and Grafana dashboards is provided for local monitoring.
 
 ## Multi-host (libvirt + Ansible)
 
-`deploy/ansible/` provisions a libvirt/KVM test cluster (one control host plus
-agents) from a Debian cloud image and cloud-init, installs the `.deb` packages
-and starts the services:
+`deploy/ansible/` provisions a libvirt/KVM test cluster from an Ubuntu 24.04
+cloud image and cloud-init, installs the `.deb` packages and starts the
+services. A control host runs the API, the IdP, the dashboard, Prometheus,
+Grafana and Terraform with the local provider; two agent hosts run the agent
+and a leader-elected controller-manager; every host runs an etcd member.
 
 ```bash
-make deb VERSION=0.1.0          # build the packages into dist/
+make deb VERSION=0.1.0 && make build-www && make build-provider
 cd deploy/ansible
-ansible-playbook create-vms.yml # provision the VMs
-ansible-playbook site.yml       # install packages and start services
-ansible-playbook destroy-vms.yml
+ansible-playbook -K create-vms.yml             # provision the VMs
+ansible-playbook -K site.yml                   # install packages and start services
+ansible-playbook verify.yml -e failover=true   # check the stack, drill a failover
+ansible-playbook -K destroy-vms.yml
 ```
 
-See `deploy/ansible/README.md` for prerequisites. For real clusters, state moves
-to etcd; see the architecture [overview](../architecture/overview.md).
+See `deploy/ansible/README.md` for prerequisites and what the failover drill
+covers. The architecture [overview](../architecture/overview.md) describes the
+state backends.

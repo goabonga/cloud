@@ -4,6 +4,11 @@ Run `terraform apply` from your terminal against the deployed control plane to
 build a full topology (VPC, subnet, gateway, firewall, KMS-encrypted disk and a
 scheduled compute instance).
 
+The control VM already has Terraform, the provider and this workspace set up
+(`ssh ubuntu@192.168.122.10`, `infra-login`, `cd ~/infra-demo`,
+`terraform apply`; see [../README.md](../README.md)). This page covers running
+it from the libvirt host instead.
+
 The provider is not published to a registry yet, so Terraform uses a local
 build via `dev_overrides`.
 
