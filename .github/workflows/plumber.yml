@@ -16,15 +16,19 @@ name: plumber
 # here notices when a new workflow reintroduces a floating action tag or hands
 # `contents: write` to a job that only reads.
 #
-# Fires on every change to workflows or composite actions, and weekly on top
-# of that - a freshly disclosed CVE in an already-merged pinned action shows
-# up on the next Monday sweep without needing a code change to trigger it.
+# Fires on every pull request, regardless of what it touches - unfiltered so
+# `audit` always reports a status for the head SHA. `main-protection` (the
+# repo ruleset) requires it to pass before merging, and a required status
+# check that a path filter sometimes skips never gets reported at all, which
+# blocks the merge forever instead of just failing it.
+#
+# Also fires on every change to workflows or composite actions pushed
+# straight to main, and weekly on top of that - a freshly disclosed CVE in an
+# already-merged pinned action shows up on the next Monday sweep without
+# needing a code change to trigger it.
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/**"
-      - ".github/actions/**"
+  pull_request: {}
   push:
     branches: [main]
     paths:
