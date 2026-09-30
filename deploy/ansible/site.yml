@@ -41,6 +41,12 @@
     - common
     - etcd
 
+- name: Transit links to the simulated provider
+  hosts: edges:upstream
+  become: true
+  roles:
+    - wan_link
+
 - name: Control plane, identity, dashboard and monitoring
   hosts: control
   become: true
