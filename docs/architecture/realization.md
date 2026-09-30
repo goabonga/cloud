@@ -45,7 +45,7 @@ run as root.
 
 | Resource         | Kernel state |
 | ---------------- | ------------ |
-| VPC              | a Linux bridge (`br-<uid>`) |
+| VPC              | a Linux bridge (`br-<uid>`), joined across hosts by a VXLAN device (`vx-<uid>`) |
 | Subnet           | the gateway address on the VPC bridge |
 | Internet gateway | IPv4 forwarding + a MASQUERADE rule for the VPC CIDR |
 | Peering          | a veth pair joining the two VPC bridges |
@@ -55,6 +55,39 @@ run as root.
 | WAF policy       | an iptables chain attached inbound to the target |
 | Load balancer    | an IPVS virtual service on a VIP, real servers from backends |
 | Compute          | a network namespace running an OCI image |
+
+## VPCs across hosts
+
+Every agent builds each VPC on a bridge of its own. When the agent has a node
+identity (`GOA_NODE_ID`) and that node is registered, the overlay pass joins
+those bridges into one L2 segment:
+
+```
+vx-<uid>  VXLAN device enslaved to br-<uid>, UDP 4789
+  VNI         derived from the VPC UID, identical on every host
+  local       this node's registered address
+  flood list  every other node's address (head-end replication); remote MACs
+              are learned from traffic
+  MTU         1450, and 1450 on every compute veth, leaving room for the 50
+              bytes of encapsulation on a 1500-byte underlay
+```
+
+Nodes joining or leaving update each device's flood list on the next tick, and
+the devices of deleted VPCs are removed.
+
+Each host carries the subnet gateways and load balancer addresses on its own
+bridge. The bridge takes the same MAC on every host, derived from the VPC, and
+a `tc` filter keeps frames from that MAC off the overlay: the gateway is an
+anycast gateway, and an instance always routes through the host it runs on.
+
+What this does not cover yet:
+
+- A host cannot reach an instance on another host directly: the instance
+  replies to the gateway MAC, which its own host takes.
+- A load balancer reaches only the backends on the host it runs on, and an
+  instance in a backend's own subnet cannot use it: IPVS runs in NAT mode, so a
+  backend's reply only returns through the director when the client is routed
+  through it.
 
 ## Encrypted disks
 
@@ -96,7 +129,7 @@ disks.
 A declared topology converges in dependency order across ticks:
 
 ```
-VPC (bridge)
+VPC (bridge, VXLAN to the other hosts)
   -> subnet (gateway on the bridge)
        -> internet gateway (NAT for egress)
        -> security group (allow-list chain)  +  disk (encrypted)
