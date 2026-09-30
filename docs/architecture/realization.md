@@ -49,7 +49,7 @@ run as root.
 | Subnet           | the gateway address on the VPC bridge |
 | Internet gateway | IPv4 forwarding + a MASQUERADE rule for the VPC CIDR |
 | Peering          | a veth pair joining the two VPC bridges |
-| DNS zone/record  | a per-VPC dnsmasq serving the zones' A/AAAA records |
+| DNS zone/record  | answered by the agent: a resolver per VPC, and public zones on a public address |
 | Disk             | a backing image, optionally dm-crypt (LUKS) encrypted |
 | Disk file        | the file, written into the disk through the mounts of this host's instances |
 | Security group   | an allow-list iptables chain |
@@ -105,6 +105,26 @@ to this host's address there (`net.ipv4.vs.conntrack=1` exposes them to
 netfilter). Every backend therefore replies to the host that took the
 connection: backends on other hosts and clients in a backend's own subnet are
 both served.
+
+## DNS
+
+The agent serves DNS itself; no resolver process runs on the host.
+
+- **VPC resolver.** Each VPC's first address - the nameserver its instances
+  are handed - is assigned as a /32 on the VPC bridge on every host, like the
+  subnet gateways, so an instance always queries its own host. It answers the
+  private zones attached to the VPC and every public zone authoritatively, and
+  forwards any other name to the host's own resolvers.
+- **Public DNS.** With `GOA_DNS_PUBLIC_ADDR` set (on the edges, an address of
+  the public block), the agent assigns it as a /32 on the loopback and answers
+  every public zone there, authoritatively and nothing else: private zones and
+  other names are refused, so it is never an open resolver. Every edge holding
+  the address answers, and the upstream's ECMP spreads queries over them.
+
+Both serve UDP and TCP from a view rebuilt from the store every tick and
+swapped in atomically. Names in a zone get authoritative answers: the records,
+CNAMEs followed within the zone, or NXDOMAIN / NODATA with the zone's SOA. A
+record whose value does not parse is left out and put in `Error`.
 
 ## Encrypted disks
 
