@@ -218,7 +218,9 @@ func (b *ExecComputeBackend) setupNetwork(ctx context.Context, req ComputeReques
 	addr := req.IP + "/" + strconv.Itoa(req.Prefix)
 	steps := [][]string{
 		{"netns", "add", ns},
-		{"link", "add", vethHost, "type", "veth", "peer", "name", vethNS},
+		// overlayMTU on both ends, so what the instance sends still fits once
+		// the VPC overlay encapsulates it for another host.
+		{"link", "add", vethHost, "mtu", strconv.Itoa(overlayMTU), "type", "veth", "peer", "name", vethNS, "mtu", strconv.Itoa(overlayMTU)},
 		{"link", "set", vethHost, "master", req.Bridge},
 		{"link", "set", vethHost, "up"},
 		{"link", "set", vethNS, "netns", ns},
