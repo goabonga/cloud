@@ -21,7 +21,9 @@ type LoadBalancerSpec struct {
 	Name    string `json:"name,omitempty"`
 	VPCID   string `json:"vpcId"`
 	Address string `json:"address,omitempty"`
-	Port    int    `json:"port"`
+	// Port is the layer-4 virtual service's; 0 gives the load balancer none,
+	// for its lb_listeners alone to serve its addresses.
+	Port int `json:"port,omitempty"`
 	// Protocol is "tcp" or "udp" (default "tcp").
 	Protocol string `json:"protocol,omitempty"`
 	// Algorithm is "round_robin", "least_conn" or "source" (default "round_robin").
@@ -36,7 +38,7 @@ func (s LoadBalancerSpec) Validate() error {
 	if s.VPCID == "" {
 		return fmt.Errorf("load_balancer: vpcId is required")
 	}
-	if s.Port < 1 || s.Port > 65535 {
+	if s.Port < 0 || s.Port > 65535 {
 		return fmt.Errorf("load_balancer: port out of range")
 	}
 	switch s.Protocol {
