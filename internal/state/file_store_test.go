@@ -187,3 +187,209 @@ func TestFileStoreClose(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 }
+
+func TestFileStoreResolveRejectsRootKey(t *testing.T) {
+	t.Parallel()
+
+	// "/" cleans down to an empty relative path, the same invalid-key
+	// branch as "" but reached through a different input.
+	fs := state.NewFileStore(t.TempDir())
+	if err := fs.Put("/", []byte("v")); err == nil {
+		t.Fatal("expected error for a root-only key")
+	}
+}
+
+func TestFileStoreGetEmptyKey(t *testing.T) {
+	t.Parallel()
+
+	fs := state.NewFileStore(t.TempDir())
+	if _, err := fs.Get(""); err == nil {
+		t.Fatal("expected error for empty key")
+	}
+}
+
+func TestFileStoreGetDirectoryError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	fs := state.NewFileStore(base)
+
+	if err := os.MkdirAll(filepath.Join(base, "adir"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Reading a directory as if it were a value file fails with something
+	// other than ErrNotExist, so Get must wrap it rather than report
+	// ErrNotFound.
+	_, err := fs.Get("adir")
+	if err == nil || errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("expected a non-ErrNotFound error, got %v", err)
+	}
+}
+
+func TestFileStorePutMkdirError(t *testing.T) {
+	t.Parallel()
+
+	fs := state.NewFileStore(t.TempDir())
+	if err := fs.Put("blocker", []byte("v")); err != nil {
+		t.Fatalf("put blocker: %v", err)
+	}
+	// "blocker" is a regular file, so MkdirAll cannot create a directory
+	// through it.
+	if err := fs.Put("blocker/inner", []byte("v")); err == nil {
+		t.Fatal("expected mkdir error when a path component is a file")
+	}
+}
+
+func TestFileStorePutCreateTempError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	fs := state.NewFileStore(base)
+
+	if err := fs.Put("sub/first", []byte("v")); err != nil {
+		t.Fatalf("put first: %v", err)
+	}
+	dir := filepath.Join(base, "sub")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	// MkdirAll is a no-op on the already-existing directory, so the next
+	// failure is CreateTemp, which needs write permission.
+	if err := fs.Put("sub/second", []byte("v")); err == nil {
+		t.Fatal("expected temp file creation to fail on a read-only directory")
+	}
+}
+
+func TestFileStorePutRenameError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	fs := state.NewFileStore(base)
+
+	if err := os.MkdirAll(filepath.Join(base, "occupied"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A directory already sits at the destination path, so the final
+	// rename of the temp file onto it fails.
+	if err := fs.Put("occupied", []byte("v")); err == nil {
+		t.Fatal("expected rename error when the destination is a directory")
+	}
+}
+
+func TestFileStoreDeleteEmptyKey(t *testing.T) {
+	t.Parallel()
+
+	fs := state.NewFileStore(t.TempDir())
+	if err := fs.Delete(""); err == nil {
+		t.Fatal("expected error for empty key")
+	}
+}
+
+func TestFileStoreDeleteError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	fs := state.NewFileStore(base)
+
+	if err := fs.Put("locked/leaf", []byte("v")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	dir := filepath.Join(base, "locked")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	// Removing a directory entry needs write permission on its parent.
+	if err := fs.Delete("locked/leaf"); err == nil {
+		t.Fatal("expected delete to fail without write permission on the parent directory")
+	}
+}
+
+func TestFileStoreListEmptyPrefix(t *testing.T) {
+	t.Parallel()
+
+	fs := state.NewFileStore(t.TempDir())
+	if _, err := fs.List(""); err == nil {
+		t.Fatal("expected error for empty prefix")
+	}
+}
+
+func TestFileStoreListReadDirError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	fs := state.NewFileStore(base)
+
+	if err := fs.Put("locked/leaf", []byte("v")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	dir := filepath.Join(base, "locked")
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if _, err := fs.List("locked"); err == nil {
+		t.Fatal("expected list to fail without permission to read the directory")
+	}
+}
+
+func TestFileStoreListReadFileError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	fs := state.NewFileStore(base)
+
+	if err := fs.Put("locked/leaf", []byte("v")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	leaf := filepath.Join(base, "locked", "leaf")
+	if err := os.Chmod(leaf, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(leaf, 0o600) })
+
+	// The directory itself is still listable; reading the unreadable file
+	// inside it is what must fail.
+	if _, err := fs.List("locked"); err == nil {
+		t.Fatal("expected list to fail reading an unreadable file")
+	}
+}
+
+func TestFileStoreCompareAndSwapGetError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	fs := state.NewFileStore(base)
+
+	if err := os.MkdirAll(filepath.Join(base, "adir"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Get on a directory fails with something other than ErrNotFound, so
+	// CompareAndSwap must surface it instead of treating the key as absent.
+	if _, err := fs.CompareAndSwap("adir", nil, []byte("v")); err == nil {
+		t.Fatal("expected cas to surface the underlying get error")
+	}
+}
+
+func TestFileStoreCompareAndSwapPutError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	fs := state.NewFileStore(base)
+
+	if err := os.MkdirAll(filepath.Join(base, "parent"), 0o500); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(base, "parent"), 0o700) })
+
+	// The key is absent, so oldValue nil matches and CompareAndSwap
+	// proceeds to Put, which fails: "parent" has no write permission to
+	// create the "newsub" subdirectory underneath it.
+	if _, err := fs.CompareAndSwap("parent/newsub/leaf", nil, []byte("v")); err == nil {
+		t.Fatal("expected cas to surface the underlying put error")
+	}
+}
