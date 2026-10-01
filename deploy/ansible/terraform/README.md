@@ -161,6 +161,40 @@ sudo nsenter --net=/proc/$p/ns/net curl -sI -x http://10.20.0.2:3128 https://exa
 sudo nsenter --net=/proc/$p/ns/net ping -c1 -W2 1.1.1.1                     # refused: not HTTP(S)
 ```
 
+## Micro-VM demo: a 3-node k3s cluster
+
+`infra_microvm` boots a real VM under cloud-hypervisor for each node (one
+control plane, two workers) instead of a namespaced container - see
+[../../../docs/architecture/realization.md](../../../docs/architecture/realization.md#microvms).
+The agent hosts need `cloud-hypervisor` and a raw base image, installed by
+the `microvm` Ansible role (part of `site.yml`); nothing extra to build.
+
+Pass an SSH key for debugging and create the control plane on its own first -
+the workers' `K3S_URL` needs its address, which the agent only assigns once it
+reconciles the resource, not within the same apply:
+
+```bash
+terraform apply -var "k8s_ssh_public_key=$(cat ~/.ssh/id_ed25519.pub)" \
+  -target=infra_microvm.k8s_control_plane
+```
+
+Wait for it to reach `Ready` (`terraform state show infra_microvm.k8s_control_plane`
+or the dashboard) and for k3s to come up, then apply the rest:
+
+```bash
+terraform apply -var "k8s_ssh_public_key=$(cat ~/.ssh/id_ed25519.pub)"
+```
+
+```bash
+terraform output k8s_control_plane_ip
+terraform output k8s_worker_ips
+ssh ubuntu@<k8s_control_plane_ip> kubectl get nodes
+```
+
+k3s rather than stock kubeadm: each micro-VM only gets a few hundred MB of RAM
+in this lab (768 MiB control plane, 512 MiB workers), well under kubeadm's own
+preflight minimum.
+
 ## Tear down
 
 ```bash
