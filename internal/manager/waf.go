@@ -80,12 +80,31 @@ func (f *ExecWAF) EnsureChain(ctx context.Context, chain string, match []string,
 		}
 	}
 	link := append(append([]string{"FORWARD"}, match...), "-j", chain)
+	f.unlinkOthers(ctx, chain, link)
 	if _, err := f.run(ctx, "iptables", append([]string{"-C"}, link...)...); err != nil {
 		if out, err := f.run(ctx, "iptables", append([]string{"-A"}, link...)...); err != nil {
 			return fmt.Errorf("manager: link waf chain %q: %w: %s", chain, err, strings.TrimSpace(out))
 		}
 	}
 	return nil
+}
+
+// unlinkOthers removes every FORWARD rule jumping to chain but link: one an
+// agent wrote for a target since moved, or before the VPC's VRF, when the
+// match named no bridge.
+func (f *ExecWAF) unlinkOthers(ctx context.Context, chain string, link []string) {
+	out, err := f.run(ctx, "iptables", "-S", "FORWARD")
+	if err != nil {
+		return
+	}
+	want := "-A " + strings.Join(link, " ")
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasSuffix(line, " -j "+chain) || line == want {
+			continue
+		}
+		_, _ = f.run(ctx, "iptables", append([]string{"-D"}, strings.Fields(line)[1:]...)...)
+	}
 }
 
 // DeleteChain detaches the chain from FORWARD, flushes and removes it.
@@ -288,7 +307,15 @@ func (r *WAFReconciler) targetMatch(spec resource.WAFPolicySpec) (match []string
 		if c.Status.IP == "" {
 			return nil, false, nil
 		}
-		return []string{"-d", c.Status.IP}, true, nil
+		sn, sErr := r.subnets.Get(c.Spec.SubnetID)
+		if sErr != nil {
+			return nil, false, sErr
+		}
+		bridge, bErr := r.bridgeOf(sn.Spec.VPCID)
+		if bErr != nil || bridge == "" {
+			return nil, false, bErr
+		}
+		return []string{"-o", bridge, "-d", c.Status.IP}, true, nil
 	case "subnet":
 		s, sErr := r.subnets.Get(spec.TargetID)
 		if errors.Is(sErr, state.ErrNotFound) {
@@ -297,7 +324,11 @@ func (r *WAFReconciler) targetMatch(spec resource.WAFPolicySpec) (match []string
 		if sErr != nil {
 			return nil, false, sErr
 		}
-		return []string{"-d", s.Spec.CIDR}, true, nil
+		bridge, bErr := r.bridgeOf(s.Spec.VPCID)
+		if bErr != nil || bridge == "" {
+			return nil, false, bErr
+		}
+		return []string{"-o", bridge, "-d", s.Spec.CIDR}, true, nil
 	case "igw":
 		igw, iErr := r.igws.Get(spec.TargetID)
 		if errors.Is(iErr, state.ErrNotFound) {
@@ -336,4 +367,15 @@ func (r *WAFReconciler) rulesFor(policyID string) ([]resource.WAFRuleSpec, error
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, nil
+}
+
+// bridgeOf returns the bridge of a VPC, empty while it is not provisioned. A
+// target is matched on its VPC's bridge as well as its addresses: two VPCs may
+// number their instances alike.
+func (r *WAFReconciler) bridgeOf(vpcID string) (string, error) {
+	vpc, err := r.vpcs.Get(vpcID)
+	if err != nil {
+		return "", err
+	}
+	return vpc.Status.BridgeName, nil
 }

@@ -56,6 +56,19 @@ func newWAFEnv(t *testing.T) *wafEnv {
 	}
 }
 
+// putNetwork seeds subnet sn-1 (10.0.1.0/24) in vpc-1, on bridge br-vpc1.
+func (env *wafEnv) putNetwork(t *testing.T) {
+	t.Helper()
+	if err := env.subnets.Put(&resource.Subnet{Metadata: resource.ObjectMeta{UID: "sn-1", Generation: 1}, Spec: resource.SubnetSpec{VPCID: "vpc-1", CIDR: "10.0.1.0/24"}}); err != nil {
+		t.Fatalf("seed subnet: %v", err)
+	}
+	v := &resource.VPC{Metadata: resource.ObjectMeta{UID: "vpc-1", Generation: 1}, Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}
+	v.Status.BridgeName = "br-vpc1"
+	if err := env.vpcs.Put(v); err != nil {
+		t.Fatalf("seed vpc: %v", err)
+	}
+}
+
 func (env *wafEnv) reconciler(be manager.WAFBackend) *manager.WAFReconciler {
 	return manager.NewWAFReconciler(env.policies, env.rules, env.computes, env.subnets, env.igws, env.vpcs, be)
 }
@@ -74,6 +87,7 @@ func TestWAFReconcileBuildsChainForCompute(t *testing.T) {
 	t.Parallel()
 
 	env := newWAFEnv(t)
+	env.putNetwork(t)
 	c := &resource.Compute{Metadata: resource.ObjectMeta{UID: "i-1", Generation: 1}, Spec: resource.ComputeSpec{SubnetID: "sn-1", Image: "x"}}
 	c.Status.IP = "10.0.1.10"
 	if err := env.computes.Put(c); err != nil {
@@ -100,8 +114,8 @@ func TestWAFReconcileBuildsChainForCompute(t *testing.T) {
 	if !got.Metadata.HasFinalizer(resource.WAFPolicyFinalizer) {
 		t.Fatal("finalizer should be attached")
 	}
-	if len(be.match) != 2 || be.match[0] != "-d" || be.match[1] != "10.0.1.10" {
-		t.Fatalf("match = %v, want [-d 10.0.1.10]", be.match)
+	if strings.Join(be.match, " ") != "-o br-vpc1 -d 10.0.1.10" {
+		t.Fatalf("match = %v, want [-o br-vpc1 -d 10.0.1.10]", be.match)
 	}
 	if len(be.rules) != 1 {
 		t.Fatalf("chain got %d rules, want 1 (only waf-1's)", len(be.rules))
@@ -139,7 +153,7 @@ func TestWAFReconcileSubnetAndIGWTargets(t *testing.T) {
 	if err := env.reconciler(beSn).Reconcile(context.Background(), "waf-sn"); err != nil {
 		t.Fatalf("reconcile subnet waf: %v", err)
 	}
-	if len(beSn.match) != 2 || beSn.match[1] != "10.0.1.0/24" {
+	if strings.Join(beSn.match, " ") != "-o br-vpc1 -d 10.0.1.0/24" {
 		t.Fatalf("subnet match = %v", beSn.match)
 	}
 
@@ -193,6 +207,7 @@ func TestWAFFinalize(t *testing.T) {
 	t.Parallel()
 
 	env := newWAFEnv(t)
+	env.putNetwork(t)
 	c := &resource.Compute{Metadata: resource.ObjectMeta{UID: "i-1", Generation: 1}, Spec: resource.ComputeSpec{SubnetID: "sn-1", Image: "x"}}
 	c.Status.IP = "10.0.1.10"
 	if err := env.computes.Put(c); err != nil {

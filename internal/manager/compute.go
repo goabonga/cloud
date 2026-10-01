@@ -48,6 +48,7 @@ type ComputeRequest struct {
 	MemoryMB   int
 	PidsMax    int
 	Privileged bool
+	VPCID      string
 	Bridge     string
 	IP         string
 	Prefix     int
@@ -68,6 +69,8 @@ type ComputeResult struct {
 // live spec, reconstructed from status and spec by the reconciler.
 type ComputeTeardown struct {
 	UID     string
+	VPCID   string
+	Bridge  string
 	IP      string
 	Ports   []string
 	SGChain string
@@ -129,7 +132,8 @@ func NewExecComputeBackendWithRunner(stateDir, netnsDir, cgroupBase string, run 
 	}
 }
 
-// EnsureCompute creates the instance the first time and is a no-op afterwards.
+// EnsureCompute creates the instance the first time and only keeps its
+// firewall rules in place afterwards.
 func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeRequest) (ComputeResult, error) {
 	ns, vethHost, vethNS := computeNames(req.UID)
 	res := ComputeResult{Namespace: ns, VethHost: vethHost}
@@ -142,7 +146,9 @@ func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeReque
 		return res, err
 	}
 	if exists {
-		return res, nil
+		// Every pass, so an instance an older agent created gets the rules
+		// this one writes.
+		return res, b.ensureFirewall(ctx, req)
 	}
 
 	if err := b.setupNetwork(ctx, req, ns, vethHost, vethNS); err != nil {
@@ -151,18 +157,8 @@ func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeReque
 	if err := b.writeResolv(ns, req.DNS); err != nil {
 		return res, err
 	}
-	if req.SGChain != "" {
-		if err := b.iptablesEnsure(ctx, []string{"-A", "FORWARD", "-d", req.IP, "-j", req.SGChain}); err != nil {
-			return res, err
-		}
-		if err := b.iptablesEnsure(ctx, []string{"-A", "OUTPUT", "-d", req.IP, "-j", req.SGChain}); err != nil {
-			return res, err
-		}
-	}
-	for _, p := range req.Ports {
-		if err := b.addPort(ctx, req.IP, p); err != nil {
-			return res, err
-		}
+	if err := b.ensureFirewall(ctx, req); err != nil {
+		return res, err
 	}
 	if req.CPU > 0 || req.MemoryMB > 0 || req.PidsMax > 0 {
 		if err := b.cgroups.setup(req.UID, req.CPU, req.MemoryMB, req.PidsMax); err != nil {
@@ -268,39 +264,68 @@ func (b *ExecComputeBackend) copyResolvIntoRootfs(ns, rootfs string) {
 	_ = os.WriteFile(filepath.Join(rootfs, "etc", "resolv.conf"), data, 0o644)
 }
 
-// iptablesEnsure adds an iptables rule unless an identical one already exists.
-func (b *ExecComputeBackend) iptablesEnsure(ctx context.Context, args []string) error {
-	check := make([]string, len(args))
-	copy(check, args)
-	for i, a := range check {
-		if a == "-A" {
-			check[i] = "-C"
-			break
+// computeRules returns the iptables rules of an instance, each as its table
+// and the rule's chain and matches: the security group's chain for what
+// reaches the instance through its VPC's bridge - two VPCs may number an
+// instance alike, so the address alone does not tell them apart, and what the
+// host itself sends goes through OUTPUT first on the VRF device, untracked,
+// where the group's ESTABLISHED rule could not let a reply through - and for
+// each port it maps, the DNAT from the host port, its acceptance, and the
+// marks routing it into the VPC's table and its replies back to the main one
+// (see vrf.go).
+func computeRules(vpcID, bridge, ip, sgChain string, ports []string) [][]string {
+	var rules [][]string
+	if sgChain != "" {
+		rules = append(rules,
+			[]string{"filter", "FORWARD", "-o", bridge, "-d", ip, "-j", sgChain},
+			[]string{"filter", "OUTPUT", "-o", bridge, "-d", ip, "-j", sgChain},
+		)
+	}
+	for _, p := range ports {
+		host, container, proto, err := parsePortMapping(p)
+		if err != nil {
+			continue
 		}
+		dest := ip + ":" + container
+		rules = append(rules,
+			[]string{"mangle", "PREROUTING", "!", "-i", bridge, "-p", proto, "--dport", host,
+				"-m", "conntrack", "--ctstate", "NEW", "-j", "CONNMARK", "--set-mark", hex32(vrfMainMark(vpcID))},
+			[]string{"mangle", "PREROUTING", "!", "-i", bridge, "-p", proto, "--dport", host,
+				"-j", "MARK", "--set-mark", hex32(vrfMark(vpcID))},
+			[]string{"nat", "PREROUTING", "-p", proto, "--dport", host, "-j", "DNAT", "--to-destination", dest},
+			[]string{"nat", "OUTPUT", "-p", proto, "--dport", host, "-j", "DNAT", "--to-destination", dest},
+			[]string{"filter", "FORWARD", "-o", bridge, "-p", proto, "-d", ip, "--dport", container, "-j", "ACCEPT"},
+		)
 	}
-	if _, err := b.run(ctx, "iptables", check...); err == nil {
-		return nil
-	}
-	if out, err := b.run(ctx, "iptables", args...); err != nil {
-		return fmt.Errorf("manager: iptables %v: %w: %s", args, err, strings.TrimSpace(out))
-	}
-	return nil
+	return rules
 }
 
-// addPort maps a host port to the instance with DNAT rules.
-func (b *ExecComputeBackend) addPort(ctx context.Context, ip, spec string) error {
-	host, container, proto, err := parsePortMapping(spec)
-	if err != nil {
-		return err
+// legacyComputeRules are the rules an agent before the VPC's VRF wrote, which
+// matched the instance by address alone.
+func legacyComputeRules(ip, sgChain string, ports []string) [][]string {
+	var rules [][]string
+	if sgChain != "" {
+		rules = append(rules,
+			[]string{"filter", "FORWARD", "-d", ip, "-j", sgChain},
+			[]string{"filter", "OUTPUT", "-d", ip, "-j", sgChain},
+		)
 	}
-	dest := ip + ":" + container
-	rules := [][]string{
-		{"-t", "nat", "-A", "PREROUTING", "-p", proto, "--dport", host, "-j", "DNAT", "--to-destination", dest},
-		{"-t", "nat", "-A", "OUTPUT", "-p", proto, "--dport", host, "-j", "DNAT", "--to-destination", dest},
-		{"-A", "FORWARD", "-p", proto, "-d", ip, "--dport", container, "-j", "ACCEPT"},
+	for _, p := range ports {
+		if _, container, proto, err := parsePortMapping(p); err == nil {
+			rules = append(rules, []string{"filter", "FORWARD", "-p", proto, "-d", ip, "--dport", container, "-j", "ACCEPT"})
+		}
 	}
-	for _, r := range rules {
-		if err := b.iptablesEnsure(ctx, r); err != nil {
+	return rules
+}
+
+// ensureFirewall puts the instance's rules in place and removes the ones an
+// older agent wrote.
+func (b *ExecComputeBackend) ensureFirewall(ctx context.Context, req ComputeRequest) error {
+	for _, r := range legacyComputeRules(req.IP, req.SGChain, req.Ports) {
+		iptablesDelete(ctx, b.run, r[0], r[1:])
+	}
+	for _, r := range computeRules(req.VPCID, req.Bridge, req.IP, req.SGChain, req.Ports) {
+		if err := iptablesEnsure(ctx, b.run, r[0], r[1:]); err != nil {
 			return err
 		}
 	}
@@ -347,19 +372,15 @@ func (b *ExecComputeBackend) DeleteCompute(ctx context.Context, td ComputeTeardo
 			_, _ = b.run(ctx, "kill", "-9", pid)
 		}
 	}
-	if td.SGChain != "" && td.IP != "" {
-		_, _ = b.run(ctx, "iptables", "-D", "FORWARD", "-d", td.IP, "-j", td.SGChain)
-		_, _ = b.run(ctx, "iptables", "-D", "OUTPUT", "-d", td.IP, "-j", td.SGChain)
-	}
-	for _, p := range td.Ports {
-		host, container, proto, perr := parsePortMapping(p)
-		if perr != nil {
-			continue
+	if td.IP != "" {
+		for _, r := range legacyComputeRules(td.IP, td.SGChain, td.Ports) {
+			iptablesDelete(ctx, b.run, r[0], r[1:])
 		}
-		dest := td.IP + ":" + container
-		_, _ = b.run(ctx, "iptables", "-t", "nat", "-D", "PREROUTING", "-p", proto, "--dport", host, "-j", "DNAT", "--to-destination", dest)
-		_, _ = b.run(ctx, "iptables", "-t", "nat", "-D", "OUTPUT", "-p", proto, "--dport", host, "-j", "DNAT", "--to-destination", dest)
-		_, _ = b.run(ctx, "iptables", "-D", "FORWARD", "-p", proto, "-d", td.IP, "--dport", container, "-j", "ACCEPT")
+		if td.Bridge != "" {
+			for _, r := range computeRules(td.VPCID, td.Bridge, td.IP, td.SGChain, td.Ports) {
+				iptablesDelete(ctx, b.run, r[0], r[1:])
+			}
+		}
 	}
 	for _, d := range td.Disks {
 		target := d.Target
@@ -759,6 +780,7 @@ func (r *ComputeReconciler) resolve(c *resource.Compute) (ComputeRequest, bool, 
 		MemoryMB:   c.Spec.MemoryMB,
 		PidsMax:    c.Spec.PidsMax,
 		Privileged: c.Spec.Privileged,
+		VPCID:      vpc.Metadata.UID,
 		Bridge:     vpc.Status.BridgeName,
 		IP:         ip,
 		Prefix:     prefixLen(subnet.Spec.CIDR),
@@ -771,12 +793,17 @@ func (r *ComputeReconciler) resolve(c *resource.Compute) (ComputeRequest, bool, 
 
 func (r *ComputeReconciler) finalize(ctx context.Context, c *resource.Compute) error {
 	if c.Metadata.HasFinalizer(resource.ComputeFinalizer) {
+		vpcID := r.vpcOf(c.Spec.SubnetID)
 		td := ComputeTeardown{
 			UID:     c.Metadata.UID,
+			VPCID:   vpcID,
 			IP:      c.Status.IP,
 			Ports:   c.Spec.Ports,
 			Rootfs:  c.Status.Rootfs,
 			SGChain: r.sgChain(c.Spec.SecurityGroupID),
+		}
+		if vpcID != "" {
+			td.Bridge = bridgeName(vpcID)
 		}
 		for _, d := range c.Spec.Disks {
 			td.Disks = append(td.Disks, ComputeMount{Target: d.MountPath})
@@ -803,6 +830,15 @@ func (r *ComputeReconciler) finalize(ctx context.Context, c *resource.Compute) e
 		}
 	}
 	return nil
+}
+
+// vpcOf returns the VPC of a subnet, empty if it cannot be resolved (best
+// effort, used during teardown).
+func (r *ComputeReconciler) vpcOf(subnetID string) string {
+	if sn, err := r.subnets.Get(subnetID); err == nil {
+		return sn.Spec.VPCID
+	}
+	return ""
 }
 
 // sgChain returns the iptables chain of a security group, empty if it cannot be

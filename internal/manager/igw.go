@@ -100,6 +100,13 @@ func (r *IGWReconciler) ensure(ctx context.Context, igw *resource.IGW) error {
 		_ = r.reg.Put(igw)
 		return err
 	}
+	// The VPC routes in its own table: without this route, its instances
+	// have no way out even with the NAT in place.
+	if err := r.net.EnsureEgress(ctx, igw.Spec.VPCID); err != nil {
+		igw.Status.SetPhase(resource.PhaseError, "RouteError", err.Error())
+		_ = r.reg.Put(igw)
+		return err
+	}
 
 	igw.Status.HostIface = hostIface
 	igw.Status.Bridge = vpc.Status.BridgeName
@@ -113,6 +120,11 @@ func (r *IGWReconciler) ensure(ctx context.Context, igw *resource.IGW) error {
 
 func (r *IGWReconciler) finalize(ctx context.Context, igw *resource.IGW) error {
 	if igw.Metadata.HasFinalizer(resource.IGWFinalizer) {
+		if err := r.net.DeleteEgress(ctx, igw.Spec.VPCID); err != nil {
+			igw.Status.SetPhase(resource.PhaseError, "RouteError", err.Error())
+			_ = r.reg.Put(igw)
+			return err
+		}
 		if vpc, err := r.vpcs.Get(igw.Spec.VPCID); err == nil && igw.Status.HostIface != "" {
 			if err := r.net.DeleteNAT(ctx, vpc.Spec.CIDR, igw.Status.HostIface); err != nil {
 				igw.Status.SetPhase(resource.PhaseError, "NATError", err.Error())

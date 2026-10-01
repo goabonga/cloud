@@ -66,6 +66,17 @@ type NetworkBackend interface {
 	// EnsureGatewayAddress assigns a subnet gateway to the bridge, with the
 	// subnet's connected route. Idempotent.
 	EnsureGatewayAddress(ctx context.Context, bridge, addrCIDR string) error
+	// EnsureVRF puts the VPC's bridge in a VRF of its own (see vrf.go).
+	// Idempotent.
+	EnsureVRF(ctx context.Context, vpcID, bridge string) error
+	// DeleteVRF removes the VPC's VRF. Removing an absent VRF is not an error.
+	DeleteVRF(ctx context.Context, vpcID, bridge string) error
+	// EnsureEgress gives the VPC's routing table the host's default route.
+	// Idempotent.
+	EnsureEgress(ctx context.Context, vpcID string) error
+	// DeleteEgress removes the VPC's default route. Removing an absent route
+	// is not an error.
+	DeleteEgress(ctx context.Context, vpcID string) error
 }
 
 // The subnet gateways sit on the VPC bridge, which takes the same anycast MAC

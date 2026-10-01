@@ -32,7 +32,8 @@ type DNSBackend interface {
 // NativeDNS is the DNSBackend that serves from the agent process itself, on
 // addresses it assigns with iproute2: a VPC's resolver address as a /32 on the
 // VPC bridge - on every host, like the subnet gateways, so an instance always
-// queries its own host - and the public address as a /32 on the loopback.
+// queries its own host - listening in the VPC's VRF, and the public address as
+// a /32 on the loopback.
 type NativeDNS struct {
 	run       Runner
 	listeners *DNSListeners
@@ -55,7 +56,7 @@ func (d *NativeDNS) ServeVPC(ctx context.Context, vpcID, bridge, addr string, vi
 	if out, err := d.run(ctx, "ip", "addr", "replace", addr+"/32", "dev", bridge); err != nil {
 		return fmt.Errorf("manager: add dns address %s on %s: %w: %s", addr, bridge, err, strings.TrimSpace(out))
 	}
-	if err := d.listeners.Serve(addr, view); err != nil {
+	if err := d.listeners.Serve(vrfName(vpcID), addr, view); err != nil {
 		return err
 	}
 	d.vpcAddrs[vpcID] = addr
@@ -65,7 +66,7 @@ func (d *NativeDNS) ServeVPC(ctx context.Context, vpcID, bridge, addr string, vi
 // StopVPC implements DNSBackend. The address goes with the VPC's bridge.
 func (d *NativeDNS) StopVPC(_ context.Context, vpcID string) error {
 	if addr, ok := d.vpcAddrs[vpcID]; ok {
-		d.listeners.Stop(addr)
+		d.listeners.Stop(vrfName(vpcID), addr)
 		delete(d.vpcAddrs, vpcID)
 	}
 	return nil
@@ -86,7 +87,7 @@ func (d *NativeDNS) ServePublic(ctx context.Context, addr string, view *DNSView)
 	if out, err := d.run(ctx, "ip", "addr", "replace", addr+"/32", "dev", "lo"); err != nil {
 		return fmt.Errorf("manager: add public dns address %s: %w: %s", addr, err, strings.TrimSpace(out))
 	}
-	return d.listeners.Serve(addr, view)
+	return d.listeners.Serve("", addr, view)
 }
 
 // DNSZoneRegistry is the typed store of DNS zones.
