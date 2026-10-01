@@ -303,3 +303,33 @@ func TestAuthorizationHierarchyKindOwnerOnly(t *testing.T) {
 		t.Fatalf("admin get status = %d", rec.Code)
 	}
 }
+
+func TestAuthorizationAdminOnlyHasNoSelfServicePath(t *testing.T) {
+	t.Parallel()
+
+	store := state.NewFileStore(t.TempDir())
+	bindings := registry.New[resource.IAMBindingSpec, resource.IAMBindingStatus](store, resource.KindIAMBinding)
+	mux := http.NewServeMux()
+	handler.New(bindings, resource.KindIAMBinding, handler.WithAdminOnly[resource.IAMBindingSpec, resource.IAMBindingStatus]()).Register(mux, "/api/v1")
+
+	in := resource.IAMBinding{Spec: resource.IAMBindingSpec{
+		Resource: resource.ObjectReference{Kind: resource.KindProject, UID: "project-1"},
+		Role:     resource.RoleOwner,
+		Members:  []string{"user:alice"},
+	}}
+	// Unlike an ordinary unscoped resource, a non-admin may not create an
+	// iam_binding even naming themselves - that would be a self-grant.
+	if rec := doAs(t, mux, "alice", nil, http.MethodPut, "/api/v1/iam_binding/binding-1", in); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin create status = %d, want 403", rec.Code)
+	}
+	if rec := doAs(t, mux, "root", []string{"admin"}, http.MethodPut, "/api/v1/iam_binding/binding-1", in); rec.Code != http.StatusCreated {
+		t.Fatalf("admin create status = %d, body %s", rec.Code, rec.Body)
+	}
+	// Even the creator (stamped as owner) cannot read it back without admin.
+	if rec := doAs(t, mux, "root", nil, http.MethodGet, "/api/v1/iam_binding/binding-1", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin get status = %d, want 403 even for the stamped owner", rec.Code)
+	}
+	if rec := doAs(t, mux, "anyone", []string{"admin"}, http.MethodGet, "/api/v1/iam_binding/binding-1", nil); rec.Code != http.StatusOK {
+		t.Fatalf("admin get status = %d", rec.Code)
+	}
+}

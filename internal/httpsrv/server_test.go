@@ -5,15 +5,36 @@ package httpsrv_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/goabonga/infrastructure/internal/auth"
 	"github.com/goabonga/infrastructure/internal/crypto"
+	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/httpsrv"
+	"github.com/goabonga/infrastructure/internal/registry"
 	"github.com/goabonga/infrastructure/internal/state"
 )
+
+// roleAwareAuthenticator is a bearer-token fake carrying roles, which
+// auth.TokenAuthenticator does not support.
+type roleAwareAuthenticator map[string]auth.Identity
+
+func (a roleAwareAuthenticator) Authenticate(r *http.Request) (*auth.Identity, error) {
+	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		return nil, auth.ErrUnauthenticated
+	}
+	id, ok := a[tok]
+	if !ok {
+		return nil, auth.ErrUnauthenticated
+	}
+	return &id, nil
+}
 
 func TestServerHealthz(t *testing.T) {
 	t.Parallel()
@@ -118,6 +139,112 @@ func TestServerWiresListenerRoutes(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("%s list status = %d", kind, resp.StatusCode)
 		}
+	}
+}
+
+func TestServerEnforcesOwnershipAndSharing(t *testing.T) {
+	t.Parallel()
+
+	store := state.NewFileStore(t.TempDir())
+	tokenAuth := roleAwareAuthenticator{
+		"admin-tok": {Subject: "root", Roles: []string{"admin"}},
+		"alice-tok": {Subject: "alice"},
+		"bob-tok":   {Subject: "bob"},
+	}
+	srv := httptest.NewServer(httpsrv.New(store, httpsrv.WithAuth(tokenAuth)).Handler())
+	defer srv.Close()
+
+	projects := registry.New[resource.ProjectSpec, resource.ProjectStatus](store, resource.KindProject)
+	if err := projects.Put(&resource.Project{
+		Metadata: resource.ObjectMeta{UID: "project-1"},
+		Spec: resource.ProjectSpec{
+			DisplayName: "demo",
+			ParentRef:   resource.ParentRef{ParentKind: resource.ParentKindOrganization, ParentID: "org-1"},
+		},
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	putAs := func(token, path string, body any) int {
+		buf, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+		req, err := http.NewRequest(http.MethodPut, srv.URL+path, bytes.NewReader(buf))
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do request: %v", err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	getAs := func(token, path string) (int, []byte) {
+		req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do request: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, body
+	}
+
+	// alice cannot create into project-1 without a grant.
+	noGrant := resource.VPC{Metadata: resource.ObjectMeta{ProjectID: "project-1"}, Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}
+	if code := putAs("alice-tok", "/api/v1/vpc/vpc-1", noGrant); code != http.StatusForbidden {
+		t.Fatalf("create without a grant: status = %d, want 403", code)
+	}
+
+	// Only admin can grant access: alice herself cannot create the binding
+	// that would grant her editor on project-1 (iam_binding is admin-only,
+	// precisely so a caller can't self-grant access this way).
+	binding := resource.IAMBinding{Spec: resource.IAMBindingSpec{
+		Resource: resource.ObjectReference{Kind: resource.KindProject, UID: "project-1"},
+		Role:     resource.RoleEditor,
+		Members:  []string{"user:alice"},
+	}}
+	if code := putAs("alice-tok", "/api/v1/iam_binding/binding-1", binding); code != http.StatusForbidden {
+		t.Fatalf("alice self-granting a binding: status = %d, want 403", code)
+	}
+	if code := putAs("admin-tok", "/api/v1/iam_binding/binding-1", binding); code != http.StatusCreated {
+		t.Fatalf("admin granting alice editor: status = %d", code)
+	}
+
+	if code := putAs("alice-tok", "/api/v1/vpc/vpc-1", noGrant); code != http.StatusCreated {
+		t.Fatalf("create with an editor grant: status = %d, want 201", code)
+	}
+
+	// bob has no grant anywhere: invisible.
+	if code, _ := getAs("bob-tok", "/api/v1/vpc/vpc-1"); code != http.StatusForbidden {
+		t.Fatalf("bob get before sharing: status = %d, want 403", code)
+	}
+	if code, body := getAs("bob-tok", "/api/v1/vpc"); code != http.StatusOK || bytes.Contains(body, []byte("vpc-1")) {
+		t.Fatalf("bob list before sharing: status = %d, body %s, want vpc-1 absent", code, body)
+	}
+
+	// Admin shares project-1 with bob as a viewer.
+	shareWithBob := resource.IAMBinding{Spec: resource.IAMBindingSpec{
+		Resource: resource.ObjectReference{Kind: resource.KindProject, UID: "project-1"},
+		Role:     resource.RoleViewer,
+		Members:  []string{"user:bob"},
+	}}
+	if code := putAs("admin-tok", "/api/v1/iam_binding/binding-2", shareWithBob); code != http.StatusCreated {
+		t.Fatalf("admin sharing with bob: status = %d, want 201", code)
+	}
+
+	if code, _ := getAs("bob-tok", "/api/v1/vpc/vpc-1"); code != http.StatusOK {
+		t.Fatalf("bob get after sharing: status = %d, want 200", code)
+	}
+	if code, body := getAs("bob-tok", "/api/v1/vpc"); code != http.StatusOK || !bytes.Contains(body, []byte("vpc-1")) {
+		t.Fatalf("bob list after sharing: status = %d, body %s, want vpc-1 present", code, body)
 	}
 }
 
