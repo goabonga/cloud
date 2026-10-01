@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: www quality
+description: |
+  eslint, tsc, vitest with coverage (uploaded to Codecov) and a production
+  vite build of the SPA.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: www/package-lock.json
+    - run: npm ci
+      shell: bash
+      working-directory: www
+    - run: npm run lint
+      shell: bash
+      working-directory: www
+    - run: npm run typecheck
+      shell: bash
+      working-directory: www
+    - name: Run tests with coverage
+      shell: bash
+      working-directory: www
+      run: npm run test:coverage
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+      with:
+        # lcov.info records paths relative to www/ (vitest's cwd), so the
+        # uploader needs that same cwd to prefix them back to www/src/...
+        # when it maps them onto the repo tree.
+        working-directory: www
+        files: coverage/lcov.info
+        flags: www
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
+        disable_search: true
+    - run: npm run build
+      shell: bash
+      working-directory: www
