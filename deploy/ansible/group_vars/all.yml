@@ -46,16 +46,24 @@ dns_public_addr: "203.0.113.53"
 public_dns_domains: ["demo.test"]
 
 # upstream-sim, the provider's router. route_mode picks how it reaches the
-# block: "ecmp" spreads flows over every edge (L4 hash), "floating" sends them
-# to floating_next_hop, which the active edge must hold (nothing in the lab
-# holds it yet). inet is a netns on upstream-sim standing for an Internet
-# client, on the far side of the provider.
+# block: "bgp" learns each public address the edges serve from them over BGP
+# (BIRD, with BFD) and spreads flows over the edges announcing it, dropping an
+# edge as soon as its routes go; "ecmp" routes the whole block statically over
+# every edge (L4 hash); "floating" sends it to floating_next_hop, which the
+# active edge must hold (nothing in the lab holds it yet). inet is a netns on
+# upstream-sim standing for an Internet client, on the far side of the
+# provider.
 upstream:
-  route_mode: "ecmp"
+  route_mode: "bgp"
+  asn: 65000
   floating_next_hop: "10.99.0.254"
   inet_cidr: "100.64.0.0/30"
   inet_gateway: "100.64.0.1"
   inet_client: "100.64.0.2"
+
+# The edges' own AS, the same on every edge so upstream-sim takes their
+# routes to an address as equal paths.
+edge_asn: 65010
 
 # Deployment: which .deb packages each role installs. Build them first with
 # `make deb VERSION=<version>` so they land in dist/.

@@ -6,12 +6,13 @@
 #   ansible-playbook verify-upstream.yml
 #
 # The inet namespace reaches its gateway and every edge over wan-sim; the
-# public block is routed to the edges (every edge a next hop in ECMP mode, with
-# flows spread over them by the L4 hash); a packet for the block from inet is
-# answered by an edge, which marks it unreachable until the edges realise
-# public addresses; the public DNS the edges hold in the block answers and
-# refuses recursion; and the NAT towards the
-# real LAN leaves the block alone while inet can still reach the LAN through it.
+# public block is routed to the edges - in BGP mode, every edge has a session
+# up and announces the public DNS address, which upstream-sim routes over all
+# of them; in ECMP mode, the whole block goes to every edge - with flows
+# spread over them by the L4 hash; a packet for an address nothing serves is
+# answered as unreachable; the public DNS the edges hold in the block answers
+# and refuses recursion; and the NAT towards the real LAN leaves the block
+# alone while inet can still reach the LAN through it.
 ---
 - name: Simulated provider
   hosts: upstream
@@ -22,6 +23,8 @@
     # An address of the block nothing holds: public ip_addresses are handed
     # out from .10 to .249, so .254 stays unassigned, e.g. 203.0.113.254.
     probe: "{{ eip_block | regex_replace('\\.0/[0-9]+$', '.254') }}"
+    # What the flows are hashed towards: an address every edge serves.
+    flow_target: "{{ dns_public_addr if upstream.route_mode == 'bgp' else probe }}"
   tasks:
     - name: The inet client reaches its gateway
       ansible.builtin.command: "ip netns exec inet ping -c1 -W2 {{ upstream.inet_gateway }}"
@@ -32,24 +35,36 @@
       loop: "{{ edge_ips }}"
       changed_when: false
 
+    - name: Read the BGP sessions
+      ansible.builtin.command: birdc show protocols
+      register: verify_bgp
+      changed_when: false
+      when: upstream.route_mode == 'bgp'
+
+    - name: Every edge has its BGP session up
+      ansible.builtin.assert:
+        that: verify_bgp.stdout_lines | select('search', 'BGP .* up .*Established') | list | length == groups['edges'] | length
+        fail_msg: "{{ verify_bgp.stdout }}"
+      when: upstream.route_mode == 'bgp'
+
     - name: Read the route to the public block
-      ansible.builtin.command: "ip route show {{ eip_block }}"
+      ansible.builtin.command: "ip route show {{ eip_block if upstream.route_mode != 'bgp' else dns_public_addr }}"
       register: verify_block_route
       changed_when: false
 
     - name: The block is routed as the route mode says
       ansible.builtin.assert:
         that: >-
-          (upstream.route_mode == 'ecmp' and edge_ips | reject('in', verify_block_route.stdout) | list | length == 0)
+          (upstream.route_mode in ['ecmp', 'bgp'] and edge_ips | reject('in', verify_block_route.stdout) | list | length == 0)
           or (upstream.route_mode == 'floating' and upstream.floating_next_hop in verify_block_route.stdout)
         fail_msg: "route: {{ verify_block_route.stdout }}"
 
     - name: Resolve the next hop for 64 TCP flows to the block
-      ansible.builtin.command: "ip route get {{ probe }} ipproto tcp sport {{ 10000 + item }} dport 443"
+      ansible.builtin.command: "ip route get {{ flow_target }} ipproto tcp sport {{ 10000 + item }} dport 443"
       loop: "{{ range(64) | list }}"
       register: verify_flows
       changed_when: false
-      when: upstream.route_mode == 'ecmp'
+      when: upstream.route_mode in ['ecmp', 'bgp']
 
     - name: The L4 hash spreads flows over every edge
       vars:
@@ -59,7 +74,7 @@
       ansible.builtin.assert:
         that: hops | length == edge_ips | length
         fail_msg: "flows only went through {{ hops }}"
-      when: upstream.route_mode == 'ecmp'
+      when: upstream.route_mode in ['ecmp', 'bgp']
 
     - name: Send a packet for the block from the inet client
       ansible.builtin.command: "ip netns exec inet ping -c1 -W2 {{ probe }}"
@@ -67,10 +82,14 @@
       changed_when: false
       failed_when: false
 
-    - name: An edge answers for the block
+    # In BGP mode, upstream-sim routes only what the edges announce and answers
+    # for the rest of the block itself; otherwise an edge does.
+    - name: An address nothing serves is unreachable
+      vars:
+        answering: "{{ [upstream.inet_gateway] if upstream.route_mode == 'bgp' else edge_ips }}"
       ansible.builtin.assert:
-        that: verify_block_ping.stdout is search('From (' ~ (edge_ips | map('regex_escape') | join('|')) ~ ') .*[Uu]nreachable')
-        fail_msg: "no edge answered: {{ verify_block_ping.stdout }}"
+        that: verify_block_ping.stdout is search('From (' ~ (answering | map('regex_escape') | join('|')) ~ ') .*[Uu]nreachable')
+        fail_msg: "no unreachable from {{ answering }}: {{ verify_block_ping.stdout }}"
 
     # The zone need not exist: an authoritative server refuses a name outside
     # its zones, and never recurses for the client.
