@@ -185,3 +185,60 @@ func TestSSLValidationListDelete(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
+
+// Terraform sends a PUT on every update: an unchanged CA must keep its key,
+// or every certificate it signed stops verifying.
+func TestCreateCAKeepsItsKeyAcrossAnUnchangedPut(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newService(t)
+	spec := resource.SSLCASpec{CommonName: "Internal CA", Organization: "lab"}
+	first, err := svc.CreateCA("ca", "ca", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := svc.CreateCA("ca", "ca", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again.Status.CertPEM) != string(first.Status.CertPEM) {
+		t.Fatal("an unchanged PUT regenerated the CA")
+	}
+	spec.CommonName = "Renamed CA"
+	renamed, err := svc.CreateCA("ca", "ca", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(renamed.Status.CertPEM) == string(first.Status.CertPEM) {
+		t.Fatal("a new subject must get a new certificate")
+	}
+}
+
+func TestCreateCertKeepsItsKeyAcrossAnUnchangedPut(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newService(t)
+	if _, err := svc.CreateCA("ca", "ca", resource.SSLCASpec{CommonName: "CA"}); err != nil {
+		t.Fatal(err)
+	}
+	spec := resource.SSLCertSpec{CAID: "ca", CommonName: "web.internal.demo", DNSNames: []string{"web.internal.demo"}}
+	first, err := svc.CreateCert("web", "web", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := svc.CreateCert("web", "web", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again.Status.CertPEM) != string(first.Status.CertPEM) {
+		t.Fatal("an unchanged PUT reissued the certificate")
+	}
+	spec.DNSNames = append(spec.DNSNames, "www.internal.demo")
+	wider, err := svc.CreateCert("web", "web", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(wider.Status.CertPEM) == string(first.Status.CertPEM) {
+		t.Fatal("new SANs must get a new certificate")
+	}
+}

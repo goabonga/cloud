@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"reflect"
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/crypto"
@@ -52,6 +53,21 @@ func (s *Service) CreateCA(uid, name string, spec resource.SSLCASpec) (*resource
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
+	existing, err := s.reg.Get(uid)
+	if err == nil && sameCAIdentity(existing.Spec, spec) && len(existing.Status.CertPEM) > 0 {
+		// Same subject and lifetime: keep the key, so the certificates it
+		// signed stay valid. Terraform sends a PUT on every update.
+		if !reflect.DeepEqual(existing.Spec, spec) {
+			existing.Spec = spec
+			existing.Metadata.Generation++
+			existing.Status.MarkReconciled(existing.Metadata.Generation)
+			if err := s.reg.Put(existing); err != nil {
+				return nil, err
+			}
+		}
+		return redact(existing), nil
+	}
+
 	days := spec.ValidDays
 	if days == 0 {
 		days = defaultCADays
@@ -74,7 +90,7 @@ func (s *Service) CreateCA(uid, name string, spec resource.SSLCASpec) (*resource
 	}
 
 	res := &resource.SSLCA{Metadata: resource.ObjectMeta{UID: uid, Name: name}, Spec: spec}
-	if existing, err := s.reg.Get(uid); err == nil {
+	if existing != nil {
 		res.Metadata.CreatedAt = existing.Metadata.CreatedAt
 		res.Metadata.Generation = existing.Metadata.Generation + 1
 	} else {
@@ -143,6 +159,10 @@ func (s *Service) CreateCert(uid, name string, spec resource.SSLCertSpec) (*reso
 	}
 	if err := spec.Validate(); err != nil {
 		return nil, err
+	}
+	if existing, err := s.certs.Get(uid); err == nil && reflect.DeepEqual(existing.Spec, spec) && len(existing.Status.CertPEM) > 0 {
+		// Nothing to sign anew: keep the certificate and its key.
+		return redactCert(existing), nil
 	}
 	ca, err := s.loadCA(spec.CAID)
 	if err != nil {
@@ -268,4 +288,10 @@ func redactCert(res *resource.SSLCert) *resource.SSLCert {
 	out := *res
 	out.Status.EncryptedKey = nil
 	return &out
+}
+
+// sameCAIdentity reports whether two CA specs describe the same certificate:
+// same subject and lifetime. Other fields can change without a new key.
+func sameCAIdentity(a, b resource.SSLCASpec) bool {
+	return a.CommonName == b.CommonName && a.Organization == b.Organization && a.ValidDays == b.ValidDays
 }
