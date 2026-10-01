@@ -42,6 +42,17 @@ type Config struct {
 	// notation (e.g. "02:00:00:00:00:01"). Ignored if TapName is empty;
 	// defaults to defaultMAC if TapName is set but MAC isn't.
 	MAC string
+	// DiskPath, if set, attaches a virtio-blk device backed by that raw
+	// disk file — already resolved/fetched/cloned into a node-local,
+	// per-instance file the same way internal/manager's vmImageCache
+	// already does for cloud-hypervisor's boot images; this package
+	// never fetches or clones one itself. Leaving it empty boots a VM
+	// with no disk at all (kernel + initrd only).
+	DiskPath string
+	// DiskReadonly rejects writes to DiskPath's device with
+	// VIRTIO_BLK_S_IOERR instead of performing them. Ignored if DiskPath
+	// is empty.
+	DiskReadonly bool
 }
 
 // Machine is one booted (or about to be booted) VM: its KVM handles, its
@@ -53,6 +64,7 @@ type Machine struct {
 	console *uart.UART
 	tap     *os.File
 	net     *virtio.Net
+	disk    *os.File
 
 	vcpus       []*vcpu
 	mmioDevices []*mmioDevice
@@ -138,6 +150,13 @@ func New(cfg Config) (*Machine, error) {
 	cmdline := cfg.CmdLine
 	if cfg.TapName != "" {
 		extra, err := m.setupNet(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("hypervisor: %w", err)
+		}
+		cmdline += extra
+	}
+	if cfg.DiskPath != "" {
+		extra, err := m.setupDisk(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("hypervisor: %w", err)
 		}
@@ -249,6 +268,10 @@ func (m *Machine) Close() error {
 	if m.tap != nil {
 		_ = m.tap.Close() // also unblocks virtio.Net.ReadLoop's pending Read, see OpenTap
 		m.tap = nil
+	}
+	if m.disk != nil {
+		_ = m.disk.Close()
+		m.disk = nil
 	}
 	if m.mem != nil {
 		_ = unix.Munmap(m.mem)

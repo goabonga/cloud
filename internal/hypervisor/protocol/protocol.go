@@ -53,11 +53,9 @@ const (
 // CreateParams is the payload of a TypeCreate request: everything needed
 // to boot one VM, combining cloud-hypervisor's separate vm.create and
 // vm.boot into a single call (see internal/hypervisor's Config — this
-// process only ever boots once). DiskPath/DiskReadonly are part of the
-// schema now so it doesn't need a breaking change later, but are ignored
-// until the milestone that adds virtio-blk lands; TapName/MAC are honored
-// (an empty TapName boots with no network device, matching Config's own
-// default).
+// process only ever boots once). Every field is honored; an empty
+// TapName/DiskPath boots with no network device/disk at all, matching
+// Config's own defaults.
 type CreateParams struct {
 	VCPUs        int    `json:"vcpus"`
 	MemoryMB     int    `json:"memory_mb"`
