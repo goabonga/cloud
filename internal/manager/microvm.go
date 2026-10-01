@@ -36,11 +36,16 @@ type MicroVMRequest struct {
 	InitrdPath string
 	CmdLine    string
 	Image      string
-	Bridge     string
-	IP         string
-	Prefix     int
-	Gateway    string
-	SGChain    string
+	// SSHAuthorizedKey and UserData seed cloud-init: UserData, when set, is
+	// used verbatim as the guest's user-data; otherwise a minimal
+	// cloud-config carries the hostname and the SSH key.
+	SSHAuthorizedKey string
+	UserData         string
+	Bridge           string
+	IP               string
+	Prefix           int
+	Gateway          string
+	SGChain          string
 }
 
 // MicroVMResult reports the realized topology of a micro-VM.
@@ -75,6 +80,7 @@ type ExecMicroVMBackend struct {
 	run      Runner
 	net      *ExecBackend
 	images   *vmImageCache
+	seed     *cloudInitSeeds
 	stateDir string
 	binary   string
 }
@@ -83,14 +89,16 @@ type ExecMicroVMBackend struct {
 // boot disk) and the shared image cache under stateDir, and resolves
 // cloud-hypervisor through PATH.
 func NewExecMicroVMBackend(stateDir string) *ExecMicroVMBackend {
-	return &ExecMicroVMBackend{run: defaultRun, net: NewExecBackendWithRunner(defaultRun), images: newVMImageCache(stateDir), stateDir: stateDir}
+	return &ExecMicroVMBackend{run: defaultRun, net: NewExecBackendWithRunner(defaultRun), images: newVMImageCache(stateDir), seed: newCloudInitSeeds(cloudInitPort), stateDir: stateDir}
 }
 
 // NewExecMicroVMBackendWithRunner builds a backend with an overridable
 // directory and runner, used in tests to assert the issued commands without
-// touching the host or starting cloud-hypervisor.
+// touching the host or starting cloud-hypervisor. Its cloud-init seed server,
+// if started, binds an OS-assigned port rather than the production one, so
+// parallel tests never collide on it.
 func NewExecMicroVMBackendWithRunner(stateDir string, run Runner) *ExecMicroVMBackend {
-	return &ExecMicroVMBackend{run: run, net: NewExecBackendWithRunner(run), images: newVMImageCache(stateDir), stateDir: stateDir}
+	return &ExecMicroVMBackend{run: run, net: NewExecBackendWithRunner(run), images: newVMImageCache(stateDir), seed: newCloudInitSeeds(0), stateDir: stateDir}
 }
 
 func (b *ExecMicroVMBackend) instanceDir(uid string) string {
@@ -145,6 +153,11 @@ func (b *ExecMicroVMBackend) EnsureMicroVM(ctx context.Context, req MicroVMReque
 		return res, fmt.Errorf("manager: resolve boot image for %q: %w", req.UID, err)
 	}
 
+	if err := b.seed.ensureStarted(); err != nil {
+		return res, err
+	}
+	b.seed.set(req.UID, buildCloudInitSeed(req))
+
 	sock := filepath.Join(dir, "api.sock")
 	handle, err := startVMM(ctx, b.binary, sock, filepath.Join(dir, "chv.log"))
 	if err != nil {
@@ -182,6 +195,7 @@ func (b *ExecMicroVMBackend) EnsureMicroVM(ctx context.Context, req MicroVMReque
 func (b *ExecMicroVMBackend) DeleteMicroVM(ctx context.Context, td MicroVMTeardown) error {
 	dir := b.instanceDir(td.UID)
 	pidFile := filepath.Join(dir, "chv.pid")
+	b.seed.remove(td.UID)
 
 	if pid, alive := readAlivePid(pidFile); alive {
 		shutdownCtx, cancel := context.WithTimeout(ctx, chvShutdownGrace)
@@ -266,6 +280,9 @@ func guestCmdline(req MicroVMRequest) string {
 	if req.IP != "" && req.Gateway != "" {
 		mask := net.IP(net.CIDRMask(req.Prefix, 32)).String()
 		parts = append(parts, fmt.Sprintf("ip=%s::%s:%s::eth0:off", req.IP, req.Gateway, mask))
+	}
+	if req.Gateway != "" {
+		parts = append(parts, cloudInitCmdline(req))
 	}
 	return strings.Join(parts, " ")
 }
@@ -457,19 +474,21 @@ func (r *MicroVMReconciler) resolve(v *resource.MicroVM) (MicroVMRequest, bool, 
 	}
 
 	return MicroVMRequest{
-		UID:        v.Metadata.UID,
-		Hostname:   v.Spec.Hostname,
-		VCPUs:      v.Spec.VCPUs,
-		MemoryMB:   v.Spec.MemoryMB,
-		KernelPath: v.Spec.KernelPath,
-		InitrdPath: v.Spec.InitrdPath,
-		CmdLine:    v.Spec.CmdLine,
-		Image:      v.Spec.Image,
-		Bridge:     vpc.Status.BridgeName,
-		IP:         ip,
-		Prefix:     prefixLen(subnet.Spec.CIDR),
-		Gateway:    subnet.Status.Gateway,
-		SGChain:    sgChain,
+		UID:              v.Metadata.UID,
+		Hostname:         v.Spec.Hostname,
+		VCPUs:            v.Spec.VCPUs,
+		MemoryMB:         v.Spec.MemoryMB,
+		KernelPath:       v.Spec.KernelPath,
+		InitrdPath:       v.Spec.InitrdPath,
+		CmdLine:          v.Spec.CmdLine,
+		Image:            v.Spec.Image,
+		SSHAuthorizedKey: v.Spec.SSHAuthorizedKey,
+		UserData:         v.Spec.UserData,
+		Bridge:           vpc.Status.BridgeName,
+		IP:               ip,
+		Prefix:           prefixLen(subnet.Spec.CIDR),
+		Gateway:          subnet.Status.Gateway,
+		SGChain:          sgChain,
 	}, true, nil
 }
 
