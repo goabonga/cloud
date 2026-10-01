@@ -60,6 +60,8 @@ func TestTopologyValidate(t *testing.T) {
 		{"key no ring", resource.KMSKeySpec{Name: "k"}, true},
 		{"disk ok", resource.DiskSpec{SizeMB: 1024, KMSKeyID: "key-1"}, false},
 		{"disk bad size", resource.DiskSpec{SizeMB: 0}, true},
+		{"disk encrypted too small", resource.DiskSpec{SizeMB: 16, KMSKeyID: "key-1"}, true},
+		{"disk small in clear", resource.DiskSpec{SizeMB: 16}, false},
 		{"diskfile ok", resource.DiskFileSpec{DiskID: "disk-1", Path: "/etc/x"}, false},
 		{"diskfile from a cert", resource.DiskFileSpec{DiskID: "disk-1", Path: "tls.crt", SSLCertID: "c", SSLPart: resource.SSLPartChain}, false},
 		{"diskfile content and cert", resource.DiskFileSpec{DiskID: "disk-1", Path: "x", Content: "x", SSLCertID: "c", SSLPart: resource.SSLPartCertificate}, true},
