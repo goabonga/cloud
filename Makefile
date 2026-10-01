@@ -14,6 +14,7 @@ EXPORTER_BIN := $(BUILD_DIR)/infra-exporter
 IDP_BIN := $(BUILD_DIR)/infra-idp
 CONTAINER_INIT_BIN := $(BUILD_DIR)/infra-container-init
 LB_BIN := $(BUILD_DIR)/infra-lb
+HYPERVISOR_BIN := $(BUILD_DIR)/infra-hypervisor
 WWW_BIN := $(BUILD_DIR)/infra-www
 
 # Run multicz / zensical through uv without a global install.
@@ -22,6 +23,7 @@ ZENSICAL := uv tool run zensical
 
 .PHONY: help build build-cli build-api build-agent build-controller-manager \
         build-provider build-exporter build-idp build-container-init build-lb \
+        build-hypervisor \
         frontend build-www \
         fmt vet lint test test-integration tidy check \
         license license-check \
@@ -36,7 +38,7 @@ help: ## Show this help
 # ── Build ──────────────────────────────────────────────────────────────────
 
 build: build-cli build-api build-agent build-controller-manager build-provider \
-       build-exporter build-idp build-container-init build-lb ## Build every component
+       build-exporter build-idp build-container-init build-lb build-hypervisor ## Build every component
 
 build-cli: ## Build the CLI (infra)
 	go build -o $(CLI_BIN) ./cmd/cli/
@@ -64,6 +66,9 @@ build-container-init: ## Build the container-init helper (static)
 
 build-lb: ## Build the load balancers' data plane (static)
 	CGO_ENABLED=0 go build -ldflags='-s -w' -o $(LB_BIN) ./cmd/lb/
+
+build-hypervisor: ## Build the micro-VM hypervisor infra-agent spawns per instance (static)
+	CGO_ENABLED=0 go build -ldflags='-s -w' -o $(HYPERVISOR_BIN) ./cmd/hypervisor/
 
 frontend: ## Build the SPA and stage it into the infra-www embed dir
 	cd www && npm ci && npm run build

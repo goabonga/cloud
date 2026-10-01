@@ -66,9 +66,12 @@ declare -A EXTRA_UNITS=(
 )
 
 # Further binaries a package ships, as "cmd-dir:binary". infra-agent runs
-# infra-lb, the load balancers' data plane.
+# infra-lb (the load balancers' data plane) and infra-hypervisor (one
+# process per micro-VM instance, spawned directly rather than through a
+# systemd unit — see EXTRA_UNITS above, which infra-hypervisor has no
+# entry in for that reason).
 declare -A EXTRA_BINARIES=(
-  [infra-agent]="lb:infra-lb"
+  [infra-agent]="lb:infra-lb hypervisor:infra-hypervisor"
 )
 
 # component -> "cmd-dir:binary:service-unit" (empty service = not a daemon)
