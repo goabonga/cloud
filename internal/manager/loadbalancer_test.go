@@ -365,3 +365,15 @@ func TestExecLBLeavesAStoppedNamespaceAlone(t *testing.T) {
 		}
 	}
 }
+
+func TestExecLBGivesAPortlessLoadBalancerNoVirtualService(t *testing.T) {
+	t.Parallel()
+
+	h := &nsHost{}
+	if err := manager.NewExecLBWithRunner(h.run).EnsureService(context.Background(), "vpc1", "br-vpc1", "10.0.5.5", 0, "tcp", "round_robin", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.joined(), inNS+"ip addr replace 10.0.5.5/32 dev la0") || strings.Contains(h.joined(), "ipvsadm") {
+		t.Fatalf("want the VIP and no virtual service:\n%s", h.joined())
+	}
+}

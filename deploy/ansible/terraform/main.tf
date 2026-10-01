@@ -1,8 +1,8 @@
 # A demo topology provisioned against the deployed control plane:
 #   vpc -> subnet -> internet gateway + route -> security group + rules
 #   -> two nginx instances, scheduled onto the agent node pool, each serving a
-#   page from its own KMS-encrypted disk over HTTPS -> a layer-4 load balancer
-#   in front -> a private DNS zone naming it inside the VPC, and a public zone
+#   page from its own KMS-encrypted disk over HTTPS -> a load balancer in
+#   front, terminating HTTPS and re-encrypting towards them -> a private DNS zone naming it inside the VPC, and a public zone
 #   -> certificates for both: public names signed by the platform's public
 #   root, internal ones by a CA only the VPC trusts.
 
@@ -129,7 +129,7 @@ resource "infra_ssl_cert" "internal" {
 resource "infra_disk" "conf" {
   for_each   = local.web
   name       = "${each.key}-conf"
-  size_mb    = 16
+  size_mb    = 64
   kms_key_id = infra_kms_key.disks.id
 }
 
@@ -225,17 +225,58 @@ resource "infra_load_balancer" "web" {
   # an address the agent assigns is only known after the apply.
   address      = "10.20.0.10"
   public_ip_id = infra_ip_address.web_public.id
-  # TLS passes through to nginx, which holds the certificates.
-  port      = 443
-  protocol  = "tcp"
-  algorithm = "round_robin"
+  # No layer-4 port: the listeners below serve its addresses, with infra-lb
+  # running in the VPC's load-balancer namespace on every agent.
 }
 
-resource "infra_lb_backend" "web" {
-  for_each   = local.web
-  lb_id      = infra_load_balancer.web.id
-  compute_id = infra_compute.web[each.key].id
-  port       = 443
+# HTTPS is terminated on the load balancer with the certificate matching the
+# requested name (SNI) - the public one for demo.test, the internal one for
+# web.internal.demo - and re-encrypted towards nginx, which presents its
+# internal certificate: the target group asks for web.internal.demo and
+# verifies it against the internal CA.
+resource "infra_lb_target_group" "web_https" {
+  vpc_id        = infra_vpc.demo.id
+  protocol      = "https"
+  port          = 443
+  backend_ca_id = infra_ssl_ca.internal.id
+  server_name   = "web.internal.demo"
+  health_check = {
+    path = "/"
+  }
+}
+
+resource "infra_lb_target_group" "web_http" {
+  vpc_id   = infra_vpc.demo.id
+  protocol = "http"
+  port     = 80
+}
+
+resource "infra_lb_target" "web_https" {
+  for_each        = local.web
+  target_group_id = infra_lb_target_group.web_https.id
+  compute_id      = infra_compute.web[each.key].id
+}
+
+resource "infra_lb_target" "web_http" {
+  for_each        = local.web
+  target_group_id = infra_lb_target_group.web_http.id
+  compute_id      = infra_compute.web[each.key].id
+}
+
+resource "infra_lb_listener" "https" {
+  load_balancer_id        = infra_load_balancer.web.id
+  port                    = 443
+  protocol                = "https"
+  tls_mode                = "reencrypt"
+  certificate_ids         = [infra_ssl_cert.public.id, infra_ssl_cert.internal.id]
+  default_target_group_id = infra_lb_target_group.web_https.id
+}
+
+resource "infra_lb_listener" "http" {
+  load_balancer_id        = infra_load_balancer.web.id
+  port                    = 80
+  protocol                = "http"
+  default_target_group_id = infra_lb_target_group.web_http.id
 }
 
 # DNS, served by the agents themselves. A private zone attached to the VPC,
@@ -336,4 +377,12 @@ output "lb_public_address" {
 output "internal_ca_pem" {
   description = "Certificate of the demo's internal CA, trusted by the VPC's instances only."
   value       = infra_ssl_ca.internal.cert_pem
+}
+
+output "listener_phases" {
+  description = "Lifecycle phase of each listener: Ready once infra-lb holds its port."
+  value = {
+    https = infra_lb_listener.https.phase
+    http  = infra_lb_listener.http.phase
+  }
 }

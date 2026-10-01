@@ -74,6 +74,7 @@ func run() error {
 	lbs := registry.New[resource.LoadBalancerSpec, resource.LoadBalancerStatus](store, resource.KindLoadBalancer)
 	lbBackends := registry.New[resource.LBBackendSpec, resource.LBBackendStatus](store, resource.KindLBBackend)
 	nodes := registry.New[resource.NodeSpec, resource.NodeStatus](store, resource.KindNode)
+	microvms := registry.New[resource.MicroVMSpec, resource.MicroVMStatus](store, resource.KindMicroVM)
 	ipAddresses := registry.New[resource.IPAddressSpec, resource.IPAddressStatus](store, resource.KindIPAddress)
 	diskFiles := registry.New[resource.DiskFileSpec, resource.DiskFileStatus](store, resource.KindDiskFile)
 	sslCAs := registry.New[resource.SSLCASpec, resource.SSLCAStatus](store, resource.KindSSLCA)
@@ -84,6 +85,7 @@ func run() error {
 		lbReconciler.AsEdge(ipAddresses)
 	}
 	diskFileReconciler := manager.NewDiskFileReconciler(diskFiles, computes, manager.FSDiskFileWriter{}, nodeID)
+	var tls manager.TLSSource
 	if master != nil {
 		// Certificate keys are sealed with the KMS key: rendering them takes it.
 		kek, err := crypto.NewKEK(master)
@@ -91,7 +93,18 @@ func run() error {
 			return err
 		}
 		sslCerts := registry.New[resource.SSLCertSpec, resource.SSLCertStatus](store, resource.KindSSLCert)
-		diskFileReconciler.WithCertificates(manager.NewSSLCertificates(ssl.NewService(sslCAs, sslCerts, kek)))
+		certs := manager.NewSSLCertificates(ssl.NewService(sslCAs, sslCerts, kek))
+		diskFileReconciler.WithCertificates(certs)
+		tls = certs
+	}
+	listenerReconciler := manager.NewListenerReconciler(
+		registry.New[resource.LBListenerSpec, resource.LBListenerStatus](store, resource.KindLBListener),
+		registry.New[resource.LBTargetGroupSpec, resource.LBTargetGroupStatus](store, resource.KindLBTargetGroup),
+		registry.New[resource.LBTargetSpec, resource.LBTargetStatus](store, resource.KindLBTarget),
+		lbs, computes, vpcs, manager.NewExecDataPlane(), tls, nodeID)
+	if os.Getenv("GOA_PUBLIC_CIDR") != "" {
+		// An edge serves the listeners on the public addresses too.
+		listenerReconciler.AsEdge()
 	}
 	dnsReconciler := manager.NewDNSReconciler(dnsZones, dnsRecords, vpcs, manager.NewNativeDNS()).WithPublicAddress(os.Getenv("GOA_DNS_PUBLIC_ADDR"))
 
@@ -111,6 +124,7 @@ func run() error {
 		manager.NewSecurityGroupReconciler(sgs, sgRules, manager.NewExecSecurityGroup()),
 		manager.NewACLReconciler(acls, manager.NewExecFirewall()),
 		manager.NewComputeReconciler(computes, subnets, vpcs, disks, sgs, manager.NewExecComputeBackend(*stateDir), nodeID).WithAddressStore(store),
+		manager.NewMicroVMReconciler(microvms, subnets, vpcs, sgs, manager.NewExecMicroVMBackend(*stateDir), nodeID).WithAddressStore(store),
 		manager.NewTrustReconciler(sslCAs, computes, subnets, manager.FSTrustWriter{}, nodeID),
 		diskFileReconciler,
 		manager.NewWAFReconciler(wafPolicies, wafRules, computes, subnets, igws, vpcs, manager.NewExecWAF()),
@@ -118,6 +132,7 @@ func run() error {
 		// The public DNS address is taken: never hand it to an ip_address.
 		manager.NewPublicIPReconciler(ipAddresses, store, os.Getenv("GOA_PUBLIC_CIDR"), os.Getenv("GOA_DNS_PUBLIC_ADDR")),
 		lbReconciler,
+		listenerReconciler,
 	}
 	// GOA_BGP_ASN (set on the edges) announces what they serve to the
 	// upstream, last, once the passes above have served it.

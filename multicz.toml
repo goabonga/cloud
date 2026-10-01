@@ -101,10 +101,13 @@ post_bump = ["go mod tidy"]
 
 # ── Data plane ────────────────────────────────────────────────────────────
 
+# infra-agent ships infra-lb, the load balancers' data plane, which it runs:
+# they are released together, under the agent's version.
 [components.infra-agent]
-paths = ["cmd/agent/**", "internal/manager/**", "go.mod", "go.sum", "deploy/systemd/infra-agent.service"]
+paths = ["cmd/agent/**", "internal/manager/**", "cmd/lb/**", "internal/lbproxy/**", "go.mod", "go.sum", "deploy/systemd/infra-agent.service", "deploy/systemd/infra-lb@.service"]
 bump_files = [
     { file = "cmd/agent/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "cmd/lb/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
 changelog = "cmd/agent/CHANGELOG.md"
 post_bump = ["go mod tidy"]

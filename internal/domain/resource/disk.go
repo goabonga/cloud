@@ -23,10 +23,17 @@ type DiskSpec struct {
 	KMSKeyID string `json:"kmsKeyId,omitempty"`
 }
 
+// MinEncryptedDiskMB is the smallest encrypted disk: a LUKS2 container's
+// header alone takes 16 MiB, and the filesystem needs room of its own.
+const MinEncryptedDiskMB = 32
+
 // Validate reports whether the spec is well-formed.
 func (s DiskSpec) Validate() error {
 	if s.SizeMB <= 0 {
 		return fmt.Errorf("disk: sizeMb must be positive")
+	}
+	if s.KMSKeyID != "" && s.SizeMB < MinEncryptedDiskMB {
+		return fmt.Errorf("disk: an encrypted disk needs at least %d MB, its LUKS header taking 16 MiB", MinEncryptedDiskMB)
 	}
 	return nil
 }

@@ -166,3 +166,37 @@ func TestLoadBalancerMovesItsHostServiceIntoTheNamespaceOnce(t *testing.T) {
 		t.Fatalf("deleted %v, want the host's VIP and public address removed once", l.deleted)
 	}
 }
+
+func TestLoadBalancerWithoutPortDropsTheServiceItHad(t *testing.T) {
+	t.Parallel()
+
+	env := newLBEnv(t)
+	env.putResolvedPublicIP(t, "pub", "203.0.113.10")
+	env.putPublicLB(t, "lb", "10.0.0.10", "pub")
+	l := &serviceLog{}
+	r := env.reconciler(l).AsEdge(env.ips)
+	if err := r.Reconcile(context.Background(), "lb"); err != nil {
+		t.Fatal(err)
+	}
+	lb, _ := env.lbs.Get("lb")
+	lb.Spec.Port = 0
+	lb.Metadata.Generation++
+	_ = env.lbs.Put(lb)
+	l.deleted = nil
+	if err := r.Reconcile(context.Background(), "lb"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(l.deleted, []string{"10.0.0.10@vpc-1", "203.0.113.10@public"}) {
+		t.Fatalf("deleted %v, want the port-80 services gone", l.deleted)
+	}
+	got, _ := env.lbs.Get("lb")
+	if got.Status.ServiceID != "" || got.Status.Phase != resource.PhaseReady {
+		t.Fatalf("status %+v", got.Status)
+	}
+	// Nothing left to drop on the next pass.
+	l.deleted = nil
+	_ = r.Reconcile(context.Background(), "lb")
+	if len(l.deleted) != 0 {
+		t.Fatalf("deleted %v again", l.deleted)
+	}
+}

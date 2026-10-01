@@ -56,8 +56,10 @@ run as root.
 | Security group   | an allow-list iptables chain, jumped to on the VPC's bridge |
 | WAF policy       | an iptables chain attached inbound to the target |
 | Load balancer    | an IPVS virtual service in the VPC's load-balancer namespace, full-NAT through its node port; on the edges, also on its public address |
+| Listener         | infra-lb in the VPC's load-balancer namespace, on the load balancer's VIP and, on the edges, public address |
 | Public IP address | an address of the edges' public block, reserved in the shared store |
 | Compute          | a network namespace running an OCI image |
+| MicroVM          | a cloud-hypervisor process attached to the VPC bridge by a TAP device |
 
 ## VPCs across hosts
 
@@ -173,6 +175,31 @@ An agent that realized load balancers in the host itself, before the
 namespace, left their VIP on the bridge, their public address on the loopback,
 their virtual services and the node port in the host. The first pass of a
 newer agent removes them.
+
+## Listeners
+
+A load balancer's listeners are served by infra-lb, running as
+`infra-lb@lb-<uid>.service` in the VPC's load-balancer namespace on every host:
+the unit joins the namespace `infra-netns@lb-<uid>` holds
+(`JoinsNamespaceOf=`, `BindsTo=`), with no capability but binding ports below
+1024. The listener pass builds its configuration for each VPC:
+
+- each listener on its load balancer's VIP and, on an edge, its public
+  address, both already on the namespace's anycast port and loopback;
+- each certificate as its chain and private key, rendered from the store and
+  decrypted with the KMS key, and each target group's backend CA;
+- each target group's targets that have an address, with their port.
+
+It writes it to `/run/infra-lb/lb-<uid>/config.json` (0600, it holds private
+keys), starts the unit, or has it reload (SIGHUP) when the configuration
+changed, and stops it with the VPC's last listener. A listener waits
+(`Pending`) while its load balancer has no address or a certificate is not
+issued, and fails if it takes the load balancer's own layer-4 port. infra-lb
+reports back through `status.json`: a listener is `Ready` once it holds its
+port on every address, and each target group's status lists its targets'
+health as each host's infra-lb checks it, every host replacing its own
+entries. infra-lb keeps serving its last configuration when the agent or the
+store is down.
 
 ## Public addresses
 
@@ -314,6 +341,44 @@ ticks only keep the firewall rules in place while the namespace exists, so an
 instance an older agent created gets the rules this one writes. The finalizer kills the cgroup,
 removes the veth, deletes the namespace and the firewall rules, and unmounts the
 disks.
+
+## MicroVMs
+
+A micro-VM is a second realization path alongside compute, for workloads that
+need a kernel of their own rather than a namespaced container. It is a real
+VM booted under **cloud-hypervisor**, which the agent drives like any other
+external tool (`iproute2`, `iptables`): a process the agent starts and talks
+to over its REST API, not a Go dependency.
+
+```
+TAP device: tap-<hash>, enslaved to the VPC bridge, created with
+            `ip tuntap add ... mode tap` (the same device-creation style as
+            the rest of this package, not a raw netlink/ioctl call)
+cloud-hypervisor: one process per instance, its API on a unix socket under
+            the agent's state directory; vm.create then vm.boot configure
+            and start it
+kernel cmdline: the allocated address is passed as a static `ip=` directive,
+            so the guest configures eth0 at boot - there is no cloud-init
+            integration yet
+firewall:   FORWARD/OUTPUT -d <ip> -j <security-group chain>, the same rule
+            shape as compute
+```
+
+The reconciler resolves the subnet gateway, the VPC bridge, an address
+(reserved the same way as compute's) and the security-group chain, then asks
+the backend to boot cloud-hypervisor. Creation happens once: a subsequent
+pass that finds the process still alive is a no-op. The finalizer asks
+cloud-hypervisor to shut down (killing it if it doesn't respond within a
+second), removes the TAP device and the firewall rules.
+
+The kernel, initramfs and disk image are host-prepared absolute paths given
+in the spec (`kernelPath`, `initrdPath`, `bootImagePath`) - there is no image
+fetch/cache yet, and no CLI or Terraform support; only the control-plane API
+and the agent realize this resource so far. There is also no scheduler
+support: like compute before a scheduler assigns it, a micro-VM with no
+`status.nodeName` is realized by every agent (the single-host default); with
+`GOA_NODE_ID` set on a multi-host cluster it stays `Pending` until scheduling
+support lands.
 
 ## The end-to-end chain
 

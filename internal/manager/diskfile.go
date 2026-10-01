@@ -73,6 +73,18 @@ func (s SSLCertificates) CertificatePart(certID, part string) ([]byte, error) {
 	return nil, fmt.Errorf("manager: unknown certificate part %q", part)
 }
 
+// CACertificate implements TLSSource.
+func (s SSLCertificates) CACertificate(caID string) ([]byte, error) {
+	ca, err := s.svc.Get(caID)
+	if err != nil {
+		return nil, fmt.Errorf("manager: ca %s: %w", caID, err)
+	}
+	if len(ca.Status.CertPEM) == 0 {
+		return nil, fmt.Errorf("manager: ca %s has no certificate yet", caID)
+	}
+	return ca.Status.CertPEM, nil
+}
+
 // DiskFileWriter writes content at path beneath root.
 type DiskFileWriter interface {
 	// WriteFile creates or updates root/path with content and mode, creating

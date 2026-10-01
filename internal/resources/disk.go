@@ -31,10 +31,12 @@ func NewDiskResource() resource.Resource {
 		schema: schema.Schema{
 			MarkdownDescription: "A persistent disk; set kms_key_id to encrypt it at rest.",
 			Attributes: map[string]schema.Attribute{
-				"id":         idAttribute(),
-				"name":       schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Display name."},
-				"size_mb":    schema.Int64Attribute{Required: true, MarkdownDescription: "Disk size in MB."},
-				"kms_key_id": schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "KMS key for encryption."},
+				"id":   idAttribute(),
+				"name": schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Display name."},
+				// The agent creates a disk's image once: a new size or key
+				// only takes effect on a new disk.
+				"size_mb":    schema.Int64Attribute{Required: true, PlanModifiers: replaceInt64(), MarkdownDescription: "Disk size in MB; changing it replaces the disk."},
+				"kms_key_id": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: replaceString(), MarkdownDescription: "KMS key for encryption; changing it replaces the disk."},
 				"encrypted":  schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the disk is encrypted."},
 				"path":       schema.StringAttribute{Computed: true, MarkdownDescription: "Device path assigned by the agent."},
 				"phase":      phaseAttribute(),

@@ -199,8 +199,12 @@ func (b *ExecLB) DeleteHostService(ctx context.Context, addr string, port int, p
 }
 
 // syncService ensures the virtual service addr:port where run looks, with
-// full-NAT through the node port, and reconciles its real servers.
+// full-NAT through the node port, and reconciles its real servers. A load
+// balancer without a port has no virtual service.
 func syncService(ctx context.Context, run Runner, addr string, port int, protocol, algorithm string, servers []LBRealServer) error {
+	if port == 0 {
+		return nil
+	}
 	proto := ipvsProtoFlag(protocol)
 	sched := ipvsScheduler(algorithm)
 	svc := fmt.Sprintf("%s:%d", addr, port)
@@ -394,6 +398,11 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 	}
 
 	lb.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "configuring service")
+	if err := r.dropOldPort(ctx, lb, vip, vpc.Status.BridgeName); err != nil {
+		lb.Status.SetPhase(resource.PhaseError, "IPVSError", err.Error())
+		_ = r.reg.Put(lb)
+		return err
+	}
 	r.moveOutOfHost(ctx, lb, vip, vpc.Status.BridgeName)
 	if err := r.backend.EnsureService(ctx, lb.Spec.VPCID, vpc.Status.BridgeName, vip, lb.Spec.Port, lb.Spec.Protocol, lb.Spec.Algorithm, servers); err != nil {
 		lb.Status.SetPhase(resource.PhaseError, "IPVSError", err.Error())
@@ -410,7 +419,10 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 	}
 
 	lb.Status.Address = vip
-	lb.Status.ServiceID = fmt.Sprintf("%s:%d", vip, lb.Spec.Port)
+	lb.Status.ServiceID = ""
+	if lb.Spec.Port != 0 {
+		lb.Status.ServiceID = fmt.Sprintf("%s:%d", vip, lb.Spec.Port)
+	}
 	lb.Status.MarkReconciled(lb.Metadata.Generation)
 	lb.Status.SetPhase(resource.PhaseReady, "Serving", "virtual service ready")
 	if err := r.reg.Put(lb); err != nil {
@@ -617,4 +629,25 @@ func (r *LoadBalancerReconciler) moveOutOfHost(ctx context.Context, lb *resource
 		_ = r.backend.DeleteHostService(ctx, pub, lb.Spec.Port, lb.Spec.Protocol, "lo")
 	}
 	r.movedOut[lb.Metadata.UID] = true
+}
+
+// dropOldPort removes the virtual services of the port the load balancer had
+// on the last pass, as its status records it, when the spec moved to another
+// port or to none. Deleting a service also takes its address away; the
+// services of the new port put it back right after.
+func (r *LoadBalancerReconciler) dropOldPort(ctx context.Context, lb *resource.LoadBalancer, vip, bridge string) error {
+	_, portStr, ok := strings.Cut(lb.Status.ServiceID, ":")
+	old, err := strconv.Atoi(portStr)
+	if !ok || err != nil || old == lb.Spec.Port {
+		return nil
+	}
+	if err := r.backend.DeleteService(ctx, lb.Spec.VPCID, bridge, vip, old, lb.Spec.Protocol); err != nil {
+		return err
+	}
+	if r.publicIPs != nil && lb.Status.PublicAddress != "" {
+		if err := r.backend.DeletePublicService(ctx, lb.Spec.VPCID, lb.Status.PublicAddress, old, lb.Spec.Protocol); err != nil {
+			return err
+		}
+	}
+	return nil
 }
