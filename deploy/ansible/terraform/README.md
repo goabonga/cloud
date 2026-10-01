@@ -60,8 +60,22 @@ and the dashboard (`http://<control-ip>:8088`) and Grafana
 
 Each instance serves an `index.html` naming it, put by an `infra_disk_file` on
 its own KMS-encrypted disk mounted over nginx's document root. The load
-balancer round-robins port 443 between them, passing TLS through to nginx, so
-repeated requests alternate between the two pages.
+balancer has no layer-4 port: two `infra_lb_listener`s serve its VIP and public
+address with infra-lb, in the VPC's load-balancer namespace on every agent,
+and round-robin between the instances, so repeated requests alternate between
+the two pages:
+
+- **443, https, re-encrypt** - TLS ends on the load balancer, with the
+  certificate matching the name asked for (SNI): the public one for
+  `demo.test`, the internal one for `web.internal.demo`. Requests go on to
+  nginx over TLS again; the target group asks it for `web.internal.demo`
+  (`server_name`) and verifies its certificate against the internal CA
+  (`backend_ca_id`), and checks each instance's health over HTTPS.
+- **80, http** - plain HTTP to nginx's port 80.
+
+`terraform output listener_phases` shows each listener `Ready` once infra-lb
+holds its port, and the target groups' `targets` status, through the API,
+each instance's health as each agent sees it.
 
 nginx holds two certificates, on a second disk mounted over
 `/etc/nginx/conf.d` next to its server blocks:
