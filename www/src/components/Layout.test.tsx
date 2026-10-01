@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Chris <goabonga@pm.me>
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as idp from "../api/idp";
-import { setToken } from "../auth";
+import { getToken, setToken } from "../auth";
 import Layout from "./Layout";
 
 vi.mock("../api/idp");
@@ -84,5 +84,31 @@ describe("Layout", () => {
 
     await waitFor(() => screen.getByText("overview"));
     expect(screen.queryByText("Users")).toBeNull();
+  });
+
+  it("signs out and navigates to /login", async () => {
+    setToken("a-token");
+    vi.mocked(idp.userinfo).mockResolvedValue({ subject: "alice", roles: ["admin"] });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/login" element={<div>login page</div>} />
+          <Route element={<Layout />}>
+            <Route index element={<div>overview</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => screen.getByText("overview"));
+    const trigger = screen.getByRole("button", { name: "A" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    fireEvent.pointerUp(trigger, { button: 0, pointerType: "mouse" });
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByText("Sign out"));
+
+    await waitFor(() => screen.getByText("login page"));
+    expect(getToken()).toBe("");
   });
 });

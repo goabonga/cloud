@@ -29,6 +29,11 @@ describe("FieldInput", () => {
     expect(onChange).toHaveBeenCalledWith("#cloud-config\n");
   });
 
+  it("renders a text field with no value as an empty textarea", () => {
+    render(<FieldInput id="f" field={field({ type: "text" })} value={undefined} onChange={vi.fn()} />);
+    expect(screen.getByRole("textbox").textContent).toBe("");
+  });
+
   it("renders a number field as a number input and parses numeric changes", () => {
     const onChange = vi.fn();
     render(<FieldInput id="f" field={field({ type: "number" })} value={4} onChange={onChange} />);
@@ -62,7 +67,13 @@ describe("FieldInput", () => {
     expect(onChange).toHaveBeenCalledWith("deny");
   });
 
-  it("adds and removes rows in a stringList field", () => {
+  it("renders no rows for a stringList field with no value", () => {
+    render(<FieldInput id="f" field={field({ type: "stringList" })} value={undefined} onChange={vi.fn()} />);
+    screen.getByText("Add value");
+    expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+  });
+
+  it("adds, edits and removes rows in a stringList field", () => {
     const onChange = vi.fn();
     const { rerender } = render(<FieldInput id="f" field={field({ type: "stringList" })} value={["a"]} onChange={onChange} />);
 
@@ -70,11 +81,14 @@ describe("FieldInput", () => {
     expect(onChange).toHaveBeenLastCalledWith(["a", ""]);
 
     rerender(<FieldInput id="f" field={field({ type: "stringList" })} value={["a", "b"]} onChange={onChange} />);
+    fireEvent.change(screen.getByDisplayValue("a"), { target: { value: "edited" } });
+    expect(onChange).toHaveBeenLastCalledWith(["edited", "b"]);
+
     fireEvent.click(screen.getAllByLabelText("Remove value")[0]);
     expect(onChange).toHaveBeenLastCalledWith(["b"]);
   });
 
-  it("adds and edits entries in a keyValue field", () => {
+  it("adds, edits and removes entries in a keyValue field", () => {
     const onChange = vi.fn();
     const { rerender } = render(<FieldInput id="f" field={field({ type: "keyValue" })} value={[]} onChange={onChange} />);
 
@@ -86,5 +100,33 @@ describe("FieldInput", () => {
     );
     fireEvent.change(screen.getByPlaceholderText("key"), { target: { value: "tier" } });
     expect(onChange).toHaveBeenLastCalledWith([{ key: "tier", value: "" }]);
+
+    rerender(
+      <FieldInput id="f" field={field({ type: "keyValue" })} value={[{ key: "tier", value: "gold" }]} onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByLabelText("Remove entry"));
+    expect(onChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it("edits one keyValue entry in place, leaving the others untouched", () => {
+    const onChange = vi.fn();
+    render(
+      <FieldInput
+        id="f"
+        field={field({ type: "keyValue" })}
+        value={[
+          { key: "tier", value: "gold" },
+          { key: "env", value: "prod" },
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByDisplayValue("prod"), { target: { value: "staging" } });
+
+    expect(onChange).toHaveBeenLastCalledWith([
+      { key: "tier", value: "gold" },
+      { key: "env", value: "staging" },
+    ]);
   });
 });

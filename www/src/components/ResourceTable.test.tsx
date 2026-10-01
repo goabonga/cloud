@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Chris <goabonga@pm.me>
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Network } from "lucide-react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,15 +58,21 @@ describe("ResourceTable", () => {
     screen.getByText("10.0.0.0/16");
   });
 
-  it("filters rows via the search box", async () => {
+  it("filters rows via the search box, and shows them all again once cleared", async () => {
     vi.mocked(generic.listResources).mockResolvedValue([resource("vpc-a", "10.0.0.0/16"), resource("vpc-b", "10.1.0.0/16")]);
 
     renderTable();
     await waitFor(() => screen.getByText("vpc-a"));
 
-    fireEvent.change(screen.getByPlaceholderText("Search vpcs…"), { target: { value: "vpc-b" } });
+    const search = screen.getByPlaceholderText("Search vpcs…");
+    fireEvent.change(search, { target: { value: "vpc-b" } });
 
     expect(screen.queryByText("vpc-a")).toBeNull();
+    screen.getByText("vpc-b");
+
+    fireEvent.change(search, { target: { value: "   " } });
+
+    screen.getByText("vpc-a");
     screen.getByText("vpc-b");
   });
 
@@ -130,5 +136,83 @@ describe("ResourceTable", () => {
     fireEvent.click(screen.getByText("Delete"));
 
     expect(generic.deleteResource).not.toHaveBeenCalled();
+  });
+
+  it("shows an error when the list fails to load", async () => {
+    vi.mocked(generic.listResources).mockRejectedValue(new Error("boom"));
+
+    renderTable();
+
+    await waitFor(() => screen.getByText("Error: boom"));
+  });
+
+  it("shows an error when deletion fails", async () => {
+    vi.mocked(generic.listResources).mockResolvedValue([resource("vpc-a", "10.0.0.0/16")]);
+    vi.mocked(generic.deleteResource).mockRejectedValue(new Error("boom"));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderTable();
+    await waitFor(() => screen.getByText("vpc-a"));
+
+    fireEvent.click(screen.getByText("Delete"));
+
+    await waitFor(() => screen.getByText("Error: boom"));
+  });
+
+  it("falls back to no phase badge text when a resource has none", async () => {
+    vi.mocked(generic.listResources).mockResolvedValue([
+      { metadata: { uid: "vpc-a", generation: 1, createdAt: "" }, spec: { cidr: "10.0.0.0/16" }, status: {} },
+    ]);
+
+    renderTable();
+
+    await waitFor(() => screen.getByText("vpc-a"));
+    screen.getByText("-");
+  });
+
+  it("changes the page size", async () => {
+    const items = Array.from({ length: 12 }, (_, i) => resource(`vpc-${i}`, "10.0.0.0/16"));
+    vi.mocked(generic.listResources).mockResolvedValue(items);
+
+    renderTable();
+    await waitFor(() => screen.getByText("vpc-0"));
+    screen.getByText("Page 1 of 2");
+
+    fireEvent.change(screen.getByLabelText("Rows per page"), { target: { value: "25" } });
+
+    await waitFor(() => screen.getByText("Page 1 of 1"));
+    screen.getByText("vpc-11");
+  });
+
+  it("navigates back to the previous page", async () => {
+    const items = Array.from({ length: 12 }, (_, i) => resource(`vpc-${i}`, "10.0.0.0/16"));
+    vi.mocked(generic.listResources).mockResolvedValue(items);
+
+    renderTable();
+    await waitFor(() => screen.getByText("vpc-0"));
+
+    fireEvent.click(screen.getByText("Next"));
+    await waitFor(() => screen.getByText("Page 2 of 2"));
+
+    fireEvent.click(screen.getByText("Previous"));
+
+    await waitFor(() => screen.getByText("Page 1 of 2"));
+    screen.getByText("vpc-0");
+  });
+
+  it("sorts rows by a column, toggling ascending and descending", async () => {
+    vi.mocked(generic.listResources).mockResolvedValue([resource("vpc-b", "10.1.0.0/16"), resource("vpc-a", "10.0.0.0/16")]);
+
+    renderTable();
+    await waitFor(() => screen.getByText("vpc-b"));
+
+    const header = screen.getByText("UID");
+    fireEvent.click(header);
+    let rows = screen.getAllByRole("row").slice(1);
+    expect(within(rows[0]).queryByText("vpc-a")).not.toBeNull();
+
+    fireEvent.click(header);
+    rows = screen.getAllByRole("row").slice(1);
+    expect(within(rows[0]).queryByText("vpc-b")).not.toBeNull();
   });
 });

@@ -29,6 +29,7 @@ const widgetDef: ResourceDef = {
     { key: "labels", label: "Labels", type: "keyValue" },
     { key: "refId", label: "Ref", type: "reference", referenceKind: "vpc" },
     { key: "items", label: "Items", type: "group", fields: [{ key: "x", label: "X", type: "string" }] },
+    { key: "note", label: "Note", type: "string", helpText: "Optional free-form note." },
   ],
 };
 
@@ -156,6 +157,25 @@ describe("ResourceForm", () => {
     );
   });
 
+  it("drops a group field that was added to and then emptied back out", async () => {
+    vi.mocked(generic.createResource).mockResolvedValue({
+      metadata: { uid: "widget-1", generation: 1, createdAt: "" },
+      spec: {},
+      status: {},
+    });
+
+    renderForm();
+
+    fireEvent.change(screen.getByLabelText("UID"), { target: { value: "widget-1" } });
+    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "My widget" } });
+
+    fireEvent.click(screen.getByText("Add items"));
+    fireEvent.click(screen.getByLabelText("Remove row 1"));
+    fireEvent.click(screen.getByText("Create"));
+
+    await waitFor(() => expect(generic.createResource).toHaveBeenCalledWith("widget", "widget-1", { name: "My widget" }));
+  });
+
   it("creates an unscoped resource with exactly 3 arguments when no project is picked", async () => {
     vi.mocked(generic.createResource).mockResolvedValue({
       metadata: { uid: "widget-1", generation: 1, createdAt: "" },
@@ -207,5 +227,56 @@ describe("ResourceForm", () => {
 
     await waitFor(() => screen.getByText("spec is not valid JSON"));
     expect(generic.createResource).not.toHaveBeenCalled();
+  });
+
+  it("shows an error when the resource fails to load in edit mode", async () => {
+    vi.mocked(generic.getResource).mockRejectedValue(new Error("boom"));
+
+    renderForm("widget-1");
+
+    await waitFor(() => screen.getByText("Could not load this resource."));
+  });
+
+  it("switches back to the guided form from Advanced mode, keeping valid edits", async () => {
+    renderForm();
+    fireEvent.change(screen.getByLabelText("UID"), { target: { value: "widget-1" } });
+    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "first" } });
+
+    fireEvent.click(screen.getByText("Advanced: edit raw JSON"));
+    fireEvent.change(screen.getByLabelText("Spec (JSON)"), { target: { value: '{"name":"from-json"}' } });
+    fireEvent.click(screen.getByText("Use the guided form"));
+
+    await screen.findByDisplayValue("from-json");
+  });
+
+  it("leaves the structured values untouched when switching back with invalid JSON", async () => {
+    renderForm();
+    fireEvent.change(screen.getByLabelText("UID"), { target: { value: "widget-1" } });
+    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "first" } });
+
+    fireEvent.click(screen.getByText("Advanced: edit raw JSON"));
+    fireEvent.change(screen.getByLabelText("Spec (JSON)"), { target: { value: "{not json" } });
+    fireEvent.click(screen.getByText("Use the guided form"));
+
+    await screen.findByDisplayValue("first");
+  });
+
+  it("shows an error when creation fails", async () => {
+    vi.mocked(generic.createResource).mockRejectedValue(new Error("boom"));
+
+    renderForm();
+    fireEvent.change(screen.getByLabelText("UID"), { target: { value: "widget-1" } });
+    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "My widget" } });
+    fireEvent.click(screen.getByText("Create"));
+
+    await waitFor(() => screen.getByText("Error: boom"));
+  });
+
+  it("navigates to the list page when Cancel is clicked", async () => {
+    renderForm();
+
+    fireEvent.click(screen.getByText("Cancel"));
+
+    await waitFor(() => screen.getByText("list page"));
   });
 });
