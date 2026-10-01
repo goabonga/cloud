@@ -267,7 +267,7 @@ func TestExecDataPlaneStartsReloadsAndStops(t *testing.T) {
 		}
 		return "", nil
 	}
-	p := manager.NewExecDataPlaneWith(run, dir)
+	p := manager.NewExecDataPlaneWith(run, dir, "infra-lb@")
 	cfg := &lbproxy.Config{Listeners: []lbproxy.Listener{{Name: "a", Address: "10.0.0.1", Port: 80, Protocol: "http", DefaultTargetGroup: "g"}}}
 	ctx := context.Background()
 	put(t, p.Apply(ctx, "lb-x", cfg))
