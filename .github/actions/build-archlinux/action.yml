@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: build Arch package
+description: |
+  Build one component's x86_64 .pkg.tar.zst with packaging/build-archlinux.sh
+  and upload it as an artifact. Must run in a job using `container:
+  archlinux:base-devel` - makepkg only exists there, and refuses to run as
+  root, which is what every step before this one runs as in a container job.
+
+inputs:
+  component:
+    required: true
+    description: Component name, e.g. infra-api.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Go
+      shell: bash
+      run: pacman -Sy --noconfirm --needed go
+    - name: Build the ${{ inputs.component }} Arch package
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+      run: |
+        set -euo pipefail
+        version=$(multicz get "$COMPONENT")
+        # makepkg refuses root outright, so the checkout - owned by root,
+        # same as every file a container job's steps write by default - has
+        # to move to an unprivileged user before build-archlinux.sh runs.
+        useradd -m builder
+        chown -R builder:builder "$GITHUB_WORKSPACE"
+        # The bash -c script is single-quoted, so none of these expand in
+        # this (root) shell; `env` sets them in the builder-owned child's
+        # environment instead, where the quoted script expands them itself.
+        # Simpler than it looks - the alternative is baking values into a
+        # generated script file, which collides with YAML's block-scalar
+        # indentation requiring a shebang that has to sit at column 0.
+        runuser -u builder -- env \
+          "PATH=$PATH" "GITHUB_WORKSPACE=$GITHUB_WORKSPACE" \
+          "VERSION=$version" "COMPONENT=$COMPONENT" \
+          bash -c 'cd "$GITHUB_WORKSPACE" && exec bash packaging/build-archlinux.sh "$VERSION" "$COMPONENT"'
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.component }}-archlinux
+        path: dist/${{ inputs.component }}-*-x86_64.pkg.tar.zst
+        retention-days: 1
