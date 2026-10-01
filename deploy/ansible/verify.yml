@@ -51,14 +51,6 @@
         status_code: 200
       register: verify_token
 
-    - name: List the registered nodes with the token
-      ansible.builtin.uri:
-        url: "{{ api_url }}/api/v1/node"
-        headers:
-          Authorization: "Bearer {{ verify_token.json.access_token }}"
-        status_code: 200
-      register: verify_nodes
-
     - name: The bootstrapped admin can log in
       ansible.builtin.uri:
         url: "{{ idp_issuer }}/login"
@@ -82,6 +74,16 @@
       ansible.builtin.assert:
         that: "'admin' in verify_admin_userinfo.json.roles"
         fail_msg: "Expected roles to include admin, got {{ verify_admin_userinfo.json.roles }}"
+
+    # Nodes are registered by the admin, and the API shows a caller only what
+    # it owns or is granted: an administrator sees them all.
+    - name: List the registered nodes as the admin
+      ansible.builtin.uri:
+        url: "{{ api_url }}/api/v1/node"
+        headers:
+          Authorization: "Bearer {{ verify_admin_login.json.access_token }}"
+        status_code: 200
+      register: verify_nodes
 
     - name: Every agent host is registered as a node
       ansible.builtin.assert:

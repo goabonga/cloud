@@ -77,19 +77,22 @@
 # Register this host as a schedulable node (UID == GOA_NODE_ID), so the
 # controller-manager's scheduler can place compute onto it. The node id is the
 # inventory hostname, which the agent reports via GOA_NODE_ID.
-- name: Obtain an IdP access token for node registration
+# Registering a node is the platform's business, not a tenant's: the API only
+# lets an administrator write a node it does not own, so the playbook logs in
+# as the bootstrapped admin rather than with the Terraform client.
+- name: Obtain an admin access token for node registration
   ansible.builtin.uri:
-    url: "{{ idp_issuer }}/token"
+    url: "{{ idp_issuer }}/login"
     method: POST
-    body_format: form-urlencoded
+    body_format: json
     body:
-      grant_type: client_credentials
-      client_id: "{{ idp_client_id }}"
-      client_secret: "{{ lookup('file', idp_client_secret_file) | trim }}"
+      username: "{{ idp_admin_username }}"
+      password: "{{ lookup('file', idp_admin_password_file) | trim }}"
     status_code: 200
   delegate_to: localhost
   become: false
   register: agent_node_token
+  no_log: true
 
 - name: Register this host as a node
   ansible.builtin.uri:
