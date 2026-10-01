@@ -94,6 +94,7 @@ func (p *infraProvider) Resources(_ context.Context) []func() resource.Resource 
 		resources.NewDiskResource,
 		resources.NewDiskFileResource,
 		resources.NewComputeResource,
+		resources.NewMicroVMResource,
 		resources.NewSSLCAResource,
 		resources.NewSSLCertResource,
 		resources.NewDNSZoneResource,
