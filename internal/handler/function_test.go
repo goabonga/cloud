@@ -5,6 +5,7 @@ package handler_test
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -160,5 +161,58 @@ func TestFunctionInvokeHandler_ForwardsToWarmInstance(t *testing.T) {
 	}
 	if updated.Status.State != resource.FunctionInstanceWarm {
 		t.Fatalf("State = %q, want released back to Warm", updated.Status.State)
+	}
+}
+
+// TestFunctionInvokeHandler_ForwardError exercises the generic "something
+// went wrong talking to the instance" branch: a warm instance exists but its
+// node address has nothing listening, so the proxied request itself fails
+// with a plain connection error, which isn't ErrNotFound, ErrNotReady or
+// ErrNoWarmInstance.
+func TestFunctionInvokeHandler_ForwardError(t *testing.T) {
+	t.Parallel()
+	env := newInvokeHandlerEnv(t)
+	env.putFunction(t, "fn-1", resource.PhaseReady, false)
+
+	// Grab a port and immediately release it, so nothing answers there.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+
+	node := &resource.Node{
+		Metadata: resource.ObjectMeta{UID: "node-1"},
+		Spec:     resource.NodeSpec{Hostname: "node-1", Address: "127.0.0.1", Capacity: resource.NodeCapacity{CPUs: 4, MemoryMB: 4096}},
+	}
+	if err := env.nodes.Put(node); err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	cp := &resource.Compute{Metadata: resource.ObjectMeta{UID: "compute-1"}, Spec: resource.ComputeSpec{SubnetID: "sn-1", Image: "example/fn:latest"}}
+	cp.Status.NodeName = "node-1"
+	cp.Status.SetPhase(resource.PhaseReady, "Running", "ready")
+	if err := env.computes.Put(cp); err != nil {
+		t.Fatalf("seed compute: %v", err)
+	}
+	inst := &resource.FunctionInstance{
+		Metadata: resource.ObjectMeta{UID: "inst-1"},
+		Spec:     resource.FunctionInstanceSpec{FunctionID: "fn-1", ComputeID: "compute-1"},
+	}
+	inst.Status.State = resource.FunctionInstanceWarm
+	inst.Status.Port = port
+	inst.Status.NodeName = "node-1"
+	if err := env.instances.Put(inst); err != nil {
+		t.Fatalf("seed instance: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/function/fn-1/invoke", strings.NewReader(""))
+	rec := httptest.NewRecorder()
+	env.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusBadGateway, rec.Body.String())
 	}
 }
