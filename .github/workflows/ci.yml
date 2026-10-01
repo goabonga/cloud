@@ -270,14 +270,29 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run test
+      - name: Run tests with coverage
+        run: npm run test:coverage
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          # lcov.info records paths relative to www/ (vitest's cwd), so the
+          # uploader needs that same cwd to prefix them back to www/src/...
+          # when it maps them onto the repo tree - job-level
+          # defaults.run.working-directory only applies to `run:` steps, not
+          # to this action.
+          working-directory: www
+          files: coverage/lcov.info
+          flags: www
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          disable_search: true
       - run: npm run build
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
         with:
           title: www
-          body: "`eslint`, `tsc`, `vitest` and a production `vite build` of the SPA."
+          body: "`eslint`, `tsc`, `vitest` with coverage (uploaded to Codecov) and a production `vite build` of the SPA."
 
   vet-build:
     name: vet + build
@@ -328,6 +343,7 @@ jobs:
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: coverage.out
+          flags: go
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
           disable_search: true

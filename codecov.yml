@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# `test` (Go) and `www` (TypeScript) upload under separate flags from the ci
+# workflow, and each is gated on its own change signal - has_package_changes
+# for `test`, www_changed for `www`. Most pushes trigger at most one of them,
+# so without carryforward the flag whose job did not run this time would read
+# as a coverage drop to 0% instead of "unchanged since its last upload".
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+flags:
+  go:
+    paths:
+      - cmd/
+      - internal/
+    carryforward: true
+  www:
+    paths:
+      - www/src/
+    carryforward: true
+
+comment:
+  layout: "header, diff, flags, files"
