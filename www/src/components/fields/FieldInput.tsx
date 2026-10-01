@@ -19,6 +19,18 @@ function TextInput({ id, value, onChange }: { id: string; value: unknown; onChan
   return <Input id={id} value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} />;
 }
 
+function TextAreaInput({ id, value, onChange }: { id: string; value: unknown; onChange: (v: unknown) => void }) {
+  return (
+    <textarea
+      id={id}
+      rows={6}
+      value={(value as string) ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+    />
+  );
+}
+
 function NumberInput({ id, value, onChange }: { id: string; value: unknown; onChange: (v: unknown) => void }) {
   return (
     <Input
@@ -162,6 +174,8 @@ export default function FieldInput({ id, field, value, onChange }: FieldControlP
   switch (field.type) {
     case "string":
       return <TextInput id={id} value={value} onChange={onChange} />;
+    case "text":
+      return <TextAreaInput id={id} value={value} onChange={onChange} />;
     case "number":
       return <NumberInput id={id} value={value} onChange={onChange} />;
     case "boolean":

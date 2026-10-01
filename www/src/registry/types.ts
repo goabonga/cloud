@@ -23,7 +23,18 @@ export interface ListColumn {
 
 // FieldType picks which control FieldInput renders and how ResourceForm
 // assembles its value into the spec.
-export type FieldType = "string" | "number" | "boolean" | "enum" | "stringList" | "keyValue" | "reference" | "group";
+// "text" is a multi-line "string", for values like file contents or
+// cloud-init user-data.
+export type FieldType =
+  | "string"
+  | "text"
+  | "number"
+  | "boolean"
+  | "enum"
+  | "stringList"
+  | "keyValue"
+  | "reference"
+  | "group";
 
 // FieldSchema is one create/edit form field. key is a dot-path assembled
 // into the spec on submit (e.g. "capacity.cpus" -> { capacity: { cpus } });
