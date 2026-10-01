@@ -17,6 +17,15 @@ import (
 	"github.com/goabonga/infrastructure/internal/state"
 )
 
+// noKeepAliveClient closes each connection after one request instead of
+// returning it to the default Transport's idle pool. TestRunGracefulShutdown
+// was flaky under the shared keep-alive client: an idle connection left open
+// by an earlier request in the same test occasionally raced srv.Shutdown's
+// idle-connection sweep, so run() didn't return within the test's own
+// timeout. http.Server.Shutdown closing idle connections is correct either
+// way; this just removes that race from the test itself.
+var noKeepAliveClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+
 func TestParseArgsDefaults(t *testing.T) {
 	t.Setenv("GOA_EXPORTER_ADDR", "")
 	t.Setenv("GOA_STATE_DIR", "")
@@ -114,7 +123,7 @@ func TestServeGracefulShutdownReturnsErrServerClosed(t *testing.T) {
 	addr := ln.Addr().String()
 	waitHealthy(t, addr)
 
-	resp, err := http.Get("http://" + addr + "/metrics")
+	resp, err := noKeepAliveClient.Get("http://" + addr + "/metrics")
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
@@ -190,7 +199,7 @@ func TestRunGracefulShutdown(t *testing.T) {
 
 	waitHealthy(t, addr)
 
-	resp, err := http.Get("http://" + addr + "/healthz")
+	resp, err := noKeepAliveClient.Get("http://" + addr + "/healthz")
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
 	}
@@ -199,7 +208,7 @@ func TestRunGracefulShutdown(t *testing.T) {
 		t.Fatalf("healthz status = %d", resp.StatusCode)
 	}
 
-	mresp, err := http.Get("http://" + addr + "/metrics")
+	mresp, err := noKeepAliveClient.Get("http://" + addr + "/metrics")
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
@@ -246,7 +255,7 @@ func waitHealthy(t *testing.T, addr string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get("http://" + addr + "/healthz")
+		resp, err := noKeepAliveClient.Get("http://" + addr + "/healthz")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
