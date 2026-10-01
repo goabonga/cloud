@@ -68,6 +68,25 @@ VPC:
 ssh ubuntu@<agent-ip> 'for i in 1 2 3 4; do curl -s http://<lb_address>/ | grep h1; done'
 ```
 
+The demo also publishes DNS, served by the agents:
+
+- **Private zone `internal.demo`**, attached to the VPC: `web` is the load
+  balancer and `www` a CNAME to it. Instances resolve it through their own
+  resolver, the VPC's first address:
+
+  ```bash
+  ssh ubuntu@<agent-ip> 'dig +short @10.20.0.1 www.internal.demo'
+  ```
+
+- **Public zone `demo.test`**: `ns` is the edges' public DNS address and `www`
+  is reserved for the load balancer's public address (the edges do not realise
+  public addresses yet). The edges answer it on `203.0.113.53`, from the
+  simulated Internet:
+
+  ```bash
+  ssh ubuntu@192.168.122.30 'sudo ip netns exec inet dig +short @203.0.113.53 www.demo.test'
+  ```
+
 ## Tear down
 
 ```bash

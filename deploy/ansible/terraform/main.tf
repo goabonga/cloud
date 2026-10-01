@@ -1,7 +1,8 @@
 # A demo topology provisioned against the deployed control plane:
 #   vpc -> subnet -> internet gateway + route -> security group + rules
 #   -> two nginx instances, scheduled onto the agent node pool, each serving a
-#   page from its own KMS-encrypted disk -> a layer-4 load balancer in front.
+#   page from its own KMS-encrypted disk -> a layer-4 load balancer in front
+#   -> a private DNS zone naming it inside the VPC, and a public zone.
 
 # The agent hosts are registered as nodes by Ansible with the label role=agent;
 # this pool selects them so the scheduler can place compute.
@@ -108,8 +109,11 @@ resource "infra_compute" "web" {
 }
 
 resource "infra_load_balancer" "web" {
-  name      = "web"
-  vpc_id    = infra_vpc.demo.id
+  name   = "web"
+  vpc_id = infra_vpc.demo.id
+  # Pinned rather than left to the agent, so the DNS record below can name it:
+  # an address the agent assigns is only known after the apply.
+  address   = "10.20.0.10"
   port      = 80
   protocol  = "tcp"
   algorithm = "round_robin"
@@ -120,6 +124,61 @@ resource "infra_lb_backend" "web" {
   lb_id      = infra_load_balancer.web.id
   compute_id = infra_compute.web[each.key].id
   port       = 80
+}
+
+# DNS, served by the agents themselves. A private zone attached to the VPC,
+# answered by the resolver every instance is handed (the VPC's first address,
+# 10.20.0.1), and a public zone, also answered on the edges' public DNS address
+# (203.0.113.53), authoritatively and to anyone.
+resource "infra_dns_zone" "internal" {
+  name       = "internal"
+  domain     = "internal.demo"
+  visibility = "private"
+  vpc_ids    = [infra_vpc.demo.id]
+}
+
+resource "infra_dns_record" "web" {
+  zone_id = infra_dns_zone.internal.id
+  name    = "web"
+  type    = "A"
+  records = [infra_load_balancer.web.address]
+}
+
+resource "infra_dns_record" "www_internal" {
+  zone_id = infra_dns_zone.internal.id
+  name    = "www"
+  type    = "CNAME"
+  records = ["web.internal.demo."]
+}
+
+resource "infra_dns_zone" "public" {
+  name       = "public"
+  domain     = "demo.test"
+  visibility = "public"
+}
+
+# The public DNS itself, reachable from the simulated Internet.
+resource "infra_dns_record" "ns" {
+  zone_id = infra_dns_zone.public.id
+  name    = "ns"
+  type    = "A"
+  records = ["203.0.113.53"]
+}
+
+# Reserved for the load balancer's public address: it resolves today, but the
+# edges do not realise public addresses yet, so nothing answers it.
+resource "infra_dns_record" "www_public" {
+  zone_id = infra_dns_zone.public.id
+  name    = "www"
+  type    = "A"
+  records = ["203.0.113.10"]
+}
+
+resource "infra_dns_record" "txt" {
+  zone_id = infra_dns_zone.public.id
+  name    = "@"
+  type    = "TXT"
+  records = ["\"served by the infra agents\""]
 }
 
 output "web_ips" {
@@ -140,4 +199,12 @@ output "lb_address" {
 output "lb_phase" {
   description = "Lifecycle phase of the load balancer."
   value       = infra_load_balancer.web.phase
+}
+
+output "dns_names" {
+  description = "Names the demo publishes, private and public."
+  value = {
+    private = ["web.internal.demo", "www.internal.demo"]
+    public  = ["ns.demo.test", "www.demo.test"]
+  }
 }
