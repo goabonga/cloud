@@ -86,6 +86,8 @@ func (s *Server) routes() {
 	register[resource.WAFRuleSpec, resource.WAFRuleStatus](s, resource.KindWAFRule)
 	register[resource.NodeSpec, resource.NodeStatus](s, resource.KindNode)
 	register[resource.NodePoolSpec, resource.NodePoolStatus](s, resource.KindNodePool)
+	register[resource.FunctionSpec, resource.FunctionStatus](s, resource.KindFunction)
+	register[resource.FunctionInstanceSpec, resource.FunctionInstanceStatus](s, resource.KindFunctionInstance)
 
 	// Encryption-backed resources need a KEK.
 	if s.kek != nil {
