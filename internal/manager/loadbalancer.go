@@ -46,7 +46,8 @@ type LoadBalancerBackend interface {
 	DeletePublicService(ctx context.Context, vpcID, addr string, port int, protocol string) error
 	// DeleteHostService removes a virtual service an agent before the
 	// load-balancer namespace realized in the host itself, with its address
-	// on iface. Idempotent.
+	// on iface, and a route to that address the main table may hold from an
+	// agent before the VPC's VRF. Idempotent.
 	DeleteHostService(ctx context.Context, addr string, port int, protocol, iface string) error
 }
 
@@ -104,11 +105,12 @@ func (b *ExecLB) EnsureService(ctx context.Context, vpcID, bridge, vip string, p
 		return err
 	}
 	// The host resolves the VIP on the bridge, where only its own namespace's
-	// anycast port answers (see lbns.go). It forwards back out the interface
-	// the request came in on, which must not make it redirect the instance.
+	// anycast port answers (see lbns.go), in the VPC's routing table (see
+	// vrf.go). It forwards back out the interface the request came in on,
+	// which must not make it redirect the instance.
 	if err := runSteps(ctx, b.run, "vip route", [][]string{
 		{"sysctl", "-w", "net.ipv4.conf." + bridge + ".send_redirects=0"},
-		{"ip", "route", "replace", vip + "/32", "dev", bridge},
+		{"ip", "route", "replace", vip + "/32", "dev", bridge, "table", vrfTableArg(vpcID)},
 	}); err != nil {
 		return err
 	}
@@ -124,7 +126,7 @@ func (b *ExecLB) EnsureService(ctx context.Context, vpcID, bridge, vip string, p
 // DeleteService removes the virtual service and the VIP (best effort).
 func (b *ExecLB) DeleteService(ctx context.Context, vpcID, bridge, vip string, port int, protocol string) error {
 	if bridge != "" {
-		_, _ = b.run(ctx, "ip", "route", "del", vip+"/32", "dev", bridge)
+		_, _ = b.run(ctx, "ip", "route", "del", vip+"/32", "dev", bridge, "table", vrfTableArg(vpcID))
 	}
 	ns := lbNamespaces{run: b.run}
 	pid, err := ns.pid(ctx, vpcID, false)
@@ -186,10 +188,13 @@ func (b *ExecLB) DeletePublicService(ctx context.Context, vpcID, addr string, po
 	return nil
 }
 
-// DeleteHostService removes a virtual service and its address from the host
-// (best effort).
+// DeleteHostService removes a virtual service, its address and a route to it
+// from the host's main table (best effort).
 func (b *ExecLB) DeleteHostService(ctx context.Context, addr string, port int, protocol, iface string) error {
 	_, _ = b.run(ctx, "ipvsadm", "-D", ipvsProtoFlag(protocol), fmt.Sprintf("%s:%d", addr, port))
+	if iface != "lo" {
+		_, _ = b.run(ctx, "ip", "route", "del", addr+"/32", "dev", iface, "table", "main")
+	}
 	return deleteAddress(ctx, b.run, iface, addr+"/32")
 }
 

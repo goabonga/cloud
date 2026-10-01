@@ -233,10 +233,10 @@ func TestDNSListenersAnswerOverUDPAndTCP(t *testing.T) {
 	_ = probe.Close()
 
 	l := manager.NewDNSListeners(port, &staticForwarder{})
-	if err := l.Serve("127.0.0.1", testView(t, true)); err != nil {
+	if err := l.Serve("", "127.0.0.1", testView(t, true)); err != nil {
 		t.Fatalf("serve: %v", err)
 	}
-	t.Cleanup(func() { l.Stop("127.0.0.1") })
+	t.Cleanup(func() { l.Stop("", "127.0.0.1") })
 	server := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	q := new(dns.Msg)
 	q.SetQuestion("web.internal.example.", dns.TypeA)
@@ -254,7 +254,7 @@ func TestDNSListenersAnswerOverUDPAndTCP(t *testing.T) {
 		}
 	}
 	// A new view is served without restarting the listener.
-	if err := l.Serve("127.0.0.1", &manager.DNSView{}); err != nil {
+	if err := l.Serve("", "127.0.0.1", &manager.DNSView{}); err != nil {
 		t.Fatal(err)
 	}
 	if resp, _, err := (&dns.Client{Timeout: time.Second}).Exchange(q, server); err != nil || resp.Rcode != dns.RcodeRefused {

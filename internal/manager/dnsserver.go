@@ -13,9 +13,11 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
+	"golang.org/x/sys/unix"
 )
 
 // The agent serves DNS itself rather than running a resolver per VPC. Each
@@ -231,7 +233,10 @@ func (f *UpstreamForwarder) Forward(ctx context.Context, q *dns.Msg) (*dns.Msg, 
 }
 
 // DNSListeners runs the agent's DNS listeners, one UDP and one TCP server per
-// address, each serving the view last given for that address.
+// device and address, each serving the view last given for them. A listener
+// with a device is bound to it (SO_BINDTODEVICE): a VPC's resolver binds to
+// the VPC's VRF, whose address only exists in the VPC's routing table and may
+// be another VPC's too.
 type DNSListeners struct {
 	port string
 	fwd  DNSForwarder
@@ -252,12 +257,14 @@ func NewDNSListeners(port int, fwd DNSForwarder) *DNSListeners {
 	return &DNSListeners{port: strconv.Itoa(port), fwd: fwd, running: map[string]*dnsListener{}}
 }
 
-// Serve makes addr answer from view, starting its servers on first use and
-// swapping the view atomically afterwards. addr must already be assigned.
-func (l *DNSListeners) Serve(addr string, view *DNSView) error {
+// Serve makes addr on dev (none: the host's main table) answer from view,
+// starting its servers on first use and swapping the view atomically
+// afterwards. addr must already be assigned.
+func (l *DNSListeners) Serve(dev, addr string, view *DNSView) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if cur, ok := l.running[addr]; ok {
+	key := listenerKey(dev, addr)
+	if cur, ok := l.running[key]; ok {
 		cur.view.Store(view)
 		return nil
 	}
@@ -269,40 +276,69 @@ func (l *DNSListeners) Serve(addr string, view *DNSView) error {
 		_ = w.WriteMsg(Answer(ctx, ln.view.Load(), l.fwd, q))
 	})
 	hostport := net.JoinHostPort(addr, l.port)
-	pc, err := net.ListenPacket("udp", hostport)
+	lc := net.ListenConfig{Control: bindToDevice(dev)}
+	pc, err := lc.ListenPacket(context.Background(), "udp", hostport)
 	if err != nil {
-		return fmt.Errorf("manager: dns listen udp %s: %w", hostport, err)
+		return fmt.Errorf("manager: dns listen udp %s: %w", key, err)
 	}
-	tl, err := net.Listen("tcp", hostport)
+	tl, err := lc.Listen(context.Background(), "tcp", hostport)
 	if err != nil {
 		_ = pc.Close()
-		return fmt.Errorf("manager: dns listen tcp %s: %w", hostport, err)
+		return fmt.Errorf("manager: dns listen tcp %s: %w", key, err)
 	}
 	ln.udp = &dns.Server{PacketConn: pc, Handler: handler}
 	ln.tcp = &dns.Server{Listener: tl, Handler: handler}
 	for _, srv := range []*dns.Server{ln.udp, ln.tcp} {
 		go func(s *dns.Server) {
 			if err := s.ActivateAndServe(); err != nil {
-				fmt.Fprintf(os.Stderr, "manager: dns server %s: %v\n", hostport, err)
+				fmt.Fprintf(os.Stderr, "manager: dns server %s: %v\n", key, err)
 			}
 		}(srv)
 	}
-	l.running[addr] = ln
+	l.running[key] = ln
 	return nil
 }
 
-// Stop shuts addr's servers down. Stopping an address not served is a no-op.
-func (l *DNSListeners) Stop(addr string) {
+// Stop shuts the servers of addr on dev down. Stopping an address not served
+// is a no-op.
+func (l *DNSListeners) Stop(dev, addr string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if ln, ok := l.running[addr]; ok {
+	key := listenerKey(dev, addr)
+	if ln, ok := l.running[key]; ok {
 		_ = ln.udp.Shutdown()
 		_ = ln.tcp.Shutdown()
-		delete(l.running, addr)
+		delete(l.running, key)
 	}
 }
 
-// Addresses returns the addresses currently served.
+// listenerKey identifies a listener: its address, and its device if any, as
+// in "10.0.0.1%vrf-a".
+func listenerKey(dev, addr string) string {
+	if dev == "" {
+		return addr
+	}
+	return addr + "%" + dev
+}
+
+// bindToDevice returns a socket control function binding to dev, or nil
+// without one.
+func bindToDevice(dev string) func(network, address string, c syscall.RawConn) error {
+	if dev == "" {
+		return nil
+	}
+	return func(_, _ string, c syscall.RawConn) error {
+		var serr error
+		if err := c.Control(func(fd uintptr) {
+			serr = unix.SetsockoptString(int(fd), unix.SOL_SOCKET, unix.SO_BINDTODEVICE, dev) // #nosec G115 -- a socket descriptor fits an int
+		}); err != nil {
+			return err
+		}
+		return serr
+	}
+}
+
+// Addresses returns the listeners currently served, as listenerKey names them.
 func (l *DNSListeners) Addresses() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()

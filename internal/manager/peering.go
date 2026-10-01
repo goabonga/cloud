@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"net"
 	"strings"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
@@ -23,6 +24,19 @@ type PeeringBackend interface {
 	// DeleteLink removes the veth pair (deleting one end removes both). Removing
 	// an absent link is not an error.
 	DeleteLink(ctx context.Context, veth1 string) error
+	// EnsureRoutes routes each VPC's CIDR from the other's table onto its
+	// bridge, as each VPC routes in a VRF of its own (see vrf.go). Idempotent.
+	EnsureRoutes(ctx context.Context, a, b PeeringSide) error
+	// DeleteRoutes removes those routes. Removing absent routes is not an
+	// error.
+	DeleteRoutes(ctx context.Context, a, b PeeringSide) error
+}
+
+// PeeringSide is one VPC of a peering, as its routes need it.
+type PeeringSide struct {
+	VPCID  string
+	CIDR   string
+	Bridge string
 }
 
 // peeringNames derives the two veth interface names for a peering UID, within
@@ -87,6 +101,27 @@ func (p *ExecPeering) EnsureLink(ctx context.Context, veth1, veth2, bridge1, bri
 	return nil
 }
 
+// EnsureRoutes adds each side's CIDR to the other side's table, onto its own
+// bridge.
+func (p *ExecPeering) EnsureRoutes(ctx context.Context, a, b PeeringSide) error {
+	for _, r := range [][2]PeeringSide{{a, b}, {b, a}} {
+		from, to := r[0], r[1]
+		if out, err := p.run(ctx, "ip", "route", "replace", to.CIDR, "dev", to.Bridge, "table", vrfTableArg(from.VPCID)); err != nil {
+			return fmt.Errorf("manager: peering route %s in vpc %s: %w: %s", to.CIDR, from.VPCID, err, strings.TrimSpace(out))
+		}
+	}
+	return nil
+}
+
+// DeleteRoutes removes the routes EnsureRoutes added (best effort).
+func (p *ExecPeering) DeleteRoutes(ctx context.Context, a, b PeeringSide) error {
+	for _, r := range [][2]PeeringSide{{a, b}, {b, a}} {
+		from, to := r[0], r[1]
+		_, _ = p.run(ctx, "ip", "route", "del", to.CIDR, "dev", to.Bridge, "table", vrfTableArg(from.VPCID))
+	}
+	return nil
+}
+
 // DeleteLink removes the veth pair by deleting its first end.
 func (p *ExecPeering) DeleteLink(ctx context.Context, veth1 string) error {
 	out, err := p.run(ctx, "ip", "link", "del", veth1)
@@ -100,7 +135,8 @@ func (p *ExecPeering) DeleteLink(ctx context.Context, veth1 string) error {
 type PeeringRegistry = registry.Registry[resource.PeeringSpec, resource.PeeringStatus]
 
 // PeeringReconciler realizes a peering by linking the two VPC bridges with a
-// veth pair.
+// veth pair and routing each VPC's CIDR from the other's table. Two VPCs whose
+// CIDRs overlap cannot be peered.
 type PeeringReconciler struct {
 	reg     *PeeringRegistry
 	vpcs    *VPCRegistry
@@ -152,15 +188,21 @@ func (r *PeeringReconciler) ensure(ctx context.Context, pr *resource.Peering) er
 		pr.Metadata.AddFinalizer(resource.PeeringFinalizer)
 	}
 
-	bridge1, ok1, err := r.vpcBridge(pr.Spec.VPC1ID)
+	side1, ok1, err := r.side(pr.Spec.VPC1ID)
 	if err != nil {
 		pr.Status.SetPhase(resource.PhaseError, "VPCError", err.Error())
 		_ = r.reg.Put(pr)
 		return err
 	}
-	bridge2, ok2, err := r.vpcBridge(pr.Spec.VPC2ID)
+	side2, ok2, err := r.side(pr.Spec.VPC2ID)
 	if err != nil {
 		pr.Status.SetPhase(resource.PhaseError, "VPCError", err.Error())
+		_ = r.reg.Put(pr)
+		return err
+	}
+	if cidrsOverlap(side1.CIDR, side2.CIDR) {
+		err := fmt.Errorf("vpc %s (%s) and vpc %s (%s) overlap", side1.VPCID, side1.CIDR, side2.VPCID, side2.CIDR)
+		pr.Status.SetPhase(resource.PhaseError, "Overlap", err.Error())
 		_ = r.reg.Put(pr)
 		return err
 	}
@@ -172,8 +214,13 @@ func (r *PeeringReconciler) ensure(ctx context.Context, pr *resource.Peering) er
 
 	veth1, veth2 := peeringNames(pr.Metadata.UID)
 	pr.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "linking bridges")
-	if err := r.backend.EnsureLink(ctx, veth1, veth2, bridge1, bridge2); err != nil {
+	if err := r.backend.EnsureLink(ctx, veth1, veth2, side1.Bridge, side2.Bridge); err != nil {
 		pr.Status.SetPhase(resource.PhaseError, "LinkError", err.Error())
+		_ = r.reg.Put(pr)
+		return err
+	}
+	if err := r.backend.EnsureRoutes(ctx, side1, side2); err != nil {
+		pr.Status.SetPhase(resource.PhaseError, "RouteError", err.Error())
 		_ = r.reg.Put(pr)
 		return err
 	}
@@ -190,6 +237,11 @@ func (r *PeeringReconciler) ensure(ctx context.Context, pr *resource.Peering) er
 
 func (r *PeeringReconciler) finalize(ctx context.Context, pr *resource.Peering) error {
 	if pr.Metadata.HasFinalizer(resource.PeeringFinalizer) {
+		side1, ok1, _ := r.side(pr.Spec.VPC1ID)
+		side2, ok2, _ := r.side(pr.Spec.VPC2ID)
+		if ok1 && ok2 {
+			_ = r.backend.DeleteRoutes(ctx, side1, side2)
+		}
 		veth1, _ := peeringNames(pr.Metadata.UID)
 		if err := r.backend.DeleteLink(ctx, veth1); err != nil {
 			pr.Status.SetPhase(resource.PhaseError, "LinkError", err.Error())
@@ -210,17 +262,27 @@ func (r *PeeringReconciler) finalize(ctx context.Context, pr *resource.Peering) 
 	return nil
 }
 
-// vpcBridge returns the bridge name of a VPC and whether it is provisioned.
-func (r *PeeringReconciler) vpcBridge(vpcID string) (string, bool, error) {
+// side returns a VPC as a side of the peering and whether its bridge is
+// provisioned.
+func (r *PeeringReconciler) side(vpcID string) (PeeringSide, bool, error) {
 	vpc, err := r.vpcs.Get(vpcID)
 	if errors.Is(err, state.ErrNotFound) {
-		return "", false, fmt.Errorf("vpc %q not found", vpcID)
+		return PeeringSide{}, false, fmt.Errorf("vpc %q not found", vpcID)
 	}
 	if err != nil {
-		return "", false, err
+		return PeeringSide{}, false, err
 	}
-	if vpc.Status.BridgeName == "" {
-		return "", false, nil
+	s := PeeringSide{VPCID: vpcID, CIDR: vpc.Spec.CIDR, Bridge: vpc.Status.BridgeName}
+	return s, s.Bridge != "", nil
+}
+
+// cidrsOverlap reports whether two CIDRs share an address. An unparsable one
+// overlaps nothing: the VPC's own validation reports it.
+func cidrsOverlap(a, b string) bool {
+	_, na, errA := net.ParseCIDR(a)
+	_, nb, errB := net.ParseCIDR(b)
+	if errA != nil || errB != nil {
+		return false
 	}
-	return vpc.Status.BridgeName, true, nil
+	return na.Contains(nb.IP) || nb.Contains(na.IP)
 }

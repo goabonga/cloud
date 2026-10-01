@@ -6,6 +6,8 @@ package manager_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,8 +18,10 @@ import (
 )
 
 type fakePeeringBackend struct {
-	links   map[string][2]string // veth1 -> {bridge1, bridge2}
-	deleted []string
+	links         map[string][2]string // veth1 -> {bridge1, bridge2}
+	deleted       []string
+	routes        []string // "cidr1->cidr2" per EnsureRoutes
+	routesDeleted []string
 }
 
 func newFakePeeringBackend() *fakePeeringBackend {
@@ -26,6 +30,16 @@ func newFakePeeringBackend() *fakePeeringBackend {
 
 func (f *fakePeeringBackend) EnsureLink(_ context.Context, veth1, _, bridge1, bridge2 string) error {
 	f.links[veth1] = [2]string{bridge1, bridge2}
+	return nil
+}
+
+func (f *fakePeeringBackend) EnsureRoutes(_ context.Context, a, b manager.PeeringSide) error {
+	f.routes = append(f.routes, a.CIDR+"->"+b.CIDR)
+	return nil
+}
+
+func (f *fakePeeringBackend) DeleteRoutes(_ context.Context, a, b manager.PeeringSide) error {
+	f.routesDeleted = append(f.routesDeleted, a.CIDR+"->"+b.CIDR)
 	return nil
 }
 
@@ -200,5 +214,61 @@ func TestExecPeeringCommands(t *testing.T) {
 	}
 	if !anyCallHas(rec.calls, "del") {
 		t.Fatalf("expected link deletion: %v", rec.calls)
+	}
+}
+
+func TestPeeringRoutesEachVPCFromTheOther(t *testing.T) {
+	t.Parallel()
+
+	store := state.NewFileStore(t.TempDir())
+	vpcs := registry.New[resource.VPCSpec, resource.VPCStatus](store, resource.KindVPC)
+	for uid, cidr := range map[string]string{"vpc-a": "10.1.0.0/16", "vpc-b": "10.2.0.0/16", "vpc-c": "10.1.128.0/17"} {
+		v := &resource.VPC{Metadata: resource.ObjectMeta{UID: uid, Generation: 1}, Spec: resource.VPCSpec{CIDR: cidr}}
+		v.Status.BridgeName = "br-" + uid
+		if err := vpcs.Put(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	peerings := newPeeringRegistry(t, store)
+	seedPeering(t, peerings, "p-ab", "vpc-a", "vpc-b")
+	seedPeering(t, peerings, "p-ac", "vpc-a", "vpc-c")
+	be := newFakePeeringBackend()
+	r := manager.NewPeeringReconciler(peerings, vpcs, be)
+
+	if err := r.Reconcile(context.Background(), "p-ab"); err != nil {
+		t.Fatalf("p-ab: %v", err)
+	}
+	if !slices.Equal(be.routes, []string{"10.1.0.0/16->10.2.0.0/16"}) {
+		t.Fatalf("routes %v", be.routes)
+	}
+	if err := r.Reconcile(context.Background(), "p-ac"); err == nil {
+		t.Fatal("overlapping VPCs must not be peered")
+	}
+	if got, _ := peerings.Get("p-ac"); got.Status.Phase != resource.PhaseError {
+		t.Fatalf("p-ac status %+v", got.Status)
+	}
+}
+
+func TestExecPeeringRoutesInBothTables(t *testing.T) {
+	t.Parallel()
+
+	rec := &peerRecorder{}
+	a := manager.PeeringSide{VPCID: "vpc-a", CIDR: "10.1.0.0/16", Bridge: "br-a"}
+	b := manager.PeeringSide{VPCID: "vpc-b", CIDR: "10.2.0.0/16", Bridge: "br-b"}
+	if err := manager.NewExecPeeringWithRunner(rec.run).EnsureRoutes(context.Background(), a, b); err != nil {
+		t.Fatal(err)
+	}
+	var routes [][]string
+	for _, c := range rec.calls {
+		if strings.HasPrefix(strings.Join(c, " "), "ip route replace") {
+			routes = append(routes, c)
+		}
+	}
+	// Each CIDR goes in the other VPC's table, onto its own bridge.
+	if len(routes) != 2 ||
+		strings.Join(routes[0][3:6], " ") != "10.2.0.0/16 dev br-b" ||
+		strings.Join(routes[1][3:6], " ") != "10.1.0.0/16 dev br-a" ||
+		routes[0][7] == routes[1][7] {
+		t.Fatalf("routes %v", routes)
 	}
 }

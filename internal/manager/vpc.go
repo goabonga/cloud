@@ -77,6 +77,11 @@ func (r *VPCReconciler) ensure(ctx context.Context, vpc *resource.VPC) error {
 		_ = r.reg.Put(vpc)
 		return err
 	}
+	if err := r.net.EnsureVRF(ctx, vpc.Metadata.UID, name); err != nil {
+		vpc.Status.SetPhase(resource.PhaseError, "VRFError", err.Error())
+		_ = r.reg.Put(vpc)
+		return err
+	}
 	if err := r.net.EnsureNodePort(ctx, vpc.Metadata.UID, name); err != nil {
 		vpc.Status.SetPhase(resource.PhaseError, "NodePortError", err.Error())
 		_ = r.reg.Put(vpc)
@@ -96,6 +101,11 @@ func (r *VPCReconciler) finalize(ctx context.Context, vpc *resource.VPC) error {
 	if vpc.Metadata.HasFinalizer(resource.VPCFinalizer) {
 		if err := r.net.DeleteNodePort(ctx, vpc.Metadata.UID); err != nil {
 			vpc.Status.SetPhase(resource.PhaseError, "NodePortError", err.Error())
+			_ = r.reg.Put(vpc)
+			return err
+		}
+		if err := r.net.DeleteVRF(ctx, vpc.Metadata.UID, bridgeName(vpc.Metadata.UID)); err != nil {
+			vpc.Status.SetPhase(resource.PhaseError, "VRFError", err.Error())
 			_ = r.reg.Put(vpc)
 			return err
 		}

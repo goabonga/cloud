@@ -31,6 +31,8 @@ type fakeBackend struct {
 	nodePorts   map[string]string // vpc -> bridge its load-balancer namespace is plugged into
 	nodeAddrs   map[string]bool   // "vpc addr/prefix" on the node port
 	gateways    map[string]bool   // "bridge addr/prefix" assigned as a gateway
+	vrfs        map[string]string // vpc -> bridge enslaved to its VRF
+	egress      map[string]bool   // vpcs whose table has the default route
 }
 
 func newFakeBackend() *fakeBackend {
@@ -109,6 +111,32 @@ func (f *fakeBackend) EnsureNodePort(_ context.Context, vpcID, bridge string) er
 
 func (f *fakeBackend) DeleteNodePort(_ context.Context, vpcID string) error {
 	delete(f.nodePorts, vpcID)
+	return nil
+}
+
+func (f *fakeBackend) EnsureVRF(_ context.Context, vpcID, bridge string) error {
+	if f.vrfs == nil {
+		f.vrfs = map[string]string{}
+	}
+	f.vrfs[vpcID] = bridge
+	return nil
+}
+
+func (f *fakeBackend) DeleteVRF(_ context.Context, vpcID, _ string) error {
+	delete(f.vrfs, vpcID)
+	return nil
+}
+
+func (f *fakeBackend) EnsureEgress(_ context.Context, vpcID string) error {
+	if f.egress == nil {
+		f.egress = map[string]bool{}
+	}
+	f.egress[vpcID] = true
+	return nil
+}
+
+func (f *fakeBackend) DeleteEgress(_ context.Context, vpcID string) error {
+	delete(f.egress, vpcID)
 	return nil
 }
 
