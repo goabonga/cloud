@@ -93,7 +93,8 @@ func run() error {
 		manager.NewDiskFileReconciler(diskFiles, computes, manager.FSDiskFileWriter{}, nodeID),
 		manager.NewWAFReconciler(wafPolicies, wafRules, computes, subnets, igws, vpcs, manager.NewExecWAF()),
 		// GOA_PUBLIC_CIDR (set on the edges) is the public block routed to them.
-		manager.NewPublicIPReconciler(ipAddresses, store, os.Getenv("GOA_PUBLIC_CIDR")),
+		// The public DNS address is taken: never hand it to an ip_address.
+		manager.NewPublicIPReconciler(ipAddresses, store, os.Getenv("GOA_PUBLIC_CIDR"), os.Getenv("GOA_DNS_PUBLIC_ADDR")),
 		lbReconciler,
 	)
 
