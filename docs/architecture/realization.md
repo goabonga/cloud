@@ -47,7 +47,7 @@ run as root.
 | ---------------- | ------------ |
 | VPC              | a Linux bridge (`br-<uid>`) in a VRF of its own (`vrf-<uid>`), joined across hosts by a VXLAN device (`vx-<uid>`) |
 | Subnet           | the gateway address on the VPC bridge |
-| Internet gateway | IPv4 forwarding, the host's default route in the VPC's table and a MASQUERADE rule for the VPC CIDR |
+| Internet gateway | IPv4 forwarding, the host's default route in the VPC's table and a MASQUERADE rule for the VPC CIDR; with its egress proxy, the filtering below |
 | Peering          | a veth pair joining the two VPC bridges, and each VPC's CIDR routed from the other's table |
 | DNS zone/record  | answered by the agent: a resolver per VPC, and public zones on a public address |
 | Disk             | a backing image, optionally dm-crypt (LUKS) encrypted |
@@ -200,6 +200,39 @@ port on every address, and each target group's status lists its targets'
 health as each host's infra-lb checks it, every host replacing its own
 entries. infra-lb keeps serving its last configuration when the agent or the
 store is down.
+
+## Egress proxy
+
+An internet gateway with its egress proxy enabled filters its VPC's egress.
+On every host:
+
+```
+infra-egress@lb-<uid>   infra-lb serving egress listeners (see the data plane
+                        page), in the VPC's load-balancer namespace, on this
+                        host's node-port address in the VPC's first subnet:
+                        18080 egress-http, 18443 egress-tls, 13128 egress-proxy;
+                        resolving through the VPC's resolver, going out through
+                        the namespace's host leg, masqueraded to the host
+proxy address           the VPC's second address, on the anycast port; infra-lb@
+                        balances its ports 80, 443 and 3128 over the proxies of
+                        every host, health-checked over TCP every 2 s
+INFRA-EGR-<hash> (nat)  jumped to from PREROUTING on the bridge: HTTP and HTTPS
+                        to anything but private blocks and allowed addresses
+                        DNAT to the proxy address
+INFRA-EGF-<hash>        jumped to first in FORWARD for new connections out of
+                        the uplink carrying the VPC's mark (see the VRF section):
+                        allowed addresses accepted, anything else rejected
+```
+
+An instance reaches the Internet only through the proxy, for the allowed
+domains, transparently or explicitly on the proxy address's port 3128, and
+directly only to the allowed addresses. One host's proxy failing, the
+instances of that host go out through the others': the balancing is the
+health-checked pool, not the local proxy. The proxies' own traffic enters the
+host from the namespace's leg, without the VPC's mark, and is not filtered
+again. The chains are found by name, so the agent also removes those of a
+gateway deleted or disabled while it was down; the gateway's status names
+the proxy address.
 
 ## Public addresses
 
