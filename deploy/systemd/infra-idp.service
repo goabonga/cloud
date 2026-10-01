@@ -11,6 +11,13 @@ Type=exec
 ExecStart=/usr/bin/infra-idp
 Restart=on-failure
 RestartSec=5
+Environment=GOA_IDP_STATE_DIR=/var/lib/infra-idp
+StateDirectory=infra-idp
+# 0700, not the 0750 the other units use for /var/lib/infra: nothing else on
+# the host has a legitimate reason to read password or access-token hashes,
+# unlike /var/lib/infra, which infra-exporter also reads through the shared
+# group.
+StateDirectoryMode=0700
 
 # --- Hardening -------------------------------------------------------------
 # `systemd-analyze security` scores this unit at 1.1 ("OK"), which is the
