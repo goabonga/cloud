@@ -126,14 +126,16 @@ func (s *server) handleCreate(params protocol.CreateParams) (json.RawMessage, er
 	}
 
 	m, err := hypervisor.New(hypervisor.Config{
-		VCPUs:      params.VCPUs,
-		MemoryMB:   params.MemoryMB,
-		KernelPath: params.KernelPath,
-		InitrdPath: params.InitrdPath,
-		CmdLine:    params.CmdLine,
-		Console:    os.Stdout,
-		TapName:    params.TapName,
-		MAC:        params.MAC,
+		VCPUs:        params.VCPUs,
+		MemoryMB:     params.MemoryMB,
+		KernelPath:   params.KernelPath,
+		InitrdPath:   params.InitrdPath,
+		CmdLine:      params.CmdLine,
+		Console:      os.Stdout,
+		TapName:      params.TapName,
+		MAC:          params.MAC,
+		DiskPath:     params.DiskPath,
+		DiskReadonly: params.DiskReadonly,
 	})
 	if err != nil {
 		s.phase = protocol.PhaseError
