@@ -74,21 +74,23 @@ type MicroVMBackend interface {
 type ExecMicroVMBackend struct {
 	run      Runner
 	net      *ExecBackend
+	images   *vmImageCache
 	stateDir string
 	binary   string
 }
 
-// NewExecMicroVMBackend stores per-instance state (api socket, pid, log)
-// under stateDir and resolves cloud-hypervisor through PATH.
+// NewExecMicroVMBackend stores per-instance state (api socket, pid, log,
+// boot disk) and the shared image cache under stateDir, and resolves
+// cloud-hypervisor through PATH.
 func NewExecMicroVMBackend(stateDir string) *ExecMicroVMBackend {
-	return &ExecMicroVMBackend{run: defaultRun, net: NewExecBackendWithRunner(defaultRun), stateDir: stateDir}
+	return &ExecMicroVMBackend{run: defaultRun, net: NewExecBackendWithRunner(defaultRun), images: newVMImageCache(stateDir), stateDir: stateDir}
 }
 
 // NewExecMicroVMBackendWithRunner builds a backend with an overridable
 // directory and runner, used in tests to assert the issued commands without
 // touching the host or starting cloud-hypervisor.
 func NewExecMicroVMBackendWithRunner(stateDir string, run Runner) *ExecMicroVMBackend {
-	return &ExecMicroVMBackend{run: run, net: NewExecBackendWithRunner(run), stateDir: stateDir}
+	return &ExecMicroVMBackend{run: run, net: NewExecBackendWithRunner(run), images: newVMImageCache(stateDir), stateDir: stateDir}
 }
 
 func (b *ExecMicroVMBackend) instanceDir(uid string) string {
@@ -138,6 +140,11 @@ func (b *ExecMicroVMBackend) EnsureMicroVM(ctx context.Context, req MicroVMReque
 		}
 	}
 
+	disk, err := b.images.resolve(ctx, req.UID, req.Image)
+	if err != nil {
+		return res, fmt.Errorf("manager: resolve boot image for %q: %w", req.UID, err)
+	}
+
 	sock := filepath.Join(dir, "api.sock")
 	handle, err := startVMM(ctx, b.binary, sock, filepath.Join(dir, "chv.log"))
 	if err != nil {
@@ -150,7 +157,7 @@ func (b *ExecMicroVMBackend) EnsureMicroVM(ctx context.Context, req MicroVMReque
 		CPUs:    chCPUsConfig{BootVCPUs: req.VCPUs, MaxVCPUs: req.VCPUs},
 		Memory:  chMemoryConfig{SizeBytes: int64(req.MemoryMB) * 1024 * 1024},
 		Payload: chPayloadConfig{Kernel: req.KernelPath, Initramfs: req.InitrdPath, Cmdline: guestCmdline(req)},
-		Disks:   []chDiskConfig{{Path: req.Image}},
+		Disks:   []chDiskConfig{{Path: disk}},
 		Net:     []chNetConfig{{Tap: tap}},
 		Serial:  chConsoleConfig{Mode: "Tty"},
 		Console: chConsoleConfig{Mode: "Off"},
