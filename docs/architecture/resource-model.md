@@ -114,3 +114,7 @@ on a project they otherwise can't touch.
 Without authentication enabled, nothing above applies and every kind is as
 open as it was before this model existed - the same posture every other
 unauthenticated deployment of this API already has.
+
+See [Identity and access management](iam.md) for the full permission
+vocabulary, the global `admin` role, and how a caller authenticates in the
+first place.

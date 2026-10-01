@@ -21,6 +21,7 @@ nav = [
     { "Architecture" = [
         { "Overview" = "architecture/overview.md" },
         { "Resource model" = "architecture/resource-model.md" },
+        { "Identity and access management" = "architecture/iam.md" },
         { "Realization" = "architecture/realization.md" },
         { "Load balancer data plane" = "architecture/load-balancer-data-plane.md" },
         { "Scheduling" = "architecture/scheduling.md" },
