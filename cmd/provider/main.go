@@ -7,24 +7,14 @@ package main
 
 import (
 	"context"
-	"flag"
 	"log"
+	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-
-	"github.com/goabonga/infrastructure/internal/provider"
 )
 
 func main() {
-	var debug bool
-	flag.BoolVar(&debug, "debug", false, "run with debugger support (attaches a reattach provider)")
-	flag.Parse()
-
-	err := providerserver.Serve(context.Background(), provider.New(Version), providerserver.ServeOpts{
-		Address: "registry.terraform.io/goabonga/infra",
-		Debug:   debug,
-	})
-	if err != nil {
+	if err := run(context.Background(), os.Args[1:], os.Stderr, providerserver.Serve); err != nil {
 		log.Fatalf("terraform-provider-infra: %v", err)
 	}
 }
