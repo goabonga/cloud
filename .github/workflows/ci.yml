@@ -1429,17 +1429,48 @@ jobs:
             `${{ steps.has_deb.outputs.value }}`. Container image pushed and
             cosign-signed: `${{ steps.has_image.outputs.value }}`.
 
-  # Build the Zensical site and deploy to GitHub Pages. Gated on a successful
-  # release bump: the site embeds version + changelog content, so every bump
-  # invalidates the rendered output even when no markdown changed.
+  # Build the Zensical site and deploy to GitHub Pages. Runs on either signal
+  # that can change the published output: a direct edit under docs/ or
+  # zensical.toml (`docs_changed`), or a release bump (the site embeds
+  # version + changelog content, so every bump invalidates the rendered
+  # output even when no markdown changed). Gating on `release.result ==
+  # 'success'` alone, as this job used to, missed the first case entirely: a
+  # docs-only push has no package changes, so `release` is skipped rather
+  # than successful, and the site never rebuilt even though docs/ changed.
+  #
+  # `needs` repeats the quality-gate list `release` depends on rather than
+  # just depending on `release` itself, because a skipped `release` does not
+  # say whether those gates passed or never ran - and `docs_changed` must
+  # not bypass a real failure among them.
   docs:
     name: docs
-    needs: [detect, release]
+    needs:
+      - detect
+      - license-headers
+      - lint
+      - www
+      - vet-build
+      - test
+      - gosec
+      - govulncheck
+      - osv-scanner
+      - integration
+      - hadolint
+      - grype
+      - deb-validate
+      - chart-package
+      - e2e
+      - owasp
+      - release
     if: >-
-      github.event_name == 'push'
+      !cancelled()
+      && !failure()
+      && github.event_name == 'push'
       && github.ref == 'refs/heads/main'
-      && needs.release.result == 'success'
-      && needs.release.outputs.no_bumps == 'false'
+      && (
+        needs.detect.outputs.docs_changed == 'true'
+        || (needs.release.result == 'success' && needs.release.outputs.no_bumps == 'false')
+      )
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
