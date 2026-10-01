@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# Lets every lab machine use the edges' public DNS for the public zones, as a
+# machine on the Internet would, while all other names keep its own resolver.
+- name: Ensure the resolved drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    mode: "0755"
+
+- name: Route the public zones to the public DNS
+  ansible.builtin.template:
+    src: 60-public-dns.conf.j2
+    dest: /etc/systemd/resolved.conf.d/60-public-dns.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart systemd-resolved
+
+# The edges hold the public addresses themselves and upstream-sim routes the
+# block to them; any other machine reaches the block through upstream-sim, as
+# traffic from the Internet does. The route is a drop-in on netplan's own
+# networkd file, so the primary interface's netplan config is left untouched.
+- name: Ensure the primary network's drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/network/10-netplan-primary.network.d
+    state: directory
+    mode: "0755"
+  when: inventory_hostname not in groups['edges'] + groups['upstream']
+
+- name: Route the public block through upstream-sim
+  ansible.builtin.template:
+    src: public-block-route.conf.j2
+    dest: /etc/systemd/network/10-netplan-primary.network.d/public-block-route.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: inventory_hostname not in groups['edges'] + groups['upstream']
+  notify: Reload systemd-networkd

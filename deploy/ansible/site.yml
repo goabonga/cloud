@@ -53,6 +53,12 @@
   roles:
     - upstream
 
+- name: Public DNS for every lab machine
+  hosts: infra:upstream
+  become: true
+  roles:
+    - public_dns
+
 - name: Control plane, identity, dashboard and monitoring
   hosts: control
   become: true
