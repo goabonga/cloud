@@ -262,9 +262,6 @@ jobs:
     # tolerate a skip.
     if: needs.detect.outputs.www_changed == 'true'
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: www
     steps:
       # fetch-depth: 0 + bump-preview: the production build below is stamped
       # with www/package.json's version, so without the preview a pull request
@@ -273,31 +270,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/bump-preview
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: www/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - name: Run tests with coverage
-        run: npm run test:coverage
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          # lcov.info records paths relative to www/ (vitest's cwd), so the
-          # uploader needs that same cwd to prefix them back to www/src/...
-          # when it maps them onto the repo tree - job-level
-          # defaults.run.working-directory only applies to `run:` steps, not
-          # to this action.
-          working-directory: www
-          files: coverage/lcov.info
-          flags: www
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
-          disable_search: true
-      - run: npm run build
+      - uses: ./.github/actions/www-quality
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
@@ -415,29 +388,9 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: ./.github/actions/integration-test
         with:
-          go-version-file: go.mod
-          cache: true
-      # GitHub-hosted ubuntu-24.04 runners expose /dev/kvm (nested
-      # virtualization on the hosts behind them), but it's root:kvm, mode
-      # 660, and the runner user isn't in that group - TestKVMOpen fails
-      # with EACCES, not ENOENT, which is what says the device is there and
-      # this is a permissions problem rather than a missing-feature one. A
-      # world-writable udev rule sidesteps the group entirely rather than
-      # racing udev to re-chmod the node.
-      - name: Allow KVM access for the hypervisor tests
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      # The kernel-level tests (bridge, firewall) skip without root; the
-      # hypervisor tests skip if /dev/kvm is still missing or denied after
-      # the step above; the postgres test runs against the service above.
-      - name: Run integration suite
-        env:
-          POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/infra?sslmode=disable
-        run: go test -tags=integration ./test/integration/...
+          postgres-dsn: postgres://postgres:postgres@localhost:5432/infra?sslmode=disable
       - name: Summary
         if: always()
         uses: ./.github/actions/summary

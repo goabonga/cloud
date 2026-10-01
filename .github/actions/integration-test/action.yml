@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: integration test
+description: |
+  Run `go test -tags=integration` against a postgres service, with /dev/kvm
+  opened up for the hypervisor tests. The kernel-level cases (bridge,
+  firewall) self-skip without root. Expects the caller's job to define a
+  `postgres` service reachable at postgres-dsn.
+
+inputs:
+  postgres-dsn:
+    required: true
+    description: DSN the integration suite connects to.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    # GitHub-hosted ubuntu-24.04 runners expose /dev/kvm (nested
+    # virtualization on the hosts behind them), but it's root:kvm, mode 660,
+    # and the runner user isn't in that group - TestKVMOpen fails with
+    # EACCES, not ENOENT, which is what says the device is there and this is
+    # a permissions problem rather than a missing-feature one. A
+    # world-writable udev rule sidesteps the group entirely rather than
+    # racing udev to re-chmod the node.
+    - name: Allow KVM access for the hypervisor tests
+      shell: bash
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+    # The kernel-level tests (bridge, firewall) skip without root; the
+    # hypervisor tests skip if /dev/kvm is still missing or denied after the
+    # step above; the postgres test runs against the service above.
+    - name: Run integration suite
+      shell: bash
+      env:
+        POSTGRES_DSN: ${{ inputs.postgres-dsn }}
+      run: go test -tags=integration ./test/integration/...
