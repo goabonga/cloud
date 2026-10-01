@@ -2,8 +2,8 @@
 
 Manages a FaaS function: the compute shape run for each invocation, plus a
 warm-pool policy. Realized as ordinary compute instances that a controller
-creates and retires to the policy. Invoking a function is not implemented
-yet; see [FaaS functions](../../architecture/faas.md).
+creates and retires to the policy, invoked synchronously over HTTP; see
+[FaaS functions](../../architecture/faas.md).
 
 ## Example
 
@@ -12,6 +12,7 @@ resource "infra_function" "resize_image" {
   name      = "resize-image"
   subnet_id = infra_subnet.app.id
   image     = "registry.example.com/resize-image:1.4"
+  port      = 8080
 
   env = {
     OUTPUT_BUCKET = "resized"
@@ -21,17 +22,26 @@ resource "infra_function" "resize_image" {
     min_warm         = 1
     max_warm         = 5
     idle_ttl_seconds = 300
+    allow_cold_start = true
   }
 }
 ```
 
-An always-warm function, never scaling to zero:
+Invoking it (outside Terraform, against the control-plane API):
+
+```shell
+curl -X POST "$INFRA_API/api/v1/function/${resize_image_id}/invoke" \
+  --data-binary @photo.jpg
+```
+
+An always-warm function, never scaling to zero and never cold-starting:
 
 ```hcl
 resource "infra_function" "latency_sensitive" {
   name      = "latency-sensitive"
   subnet_id = infra_subnet.app.id
   image     = "registry.example.com/latency-sensitive:2.0"
+  port      = 8080
 
   warm_pool = {
     min_warm         = 2
@@ -54,6 +64,7 @@ resource "infra_function" "latency_sensitive" {
 | `pids_max` | number | no | Maximum processes per instance. |
 | `command` | string | no | Entrypoint command. |
 | `env` | map of string | no | Environment variables. |
+| `port` | number | yes | Port the runtime listens on inside the instance; invoke requests are forwarded to it. |
 | `warm_pool` | object | no | How many instances to keep pre-started and what to do when none are available. See below. |
 
 ### `warm_pool`
@@ -63,7 +74,7 @@ resource "infra_function" "latency_sensitive" {
 | `min_warm` | number | no | Instances kept running regardless of idle time; 0 by default. |
 | `max_warm` | number | no | Cap on concurrent warm instances; 0, the default, is unbounded. |
 | `idle_ttl_seconds` | number | no | Seconds an instance above `min_warm` may sit idle before eviction; 0 evicts as soon as it is idle. |
-| `allow_cold_start` | bool | no | Permit creating a fresh instance on invoke when none are warm. Reserved: the invoke path does not exist yet. |
+| `allow_cold_start` | bool | no | Permit creating a fresh instance on invoke when none are warm, bypassing `min_warm`/`max_warm`. |
 
 ## Attribute reference
 
