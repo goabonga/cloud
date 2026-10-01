@@ -18,9 +18,10 @@ import (
 
 // TestExecMicroVMBackendBoot brings a real cloud-hypervisor micro-VM up on a
 // TAP-attached bridge and tears it down. It needs root, iproute2, the
-// cloud-hypervisor binary and a prepared kernel + raw disk image (there is no
-// fetch/cache yet): point GOA_ITEST_MICROVM_KERNEL and GOA_ITEST_MICROVM_DISK
-// at them, or this test skips.
+// cloud-hypervisor binary and a kernel (there is no kernel fetch/caching):
+// point GOA_ITEST_MICROVM_KERNEL at one and GOA_ITEST_MICROVM_DISK at a boot
+// image (a URL or a local path; either is fetched/cloned into the node-local
+// cache), or this test skips.
 func TestExecMicroVMBackendBoot(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root")
