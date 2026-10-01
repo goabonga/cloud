@@ -47,7 +47,7 @@ components:
     enabled: true
     image:
       repository: infra-api
-      tag: 0.1.1
+      tag: 0.11.0
     # One replica by default so the chart installs with no configuration. The
     # file-backed store is per-pod, so raising this requires state.dsn or
     # state.existingSecret - the chart refuses to render otherwise rather than

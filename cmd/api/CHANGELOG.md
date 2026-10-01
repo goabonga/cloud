@@ -2,6 +2,13 @@
 
 All notable changes to this component are documented here.
 
+## [0.11.0] - 2026-10-01
+
+### Added
+
+- **core**: enforce ownership and project grants in the generic Handler (`d64e70e`)
+- **core**: wire IAM enforcement into the API server (`bd61aff`)
+
 ## [0.1.1] - 2026-09-30
 
 ### Fixed
