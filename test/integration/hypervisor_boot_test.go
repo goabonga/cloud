@@ -8,14 +8,27 @@ package integration
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/hypervisor"
-	"github.com/goabonga/infrastructure/internal/hypervisor/kvm"
 )
+
+// skipIfKVMUnusable lets the caller treat New's error as a skip rather than
+// a failure when it's EACCES or ENOENT — os.Stat(kvm.DevicePath) succeeds
+// on a device node regardless of whether the caller can actually open it
+// (see hypervisor_kvm_test.go's TestKVMOpen for the same fix), so the real
+// gate has to be the open attempt itself, not a stat beforehand.
+func skipIfKVMUnusable(t *testing.T, err error) {
+	t.Helper()
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+		t.Skipf("/dev/kvm not usable: %v", err)
+	}
+}
 
 // TestHypervisorBootReachesExit boots a single vCPU against a real kernel
 // under the 64-bit boot protocol and asserts it actually starts executing
@@ -30,9 +43,6 @@ import (
 // GOA_ITEST_HYPERVISOR_KERNEL at a bzImage, e.g. /boot/vmlinuz-$(uname -r)
 // on most distributions, or this test skips.
 func TestHypervisorBootReachesExit(t *testing.T) {
-	if _, err := os.Stat(kvm.DevicePath); err != nil {
-		t.Skipf("%s not available: %v", kvm.DevicePath, err)
-	}
 	kernel := os.Getenv("GOA_ITEST_HYPERVISOR_KERNEL")
 	if kernel == "" {
 		t.Skip("GOA_ITEST_HYPERVISOR_KERNEL not set")
@@ -45,6 +55,7 @@ func TestHypervisorBootReachesExit(t *testing.T) {
 		CmdLine:    "console=ttyS0 panic=-1",
 	})
 	if err != nil {
+		skipIfKVMUnusable(t, err)
 		t.Fatalf("New: %v", err)
 	}
 	defer m.Close()
@@ -77,9 +88,6 @@ func TestHypervisorBootReachesExit(t *testing.T) {
 // it (and panic=-1 avoids an endless reboot loop holding the VM up for no
 // reason past the timeout).
 func TestHypervisorBootSerialOutput(t *testing.T) {
-	if _, err := os.Stat(kvm.DevicePath); err != nil {
-		t.Skipf("%s not available: %v", kvm.DevicePath, err)
-	}
 	kernel := os.Getenv("GOA_ITEST_HYPERVISOR_KERNEL")
 	if kernel == "" {
 		t.Skip("GOA_ITEST_HYPERVISOR_KERNEL not set")
@@ -94,6 +102,7 @@ func TestHypervisorBootSerialOutput(t *testing.T) {
 		Console:    &console,
 	})
 	if err != nil {
+		skipIfKVMUnusable(t, err)
 		t.Fatalf("New: %v", err)
 	}
 	defer m.Close()
