@@ -25,6 +25,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/manager"
 	"github.com/goabonga/infrastructure/internal/meta"
 	"github.com/goabonga/infrastructure/internal/registry"
+	"github.com/goabonga/infrastructure/internal/replication"
 	"github.com/goabonga/infrastructure/internal/ssl"
 	"github.com/goabonga/infrastructure/internal/state"
 )
@@ -40,6 +41,7 @@ func run() error {
 	stateDir := flag.String("state-dir", envOr("GOA_STATE_DIR", "./state"), "state directory")
 	stateDSN := flag.String("state-dsn", envOr("GOA_STATE_DSN", ""), "PostgreSQL DSN (enables the HA backend)")
 	interval := flag.Duration("interval", 5*time.Second, "reconcile interval")
+	replicationAddr := flag.String("replication-addr", envOr("GOA_REPLICATION_ADDR", ":7332"), "address the disk-replication transport listens on")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -110,6 +112,24 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// The replication transport needs the same shared key every other node
+	// has; without GOA_KMS_KEY there is no key to authenticate with, so it
+	// stays off rather than serving unauthenticated.
+	if master != nil {
+		repKey, err := crypto.DeriveKey(master, "replication:transport", 32)
+		if err != nil {
+			return err
+		}
+		repServer := replication.NewServer(filepath.Join(*stateDir, "disks"), repKey, nodeID, logger)
+		go func() {
+			if err := repServer.ListenAndServe(ctx, *replicationAddr); err != nil {
+				logger.Error("replication server stopped", "err", err)
+			}
+		}()
+	} else {
+		logger.Warn("GOA_KMS_KEY not set: disk-replication transport disabled")
+	}
 
 	passes := []manager.ReconcilePass{
 		manager.NewNodeHeartbeat(nodes, nodeID),
