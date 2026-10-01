@@ -29,6 +29,10 @@ infra-exporter (metrics) <- controller-manager
 - **infra-agent** runs on each host, watches the resources assigned to it and
   reconciles them against the kernel. See [realization](realization.md) for how a
   declared topology becomes bridges, namespaces, cgroups and encrypted disks.
+- **infra-agent -> infra-agent**, directly, node to node: the only such
+  channel is disk replication (`GOA_REPLICATION_ADDR`, default `:7332`), used
+  to pull a disk's backing file onto a second node. See
+  [disk replication](disk-replication.md).
 
 ## State
 
