@@ -5,6 +5,7 @@ package uart_test
 
 import (
 	"bytes"
+	"sync"
 	"testing"
 
 	"github.com/goabonga/infrastructure/internal/hypervisor/uart"
@@ -78,5 +79,45 @@ func TestIERMasksUndefinedBits(t *testing.T) {
 	u.Write(uart.RegIER, 0xff)
 	if got := u.Read(uart.RegIER); got != 0x0f {
 		t.Errorf("IER = 0x%02x, want 0x0f (only the low 4 bits are defined)", got)
+	}
+}
+
+// TestConcurrentAccess exercises UART the way multi-vcpu Run does: more
+// than one goroutine touching the same device at once (any vcpu's guest
+// code might be the one driving the console at a given moment). Run with
+// -race; the assertion that every byte arrives, none interleaved with
+// another goroutine's, is the correctness property the Write/Read mutex
+// exists for.
+func TestConcurrentAccess(t *testing.T) {
+	var out bytes.Buffer
+	u := uart.New(&out)
+
+	const goroutines = 8
+	const bytesEach = 100
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(b byte) {
+			defer wg.Done()
+			for i := 0; i < bytesEach; i++ {
+				u.Write(uart.RegData, b)
+				u.Read(uart.RegLSR) // concurrent reads too, not just writes
+			}
+		}(byte('A' + g))
+	}
+	wg.Wait()
+
+	if got, want := out.Len(), goroutines*bytesEach; got != want {
+		t.Fatalf("transmitted %d bytes, want %d (a write was lost)", got, want)
+	}
+	counts := make(map[byte]int)
+	for _, b := range out.Bytes() {
+		counts[b]++
+	}
+	for g := 0; g < goroutines; g++ {
+		b := byte('A' + g)
+		if counts[b] != bytesEach {
+			t.Errorf("byte %q appears %d times, want %d", b, counts[b], bytesEach)
+		}
 	}
 }
