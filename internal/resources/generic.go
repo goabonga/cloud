@@ -82,11 +82,7 @@ func (r *genericResource[M, S, ST]) Create(ctx context.Context, req resource.Cre
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	id, err := newID(r.def.kind)
-	if err != nil {
-		resp.Diagnostics.AddError("Generate id", err.Error())
-		return
-	}
+	id := newID(r.def.kind)
 	out, err := r.client.Put(ctx, &infra.Resource[S, ST]{Metadata: infra.ObjectMeta{UID: id}, Spec: spec})
 	if err != nil {
 		resp.Diagnostics.AddError("Create "+r.def.kind, err.Error())
@@ -162,12 +158,12 @@ func (r *genericResource[M, S, ST]) setState(ctx context.Context, out *infra.Res
 }
 
 // newID returns a fresh "<kind>-<hex>" identifier.
-func newID(kind string) (string, error) {
+func newID(kind string) string {
 	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("resources: generate id: %w", err)
-	}
-	return kind + "-" + hex.EncodeToString(b), nil
+	// rand.Read never returns a non-nil error: it crashes the process
+	// instead (see crypto/rand.Read's doc, https://go.dev/issue/66821).
+	_, _ = rand.Read(b)
+	return kind + "-" + hex.EncodeToString(b)
 }
 
 // idAttribute is the standard computed id attribute.
