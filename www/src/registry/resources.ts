@@ -204,7 +204,7 @@ export const RESOURCES: Record<string, ResourceDef> = {
     searchableFields: ["spec.name"],
     fields: [
       { key: "name", label: "Name", type: "string" },
-      { key: "sizeMb", label: "Size (MB)", type: "number", required: true },
+      { key: "sizeMb", label: "Size (MB)", type: "number", required: true, helpText: "At least 32 when encrypted" },
       { key: "kmsKeyId", label: "KMS key", type: "reference", referenceKind: "kms_key", helpText: "Encrypts the disk at rest" },
     ],
   },
