@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
@@ -22,6 +24,14 @@ import (
 // they can be told apart from user-created compute without a join (purely for
 // observability; the function_instance resource is the source of truth).
 const functionLabel = "infra.io/function-id"
+
+// functionInstancePortRangeLo and Hi bound the host ports FunctionController
+// allocates for pool instances, kept disjoint from ports a user might
+// deliberately choose for their own compute.
+const (
+	functionInstancePortRangeLo = 30000
+	functionInstancePortRangeHi = 32767
+)
 
 // functionDeps groups the registries FunctionController consults to decide
 // whether a function's shape is realizable, mirroring the checks
@@ -230,7 +240,7 @@ func (c *FunctionController) ensureFunction(ctx context.Context, fn *resource.Fu
 	now := c.now()
 	pending := len(live)
 	for pending < fn.Spec.WarmPool.MinWarm {
-		if _, err := c.createInstance(fn, now); err != nil {
+		if _, err := c.createInstance(fn, computesByUID, now); err != nil {
 			return err
 		}
 		pending++
@@ -258,15 +268,19 @@ func (c *FunctionController) syncInstances(insts []resource.FunctionInstance, co
 		}
 		cp, ok := computesByUID[inst.Spec.ComputeID]
 		phase := resource.PhasePending
+		nodeName := inst.Status.NodeName
 		switch {
 		case !ok:
 			phase = resource.PhaseError
 		case cp.Status.Phase == resource.PhaseReady:
 			phase = resource.PhaseReady
+			nodeName = cp.Status.NodeName
 		case cp.Status.Phase != "":
 			phase = resource.PhaseReconciling
+			nodeName = cp.Status.NodeName
 		}
-		if inst.Status.Phase != phase {
+		if inst.Status.Phase != phase || inst.Status.NodeName != nodeName {
+			inst.Status.NodeName = nodeName
 			inst.Status.SetPhase(phase, "Synced", "tracks backing compute")
 			if err := c.instances.Put(&inst); err != nil {
 				return nil, fmt.Errorf("controllers: sync function instance %s: %w", inst.Metadata.UID, err)
@@ -281,7 +295,14 @@ func (c *FunctionController) syncInstances(insts []resource.FunctionInstance, co
 
 // createInstance creates a new compute realizing one of fn's pool slots, and
 // the function-instance record joining them, both freshly Warm.
-func (c *FunctionController) createInstance(fn *resource.Function, now time.Time) (*resource.FunctionInstance, error) {
+// computesByUID is updated in place with the compute it creates, so a second
+// call within the same ensureFunction pass sees the port as taken.
+func (c *FunctionController) createInstance(fn *resource.Function, computesByUID map[string]resource.Compute, now time.Time) (*resource.FunctionInstance, error) {
+	port, err := allocatePort(computesByUID)
+	if err != nil {
+		return nil, fmt.Errorf("controllers: allocate port for function %s: %w", fn.Metadata.UID, err)
+	}
+
 	computeUID := newUID("compute")
 	cp := &resource.Compute{
 		Metadata: resource.ObjectMeta{
@@ -300,11 +321,13 @@ func (c *FunctionController) createInstance(fn *resource.Function, now time.Time
 			Image:           fn.Spec.Image,
 			Command:         fn.Spec.Command,
 			Env:             fn.Spec.Env,
+			Ports:           []string{fmt.Sprintf("%d:%d/tcp", port, fn.Spec.Port)},
 		},
 	}
 	if err := c.computes.Put(cp); err != nil {
 		return nil, fmt.Errorf("controllers: create compute for function %s: %w", fn.Metadata.UID, err)
 	}
+	computesByUID[computeUID] = *cp
 
 	inst := &resource.FunctionInstance{
 		Metadata: resource.ObjectMeta{UID: newUID("fninst"), Generation: 1},
@@ -313,12 +336,47 @@ func (c *FunctionController) createInstance(fn *resource.Function, now time.Time
 	inst.Metadata.AddFinalizer(resource.FunctionInstanceFinalizer)
 	inst.Status.State = resource.FunctionInstanceWarm
 	inst.Status.LastUsedAt = now.UTC().Format(time.RFC3339)
+	inst.Status.Port = port
 	inst.Status.SetPhase(resource.PhasePending, "Created", "pool instance created, waiting for its compute")
 	if err := c.instances.Put(inst); err != nil {
 		return nil, fmt.Errorf("controllers: create function instance for function %s: %w", fn.Metadata.UID, err)
 	}
-	c.logger.Info("created function instance", "function", fn.Metadata.UID, "instance", inst.Metadata.UID, "compute", computeUID)
+	c.logger.Info("created function instance", "function", fn.Metadata.UID, "instance", inst.Metadata.UID, "compute", computeUID, "port", port)
 	return inst, nil
+}
+
+// allocatePort picks a host port in the function-instance range not already
+// used by any compute's port mapping, so pool instances never collide with
+// each other or with user-created compute.
+func allocatePort(computesByUID map[string]resource.Compute) (int, error) {
+	used := make(map[int]bool, len(computesByUID))
+	for _, cp := range computesByUID {
+		for _, mapping := range cp.Spec.Ports {
+			if port, ok := hostPortOf(mapping); ok {
+				used[port] = true
+			}
+		}
+	}
+	for port := functionInstancePortRangeLo; port <= functionInstancePortRangeHi; port++ {
+		if !used[port] {
+			return port, nil
+		}
+	}
+	return 0, fmt.Errorf("no free port in %d-%d", functionInstancePortRangeLo, functionInstancePortRangeHi)
+}
+
+// hostPortOf extracts the host-side port from a "host:container/proto"
+// mapping, as used by ComputeSpec.Ports.
+func hostPortOf(mapping string) (int, bool) {
+	host, _, ok := strings.Cut(mapping, ":")
+	if !ok {
+		return 0, false
+	}
+	port, err := strconv.Atoi(host)
+	if err != nil {
+		return 0, false
+	}
+	return port, true
 }
 
 // evictIdle enforces policy's MaxWarm cap and IdleTTLSeconds eviction over
