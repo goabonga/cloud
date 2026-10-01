@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.0] - 2026-10-01
+
+### Added
+
+- **api**: serve the async disk replica resource (`d4fb60e`)
+
 ## [0.11.0] - 2026-10-01
 
 ### Added

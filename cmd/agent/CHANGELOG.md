@@ -2,6 +2,13 @@
 
 All notable changes to this component are documented here.
 
+## [0.16.0] - 2026-10-01
+
+### Added
+
+- **agent**: sync a disk's backing file onto its async replica (`6a94389`)
+- **agent**: start the async disk replica reconciler in infra-agent (`01d0ce3`)
+
 ## [0.14.0] - 2026-10-01
 
 ### Added

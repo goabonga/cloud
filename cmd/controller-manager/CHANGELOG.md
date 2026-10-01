@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.9.0] - 2026-10-01
+
+### Added
+
+- **controller**: schedule async disk replicas onto nodes (`2524657`)
+
 ## [0.7.0] - 2026-10-01
 
 ### Added

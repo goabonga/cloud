@@ -2,6 +2,13 @@
 
 All notable changes to this component are documented here.
 
+## [0.0.26] - 2026-10-01
+
+### Dependencies
+
+- Track `infra-api` `0.13.0`
+- Track `infra-controller-manager` `0.9.0`
+
 ## [0.0.24] - 2026-10-01
 
 ### Dependencies

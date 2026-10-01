@@ -47,7 +47,7 @@ components:
     enabled: true
     image:
       repository: infra-api
-      tag: 0.11.0
+      tag: 0.13.0
     # One replica by default so the chart installs with no configuration. The
     # file-backed store is per-pod, so raising this requires state.dsn or
     # state.existingSecret - the chart refuses to render otherwise rather than
@@ -72,7 +72,7 @@ components:
     enabled: true
     image:
       repository: infra-controller-manager
-      tag: 0.7.0
+      tag: 0.9.0
     # Leader election means extra replicas are standby, not throughput, so two
     # buys failover and nothing else. Left at one for the same reason as the
     # API server: a default install should not require a database.

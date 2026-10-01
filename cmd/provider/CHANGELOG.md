@@ -2,6 +2,16 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.0] - 2026-10-01
+
+### Added
+
+- **provider**: add the infra_async_disk_replica resource (`c3ef208`)
+
+### Dependencies
+
+- Track `infra-api` `0.13.0`
+
 ## [0.10.1] - 2026-10-01
 
 ### Dependencies
