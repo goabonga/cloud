@@ -6,6 +6,8 @@ single instance is active across the cluster. Micro-VMs are placed by a
 second, separate **microvm-scheduler** controller with the identical
 algorithm below, substituting `microvm.spec.vcpus` for `compute.spec.cpu`;
 see [MicroVMs and compute share nodes, not capacity accounting](#microvms-and-compute-share-nodes-not-capacity-accounting).
+Disks are placed by a third, lighter **disk-scheduler** controller; see
+[Disks are pinned too, with no capacity accounting](#disks-are-pinned-too-with-no-capacity-accounting).
 
 ## Nodes and pools
 
@@ -68,12 +70,31 @@ therefore be oversubscribed across the two kinds. Until capacity accounting
 is made aware of both together, keep compute and microvm in disjoint node
 pools (`nodePoolId`) if they might otherwise land on the same nodes.
 
+## Disks are pinned too, with no capacity accounting
+
+A disk (`infra_disk`) is placed by `disk-scheduler`, the same liveness rule
+and eviction as above, against the disk store instead of the compute one.
+It exists to close a real gap: before it, `DiskReconciler` had no node
+filter at all, so every agent on every node independently created its own
+blank, unsynchronized backing file for every disk in the cluster - a compute
+rescheduled after its node died would silently mount a different, empty disk
+already sitting on the new node, instead of failing. Pinning each disk to
+exactly one `status.nodeName`, the same way compute and micro-VMs already
+are, is the prerequisite for a disk's backing file to mean anything specific
+when a compute references it across a reschedule.
+
+Unlike `scheduler` and `microvm-scheduler`, `disk-scheduler` does not write
+node or node-pool status, and a disk has no node-pool selector or CPU/memory
+request: a disk has nothing comparable to account for, so any ready node is
+eligible and the least-loaded one (by count) is picked.
+
 ## Node-scoped realization
 
-The agent realizes compute (and, identically, micro-VMs) only where it was
-placed. Set `GOA_NODE_ID` on `infra-agent` to the node's id and the agent
-both heartbeats that node and reconciles only the compute and micro-VMs whose
-`status.nodeName` matches; everything else is left to the node that owns it.
+The agent realizes compute, micro-VMs and disks only where each was placed.
+Set `GOA_NODE_ID` on `infra-agent` to the node's id and the agent both
+heartbeats that node and reconciles only the compute, micro-VMs and disks
+whose `status.nodeName` matches; everything else is left to the node that
+owns it.
 
-With `GOA_NODE_ID` unset the agent realizes every compute and micro-VM, which
-is the single-host development default.
+With `GOA_NODE_ID` unset the agent realizes every compute, micro-VM and disk,
+which is the single-host development default.
