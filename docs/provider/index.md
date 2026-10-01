@@ -45,9 +45,9 @@ The provider manages the full network and compute topology:
 | `infra_dns_zone` | DNS zone. |
 | `infra_dns_record` | DNS record within a zone. |
 | `infra_peering` | Peering between two VPCs. |
-| `infra_load_balancer` | Layer-4 load balancer. |
+| `infra_load_balancer` | Load balancer: a VIP and public address, with a layer-4 `port` or listeners. |
 | `infra_lb_backend` | Compute backend attached to a load balancer. |
-| `infra_lb_target_group` | Pool of targets with their protocol and health check (layer 7; no data plane yet). |
+| `infra_lb_target_group` | Pool of targets with their protocol, health check and, with https, `backend_ca_id` and `server_name`. |
 | `infra_lb_target` | Compute instance in a target group. |
 | `infra_lb_listener` | http, https, tls or tcp port of a load balancer, routing to target groups. |
 | `infra_waf_policy` | Web-application-firewall policy. |
