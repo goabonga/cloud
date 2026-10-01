@@ -36,8 +36,8 @@ VPC, subnet, internet gateway, route, peering, security group (+ rule), IP
 address, compute, microvm, disk, disk file, DNS zone, DNS record, KMS
 keyring, KMS key, secret (+ version), SSL CA, SSL cert, WAF policy (+ rule),
 ACL policy (+ rule), load balancer (+ backend), load balancer target group
-(+ target), listener, function and function instance (see
-[FaaS functions](faas.md)).
+(+ target), listener, organization, folder, project, IAM binding, function
+and function instance (see [FaaS functions](faas.md)).
 
 ## Defaults
 
@@ -76,3 +76,24 @@ serving only listeners leaves its `port` unset: it then gets no layer-4
 virtual service, and a listener on the load balancer's own port is refused.
 The agents serve the listeners with infra-lb (see
 [realization](realization.md#listeners)).
+
+## Organization, folder and project hierarchy
+
+Resources are scoped for isolation, IAM, quotas and billing by
+`metadata.projectId`. A **project** (`project`) attaches directly to an
+**organization** (`organization`) or to a **folder** (`folder`), and a folder
+may itself nest under an organization or another folder - an organization is
+always the root, never nested.
+
+An **IAM binding** (`iam_binding`) grants a fixed role (`roles/viewer`,
+`roles/editor` or `roles/owner`) to a set of `"<kind>:<id>"` members (for
+example `user:alice`) on a resource: an organization, a folder, a project, or
+any other resource for one-off sharing. A binding on an organization or
+folder is meant to be inherited by every project (and its resources)
+underneath it.
+
+The hierarchy and binding resources are stored and validated today, but
+nothing yet enforces them: every resource kind remains reachable by any
+authenticated caller regardless of project, ownership or bindings. Walking
+the hierarchy to authorize a request is a separate, not-yet-implemented
+piece of work.
