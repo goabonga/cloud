@@ -56,25 +56,6 @@ body {
   margin-bottom: 1rem;
 }
 
-.cards {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.card {
-  background: #fff;
-  border: 1px solid #e0e0ec;
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
-  min-width: 140px;
-}
-
-.card .value {
-  font-size: 2rem;
-  font-weight: 700;
-}
-
 table {
   width: 100%;
   border-collapse: collapse;
