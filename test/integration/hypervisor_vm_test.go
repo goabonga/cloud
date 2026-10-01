@@ -11,8 +11,9 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/goabonga/infrastructure/internal/hypervisor/kvm"
 	"golang.org/x/sys/unix"
+
+	"github.com/goabonga/infrastructure/internal/hypervisor/kvm"
 )
 
 // TestKVMCreateVMAndVCPU exercises the VM/vCPU/memory-region lifecycle
