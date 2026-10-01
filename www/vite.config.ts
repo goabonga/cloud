@@ -23,5 +23,11 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // lcov is the format the ci workflow hands to codecov/codecov-action;
+    // text keeps a summary in the local/CI log.
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "lcov"],
+    },
   },
 });
