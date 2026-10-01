@@ -149,8 +149,14 @@ ansible-playbook verify-upstream.yml
 
 checks, from the `inet` client: its gateway and both edges are reachable; the
 block is routed to every edge, 64 TCP flows spread over both; a packet for the
-block is answered by an edge; and the NAT exempts the block while `inet` still
-reaches the LAN.
+block is answered by an edge; the public DNS refuses recursion; the NAT exempts
+the block while `inet` still reaches the LAN; and, once the Terraform demo is
+applied, `https://www.demo.test/` answers with a certificate `inet` verifies.
+
+Every lab machine trusts the platform's public root (`public_trust` role): the
+playbook reads it from the API, which creates it at its first start, and
+installs it with `update-ca-certificates`, as an Internet host trusts a public
+CA.
 
 To reach the block from your workstation, route it through upstream-sim:
 `sudo ip route add 203.0.113.0/24 via 192.168.122.30`.
