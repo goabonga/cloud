@@ -54,7 +54,8 @@ run as root.
 | Disk file        | the file, written into the disk through the mounts of this host's instances |
 | Security group   | an allow-list iptables chain |
 | WAF policy       | an iptables chain attached inbound to the target |
-| Load balancer    | an IPVS virtual service on a VIP, full-NAT through the node port |
+| Load balancer    | an IPVS virtual service on a VIP, full-NAT through the node port; on the edges, also on its public address |
+| Public IP address | an address of the edges' public block, reserved in the shared store |
 | Compute          | a network namespace running an OCI image |
 
 ## VPCs across hosts
@@ -105,6 +106,23 @@ to this host's address there (`net.ipv4.vs.conntrack=1` exposes them to
 netfilter). Every backend therefore replies to the host that took the
 connection: backends on other hosts and clients in a backend's own subnet are
 both served.
+
+## Public addresses
+
+An agent with `GOA_PUBLIC_CIDR` is an edge: the public block is routed to it.
+It resolves every `ip_address` of type `public` to an address of that block -
+the one asked for, or else the first free one, never one another `ip_address`
+asks for by name nor the public DNS address - reserved in the shared store
+under `ipam/public/<ip>`, so edges reconciling at once settle on the same
+address. A conflict puts the latecomer in `Error`. `ip_address` carries no
+finalizer, so the reservations of deleted ones are released on the next pass.
+
+A load balancer naming a public `ip_address` (`publicIpId`) is also served on
+the edges on that address: it goes on the loopback, with the same IPVS virtual
+service as the VIP, full-NAT included, so traffic the upstream routes to an
+edge for it reaches the backends on any host. Each edge tracks which public
+address it serves per load balancer and removes it when the load balancer
+moves to another one or is deleted.
 
 ## DNS
 
