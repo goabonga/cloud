@@ -93,7 +93,7 @@ type VirtQueue struct {
 // the driver sets QueueReady, so a snapshot taken then stays valid for the
 // queue's lifetime — there is no need to re-read Transport on every Pop.
 func NewVirtQueue(mem GuestMemory, q Queue) *VirtQueue {
-	return &VirtQueue{mem: mem, size: uint16(q.Size), descAddr: q.Desc, availAddr: q.Avail, usedAddr: q.Used}
+	return &VirtQueue{mem: mem, size: uint16(q.Size), descAddr: q.Desc, availAddr: q.Avail, usedAddr: q.Used} // #nosec G115 -- q.Size is bounded to [1, queueMaxSize] by Transport.Write's regQueueNum handler, and every queueMaxSize this package's devices pass to NewTransport fits in uint16
 }
 
 // Pop returns the next request the driver has made available, if any
