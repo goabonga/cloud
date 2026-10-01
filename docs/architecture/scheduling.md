@@ -8,6 +8,10 @@ algorithm below, substituting `microvm.spec.vcpus` for `compute.spec.cpu`;
 see [MicroVMs and compute share nodes, not capacity accounting](#microvms-and-compute-share-nodes-not-capacity-accounting).
 Disks are placed by a third, lighter **disk-scheduler** controller; see
 [Disks are pinned too, with no capacity accounting](#disks-are-pinned-too-with-no-capacity-accounting).
+A disk's async replica is placed by a fourth,
+**async-disk-replica-scheduler** controller - same rule again, plus one of
+its own: it never lands on the disk's own node. See
+[disk-replication.md](disk-replication.md).
 
 ## Nodes and pools
 

@@ -33,13 +33,13 @@ underlying kernel resources.
 ## Resource types
 
 VPC, subnet, internet gateway (with an optional egress proxy: allowed domains
-and addresses, see [realization](realization.md#egress-proxy)), route, peering,
-security group (+ rule), IP
-address, compute, microvm, disk, disk file, DNS zone, DNS record, KMS
-keyring, KMS key, secret (+ version), SSL CA, SSL cert, WAF policy (+ rule),
-ACL policy (+ rule), load balancer (+ backend), load balancer target group
-(+ target), listener, organization, folder, project, IAM binding, function
-and function instance (see [FaaS functions](faas.md)).
+and addresses, see [realization](realization.md#egress-proxy)), route,
+peering, security group (+ rule), IP address, compute, microvm, disk, disk
+file, async disk replica, DNS zone, DNS record, KMS keyring, KMS key, secret
+(+ version), SSL CA, SSL cert, WAF policy (+ rule), ACL policy (+ rule),
+load balancer (+ backend), load balancer target group (+ target), listener,
+organization, folder, project, IAM binding, function and function instance
+(see [FaaS functions](faas.md)).
 
 ## Defaults
 
