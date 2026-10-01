@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -152,12 +153,65 @@ func cloneFile(dst, src string) error {
 		return nil
 	}
 
-	if _, err := srcF.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("seek %q: %w", src, err)
-	}
-	if _, err := io.Copy(dstF, srcF); err != nil {
+	if err := sparseCopy(dstF, srcF); err != nil {
 		_ = os.Remove(dst)
 		return fmt.Errorf("copy %q to %q: %w", src, dst, err)
 	}
 	return nil
+}
+
+// sparseCopy copies src's data extents into dst, skipping holes with Seek
+// rather than writing their zeroes, so dst stays sparse like src on a
+// filesystem that supports SEEK_DATA/SEEK_HOLE (ext4 and most others, even
+// without reflink). A filesystem that doesn't falls back to a plain,
+// non-sparse copy.
+func sparseCopy(dstF, srcF *os.File) error {
+	size, err := srcF.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+	if err := dstF.Truncate(size); err != nil {
+		return err
+	}
+
+	for pos := int64(0); pos < size; {
+		dataStart, err := srcF.Seek(pos, unix.SEEK_DATA)
+		if errors.Is(err, unix.ENXIO) {
+			break // the rest of the file is a hole
+		}
+		if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOTSUP) {
+			return plainCopy(dstF, srcF) // SEEK_DATA/SEEK_HOLE unsupported here
+		}
+		if err != nil {
+			return err
+		}
+		holeStart, err := srcF.Seek(dataStart, unix.SEEK_HOLE)
+		if err != nil {
+			return err
+		}
+		if _, err := srcF.Seek(dataStart, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err := dstF.Seek(dataStart, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err := io.CopyN(dstF, srcF, holeStart-dataStart); err != nil {
+			return err
+		}
+		pos = holeStart
+	}
+	return nil
+}
+
+// plainCopy copies src to dst byte for byte from the start, for filesystems
+// sparseCopy cannot use.
+func plainCopy(dstF, srcF *os.File) error {
+	if _, err := srcF.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err := dstF.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	_, err := io.Copy(dstF, srcF)
+	return err
 }
