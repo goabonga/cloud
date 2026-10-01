@@ -435,32 +435,11 @@ jobs:
       # The .deb carries the version in its filename and its control file, so
       # it has to be the version the release will publish.
       - uses: ./.github/actions/bump-preview
-      - uses: actions/setup-go@v7
+      # All nine, every run: a component released by cascade needs a package
+      # too, and `multicz changed` cannot tell us which those are.
+      - uses: ./.github/actions/build-deb
         with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/setup-node@v7
-        if: matrix.component == 'infra-www'
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: www/package-lock.json
-      # All nine, every run, for the reason spelled out in the `container`
-      # job: a component released by cascade needs a package too, and
-      # `multicz changed` cannot tell us which those are.
-      - name: Build the ${{ matrix.component }} .deb
-        run: |
-          set -euo pipefail
-          version=$(multicz get '${{ matrix.component }}')
-          # amd64 only here. The gates below install and start the package on
-          # the runner, which an arm64 .deb cannot do; the release path builds
-          # both architectures from the same script.
-          ARCH=amd64 ./packaging/build-debs.sh "$version" '${{ matrix.component }}'
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.component }}-deb
-          path: dist/${{ matrix.component }}_*_amd64.deb
-          retention-days: 1
+          component: ${{ matrix.component }}
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
