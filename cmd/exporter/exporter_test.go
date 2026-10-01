@@ -85,7 +85,7 @@ func TestNewMux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz status = %d", resp.StatusCode)
 	}
@@ -98,7 +98,7 @@ func TestNewMux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
-	defer mresp.Body.Close()
+	defer func() { _ = mresp.Body.Close() }()
 	if mresp.StatusCode != http.StatusOK {
 		t.Fatalf("metrics status = %d", mresp.StatusCode)
 	}
@@ -127,7 +127,7 @@ func TestServeGracefulShutdownReturnsErrServerClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("metrics status = %d", resp.StatusCode)
 	}
@@ -203,7 +203,7 @@ func TestRunGracefulShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz status = %d", resp.StatusCode)
 	}
@@ -213,7 +213,7 @@ func TestRunGracefulShutdown(t *testing.T) {
 		t.Fatalf("GET /metrics: %v", err)
 	}
 	mbody, _ := io.ReadAll(mresp.Body)
-	mresp.Body.Close()
+	_ = mresp.Body.Close()
 	if mresp.StatusCode != http.StatusOK || !strings.Contains(string(mbody), "infra_resources_total") {
 		t.Fatalf("unexpected metrics response: status=%d body=%s", mresp.StatusCode, mbody)
 	}
@@ -257,7 +257,7 @@ func waitHealthy(t *testing.T, addr string) {
 	for time.Now().Before(deadline) {
 		resp, err := noKeepAliveClient.Get("http://" + addr + "/healthz")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return
 			}
