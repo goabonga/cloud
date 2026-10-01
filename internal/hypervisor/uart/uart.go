@@ -109,7 +109,7 @@ func (u *UART) Read(off uint8) byte {
 	switch off {
 	case RegData:
 		if u.lcr&lcrDLAB != 0 {
-			return byte(u.divisorLatch)
+			return byte(u.divisorLatch) // #nosec G115 -- DLL is the 16550's low byte of the 16-bit divisor latch by hardware definition, not a magnitude conversion
 		}
 		return 0 // RBR: no received data
 	case RegIER:

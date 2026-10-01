@@ -211,7 +211,7 @@ func (n *Net) deliver(frameData []byte) {
 	if err != nil {
 		return
 	}
-	if err := rxQueue.Push(chain.HeadIndex, uint32(written)); err != nil {
+	if err := rxQueue.Push(chain.HeadIndex, uint32(written)); err != nil { // #nosec G115 -- written is bounded by the rx chain's own writable segment lengths (driver-allocated buffers, realistically a few KiB at most), never negative
 		return
 	}
 	n.transport.RaiseUsedBufferInterrupt()

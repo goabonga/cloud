@@ -166,7 +166,7 @@ func (t *Transport) selectedQueue() *Queue {
 func featuresPage(features uint64, sel uint32) uint32 {
 	switch sel {
 	case 0:
-		return uint32(features)
+		return uint32(features) // #nosec G115 -- deliberate truncation to the low 32 bits of a 64-bit feature bitmap (virtio 1.1 §4.2.2.2's FeaturesSel paging), not a magnitude conversion
 	case 1:
 		return uint32(features >> 32)
 	default:
@@ -276,7 +276,7 @@ func (t *Transport) Write(offset uint64, data []byte) {
 			t.resetLocked()
 			return
 		}
-		t.status = uint8(v)
+		t.status = uint8(v) // #nosec G115 -- the status register is a single byte per virtio 1.1 §2.1; only the low 8 bits of a guest's 4-byte register write are defined
 	case regQueueDescLow:
 		if q := t.selectedQueue(); q != nil {
 			q.Desc = q.Desc&0xffffffff00000000 | uint64(v)

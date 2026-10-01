@@ -32,7 +32,7 @@ func (v *VCPU) fd() int { return int(v.f.Fd()) }
 // GetRegs reads the vCPU's general-purpose registers (KVM_GET_REGS).
 func (v *VCPU) GetRegs() (Regs, error) {
 	var regs Regs
-	if _, err := ioctl(v.fd(), ioGetRegs, uintptr(unsafe.Pointer(&regs))); err != nil {
+	if _, err := ioctl(v.fd(), ioGetRegs, uintptr(unsafe.Pointer(&regs))); err != nil { // #nosec G103 -- KVM_GET_REGS takes a pointer to struct kvm_regs per the KVM API; no non-unsafe way to pass it through ioctl
 		return Regs{}, fmt.Errorf("kvm: KVM_GET_REGS: %w", err)
 	}
 	return regs, nil
@@ -40,7 +40,7 @@ func (v *VCPU) GetRegs() (Regs, error) {
 
 // SetRegs writes the vCPU's general-purpose registers (KVM_SET_REGS).
 func (v *VCPU) SetRegs(regs Regs) error {
-	if _, err := ioctl(v.fd(), ioSetRegs, uintptr(unsafe.Pointer(&regs))); err != nil {
+	if _, err := ioctl(v.fd(), ioSetRegs, uintptr(unsafe.Pointer(&regs))); err != nil { // #nosec G103 -- KVM_SET_REGS takes a pointer to struct kvm_regs per the KVM API; no non-unsafe way to pass it through ioctl
 		return fmt.Errorf("kvm: KVM_SET_REGS: %w", err)
 	}
 	return nil
@@ -50,7 +50,7 @@ func (v *VCPU) SetRegs(regs Regs) error {
 // EFER (KVM_GET_SREGS).
 func (v *VCPU) GetSregs() (Sregs, error) {
 	var sregs Sregs
-	if _, err := ioctl(v.fd(), ioGetSregs, uintptr(unsafe.Pointer(&sregs))); err != nil {
+	if _, err := ioctl(v.fd(), ioGetSregs, uintptr(unsafe.Pointer(&sregs))); err != nil { // #nosec G103 -- KVM_GET_SREGS takes a pointer to struct kvm_sregs per the KVM API; no non-unsafe way to pass it through ioctl
 		return Sregs{}, fmt.Errorf("kvm: KVM_GET_SREGS: %w", err)
 	}
 	return sregs, nil
@@ -58,7 +58,7 @@ func (v *VCPU) GetSregs() (Sregs, error) {
 
 // SetSregs writes the vCPU's special registers (KVM_SET_SREGS).
 func (v *VCPU) SetSregs(sregs Sregs) error {
-	if _, err := ioctl(v.fd(), ioSetSregs, uintptr(unsafe.Pointer(&sregs))); err != nil {
+	if _, err := ioctl(v.fd(), ioSetSregs, uintptr(unsafe.Pointer(&sregs))); err != nil { // #nosec G103 -- KVM_SET_SREGS takes a pointer to struct kvm_sregs per the KVM API; no non-unsafe way to pass it through ioctl
 		return fmt.Errorf("kvm: KVM_SET_SREGS: %w", err)
 	}
 	return nil

@@ -38,7 +38,7 @@ func (img *Image) BuildBootParams(cmdlineAddr uint32, ramdiskAddr, ramdiskSize u
 
 	zp := make([]byte, zpSize)
 	copy(zp[headerStart:headerEnd], header)
-	zp[zpE820Entries] = byte(len(e820))
+	zp[zpE820Entries] = byte(len(e820)) // #nosec G115 -- bounded to [1, zpE820MaxEntries] (128) by the check above
 	for i, e := range e820 {
 		e.marshal(zp[zpE820Table+i*e820EntrySize:])
 	}
