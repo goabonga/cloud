@@ -10,6 +10,7 @@ package hypervisor
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"unsafe"
 
@@ -17,6 +18,7 @@ import (
 
 	"github.com/goabonga/infrastructure/internal/hypervisor/boot"
 	"github.com/goabonga/infrastructure/internal/hypervisor/kvm"
+	"github.com/goabonga/infrastructure/internal/hypervisor/uart"
 )
 
 // Config describes the VM to boot. VCPUs must be 1 for now — multi-vCPU
@@ -27,14 +29,18 @@ type Config struct {
 	KernelPath string
 	InitrdPath string
 	CmdLine    string
+	// Console receives the guest's serial console output (COM1). A nil
+	// Console discards it.
+	Console io.Writer
 }
 
 // Machine is one booted (or about to be booted) VM: its KVM handles, its
 // guest memory, and its vCPUs.
 type Machine struct {
-	dev *kvm.Device
-	vm  *kvm.VM
-	mem []byte // guest-physical address 0 maps to mem[0]
+	dev     *kvm.Device
+	vm      *kvm.VM
+	mem     []byte // guest-physical address 0 maps to mem[0]
+	console *uart.UART
 
 	vcpus []*vcpu
 }
@@ -74,7 +80,7 @@ func New(cfg Config) (*Machine, error) {
 		}
 	}
 
-	m := &Machine{}
+	m := &Machine{console: uart.New(cfg.Console)}
 	ok := false
 	defer func() {
 		if !ok {
