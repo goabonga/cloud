@@ -66,4 +66,12 @@ certificates two ways:
 | `DELETE` | `/api/v1/ssl_cert/{uid}` | Delete a certificate. |
 
 Private keys (CA and leaf) never appear in list or get responses and are never
-written to disk in clear; reveal is the only path that decrypts them.
+written in clear on the platform's side. Two paths decrypt a leaf key: reveal,
+and an agent rendering a disk file that holds the key for an instance.
+
+The API creates the platform's public root, `public-root`, at its first start
+when a KMS key is configured (common name `GOA_PUBLIC_ROOT_CN`, default
+`infra public root`). It is global: every instance trusts it, and it signs the
+certificates of public names. The API refuses to replace or delete it, and to
+create another global CA. Any other CA is trusted by the instances of the VPCs
+its `vpcIds` names.
