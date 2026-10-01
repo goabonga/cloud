@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: build .deb
+description: |
+  Build one component's amd64 .deb with packaging/build-debs.sh and upload it
+  as an artifact. amd64 only: the deb-validate chain installs and starts the
+  package on the runner, which an arm64 .deb cannot do; the release path
+  builds both architectures from the same script.
+
+inputs:
+  component:
+    required: true
+    description: Component name, e.g. infra-api.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    - uses: actions/setup-node@v7
+      if: inputs.component == 'infra-www'
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: www/package-lock.json
+    - name: Build the ${{ inputs.component }} .deb
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+      run: |
+        set -euo pipefail
+        version=$(multicz get "$COMPONENT")
+        ARCH=amd64 ./packaging/build-debs.sh "$version" "$COMPONENT"
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.component }}-deb
+        path: dist/${{ inputs.component }}_*_amd64.deb
+        retention-days: 1
