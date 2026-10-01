@@ -167,3 +167,46 @@ func deleteAddress(ctx context.Context, run Runner, iface, addrCIDR string) erro
 	}
 	return nil
 }
+
+// ensureVIP puts vip on the namespace's anycast port, run entering it as in
+// does, and routes it from the host onto the bridge in the VPC's table (see
+// vrf.go), where only this host's namespace answers for it. The host
+// forwards back out the interface the request came in on, which must not
+// make it redirect the instance.
+func ensureVIP(ctx context.Context, run, in Runner, vpcID, bridge, vip string) error {
+	if err := runSteps(ctx, run, "vip route", [][]string{
+		{"sysctl", "-w", "net.ipv4.conf." + bridge + ".send_redirects=0"},
+		{"ip", "route", "replace", vip + "/32", "dev", bridge, "table", vrfTableArg(vpcID)},
+	}); err != nil {
+		return err
+	}
+	// replace, not add: idempotent without matching iproute2's error text
+	// (see ExecBackend.EnsureAddress).
+	if out, err := in(ctx, "ip", "addr", "replace", vip+"/32", "dev", lbAnycastIface); err != nil {
+		return fmt.Errorf("manager: add vip %s: %w: %s", vip, err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// ensureHostLeg plugs the namespace held by pid, entered as in does, into
+// the host with a routed veth: the host answers the namespace's default
+// gateway on it, and what the namespace sends out that is not for the VPC
+// goes through the host's main table.
+func ensureHostLeg(ctx context.Context, run, in Runner, pid int, vpcID string) error {
+	host := lbPublicPeerName(vpcID)
+	if err := ensureLeg(ctx, run, pid, host, lbPublicIface); err != nil {
+		return err
+	}
+	if err := runSteps(ctx, run, "host leg", [][]string{
+		{"ip", "addr", "replace", lbPublicHost + "/32", "dev", host},
+		{"ip", "link", "set", host, "up"},
+	}); err != nil {
+		return err
+	}
+	return runSteps(ctx, in, "host leg", [][]string{
+		{"ip", "addr", "replace", lbPublicNS + "/32", "dev", lbPublicIface},
+		{"ip", "link", "set", lbPublicIface, "up"},
+		{"sysctl", "-w", "net.ipv4.conf." + lbPublicIface + ".rp_filter=0"},
+		{"ip", "route", "replace", "default", "via", lbPublicHost, "dev", lbPublicIface, "onlink"},
+	})
+}
