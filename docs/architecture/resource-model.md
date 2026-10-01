@@ -91,8 +91,23 @@ any other resource for one-off sharing. A binding on an organization or
 folder is meant to be inherited by every project (and its resources)
 underneath it.
 
-The hierarchy and binding resources are stored and validated today, but
-nothing yet enforces them: every resource kind remains reachable by any
-authenticated caller regardless of project, ownership or bindings. Walking
-the hierarchy to authorize a request is a separate, not-yet-implemented
-piece of work.
+When the API is started with authentication enabled, the hierarchy and
+bindings are enforced on every resource kind except `user` and
+`access_token` (which keep their own admin-only gate) and `secret`/`ssl`
+(not yet covered): a caller may read or write a resource only if they
+created it (`metadata.ownerUid`, stamped by the API and never
+client-settable), or hold a binding - direct or inherited through the
+resource's project's folder/organization chain - granting the needed
+permission, or carry the global `admin` role. `list` only returns what the
+caller can read. A resource with no `metadata.projectId` has no chain to
+inherit from, so only its owner or an admin can reach it; creating one is
+always allowed regardless, and the creator becomes its owner. A resource's
+`metadata.projectId` is fixed at creation - a write that tries to change it
+is rejected. `iam_binding` itself is admin-only for every verb, with no
+self-service path: since a binding is what grants access, letting its
+creator manage it the same way would let any caller grant themselves a role
+on a project they otherwise can't touch.
+
+Without authentication enabled, nothing above applies and every kind is as
+open as it was before this model existed - the same posture every other
+unauthenticated deployment of this API already has.
