@@ -196,19 +196,33 @@ func NewUpstreamForwarder() *UpstreamForwarder {
 }
 
 // Forward sends q to each upstream in turn until one answers, retrying over
-// TCP when the UDP answer is truncated.
+// TCP when the UDP answer is truncated. An upstream that refuses the query or
+// fails it is no answer either: the host's list can hold an authoritative-only
+// server, such as the edge's own public DNS, ahead of a recursive one. Its
+// answer is only returned when no upstream does better.
 func (f *UpstreamForwarder) Forward(ctx context.Context, q *dns.Msg) (*dns.Msg, error) {
 	var errs []error
+	var fallback *dns.Msg
 	for _, s := range f.servers {
 		resp, _, err := f.client.ExchangeContext(ctx, q, s)
 		if err == nil && resp.Truncated {
 			tcp := &dns.Client{Net: "tcp", Timeout: f.client.Timeout}
 			resp, _, err = tcp.ExchangeContext(ctx, q, s)
 		}
-		if err == nil {
-			return resp, nil
+		if err != nil {
+			errs = append(errs, err)
+			continue
 		}
-		errs = append(errs, err)
+		if resp.Rcode == dns.RcodeRefused || resp.Rcode == dns.RcodeServerFailure {
+			if fallback == nil {
+				fallback = resp
+			}
+			continue
+		}
+		return resp, nil
+	}
+	if fallback != nil {
+		return fallback, nil
 	}
 	if len(errs) == 0 {
 		return nil, errors.New("manager: no upstream resolver configured")
