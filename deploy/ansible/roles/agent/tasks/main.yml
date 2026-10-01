@@ -16,6 +16,23 @@
     update_cache: true
     cache_valid_time: 3600
 
+# Each VPC routes in a VRF of its own. The vrf module ships in the kernel's
+# extra modules, which Ubuntu's cloud images leave out; loading it at boot
+# keeps the first agent pass from depending on module autoload.
+- name: Install the kernel's extra modules
+  ansible.builtin.apt:
+    name: "linux-modules-extra-{{ ansible_facts['kernel'] }}"
+
+- name: Load the vrf module at boot
+  ansible.builtin.copy:
+    content: "vrf\n"
+    dest: /etc/modules-load.d/infra-vrf.conf
+    mode: "0644"
+
+- name: Load the vrf module now
+  ansible.builtin.command: modprobe vrf
+  changed_when: false
+
 - name: Copy agent packages
   ansible.builtin.copy:
     src: "{{ deb_dir }}/{{ item }}_{{ version }}_{{ deb_arch }}.deb"
