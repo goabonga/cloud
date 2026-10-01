@@ -109,6 +109,7 @@ func (p *infraProvider) Resources(_ context.Context) []func() resource.Resource 
 		resources.NewWAFRuleResource,
 		resources.NewNodeResource,
 		resources.NewNodePoolResource,
+		resources.NewFunctionResource,
 	}
 }
 
