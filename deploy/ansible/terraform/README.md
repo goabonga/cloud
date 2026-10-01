@@ -40,9 +40,12 @@ build via `dev_overrides`.
 
 ## Apply
 
-With `dev_overrides`, Terraform does not run `init`; just plan and apply:
+`dev_overrides` only covers the `infra` provider; `tls` (used by the k8s
+micro-VM demo below) is a public-registry provider, so `init` still has to
+run once to fetch it:
 
 ```bash
+terraform init
 terraform plan
 terraform apply
 ```
@@ -161,39 +164,46 @@ sudo nsenter --net=/proc/$p/ns/net curl -sI -x http://10.20.0.2:3128 https://exa
 sudo nsenter --net=/proc/$p/ns/net ping -c1 -W2 1.1.1.1                     # refused: not HTTP(S)
 ```
 
-## Micro-VM demo: a 3-node k3s cluster
+## Micro-VM demo: a 3-node kubeadm cluster
 
 `infra_microvm` boots a real VM under cloud-hypervisor for each node (one
 control plane, two workers) instead of a namespaced container - see
 [../../../docs/architecture/realization.md](../../../docs/architecture/realization.md#microvms).
 The agent hosts need `cloud-hypervisor` and a raw base image, installed by
-the `microvm` Ansible role (part of `site.yml`); nothing extra to build.
+the `microvm` Ansible role (part of `site.yml`); nothing extra to build. Each
+node gets 2 vCPUs and 2048MiB of RAM, enough to clear kubeadm's own preflight
+checks (1700MiB minimum).
 
-Pass an SSH key for debugging and create the control plane on its own first -
-the workers' `K3S_URL` needs its address, which the agent only assigns once it
-reconciles the resource, not within the same apply:
+A `tls_private_key` resource generates the SSH key pair used to reach every
+node - nothing to pass in on the command line, and the private half never
+touches disk outside Terraform's own state. Create the control plane on its
+own first - a worker's `kubeadm join` needs its address, which the agent only
+assigns once it reconciles the resource, not within the same apply:
 
 ```bash
-terraform apply -var "k8s_ssh_public_key=$(cat ~/.ssh/id_ed25519.pub)" \
-  -target=infra_microvm.k8s_control_plane
+terraform apply -target=infra_microvm.k8s_control_plane
 ```
 
 Wait for it to reach `Ready` (`terraform state show infra_microvm.k8s_control_plane`
-or the dashboard) and for k3s to come up, then apply the rest:
+or the dashboard) and for kubeadm to come up, then apply the rest:
 
 ```bash
-terraform apply -var "k8s_ssh_public_key=$(cat ~/.ssh/id_ed25519.pub)"
+terraform apply
 ```
 
 ```bash
 terraform output k8s_control_plane_ip
 terraform output k8s_worker_ips
-ssh ubuntu@<k8s_control_plane_ip> kubectl get nodes
+terraform output -raw k8s_ssh_private_key > k8s-demo.key && chmod 600 k8s-demo.key
+ssh -i k8s-demo.key ubuntu@<k8s_control_plane_ip> kubectl get nodes
 ```
 
-k3s rather than stock kubeadm: each micro-VM only gets a few hundred MB of RAM
-in this lab (768 MiB control plane, 512 MiB workers), well under kubeadm's own
-preflight minimum.
+A worker's join uses a fixed token (`local.k8s_join_token` in `main.tf`) and
+skips verifying the control plane's CA hash
+(`--discovery-token-unsafe-skip-ca-verification`): neither the real token nor
+the hash `kubeadm init` generates is knowable before it has actually run,
+which a single apply cannot wait for. Fine inside this lab's own private
+subnet; not a pattern for a real cluster.
 
 ## Tear down
 

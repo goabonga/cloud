@@ -3,6 +3,13 @@ terraform {
     infra = {
       source = "goabonga/infra"
     }
+    # Generates the k8s micro-VM demo's SSH key pair (main.tf) - a public
+    # registry provider, unlike infra, so it needs a real `terraform init`
+    # alongside the dev_overrides used for infra (see README.md).
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
