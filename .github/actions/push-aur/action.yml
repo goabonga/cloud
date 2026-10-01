@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: push to AUR
+description: |
+  Render a PKGBUILD against the component's just-tagged GitHub release
+  tarball, generate .SRCINFO with makepkg (via a throwaway Docker container
+  - the only thing here that needs an actual Arch userland), and push both
+  to the component's `ssh://aur@aur.archlinux.org/<component>.git`
+  repository.
+
+  Entirely conditional on secrets.AUR_SSH_PRIVATE_KEY being set: a composite
+  action can't read the secrets context itself, so the caller passes it
+  through as `aur-ssh-private-key`. When it is empty this is a no-op - the
+  downloadable .pkg.tar.zst attached to the GitHub Release by
+  publish-component is the only distribution channel.
+
+inputs:
+  component:
+    required: true
+    description: Component name, e.g. infra-api.
+  aur-ssh-private-key:
+    required: false
+    default: ""
+    description: secrets.AUR_SSH_PRIVATE_KEY from the calling workflow.
+
+runs:
+  using: composite
+  steps:
+    - id: aur
+      name: Detect AUR availability
+      shell: bash
+      env:
+        AUR_SSH_PRIVATE_KEY: ${{ inputs.aur-ssh-private-key }}
+      run: |
+        if [ -n "$AUR_SSH_PRIVATE_KEY" ]; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          echo "AUR_SSH_PRIVATE_KEY not set; only the GitHub Release .pkg.tar.zst will be published"
+        fi
+    # ssh-keyscan rather than a pinned host key: aurweb does not publish its
+    # host key fingerprint through any channel this could verify against, so
+    # there is nothing more trustworthy to pin here than what the connection
+    # itself presents. This matches the established community tooling for
+    # this exact task (e.g. KSXGitHub/github-actions-deploy-aur).
+    - name: Load the AUR deploy key
+      if: steps.aur.outputs.available == 'true'
+      shell: bash
+      env:
+        AUR_SSH_PRIVATE_KEY: ${{ inputs.aur-ssh-private-key }}
+      run: |
+        set -euo pipefail
+        install -d -m700 "$HOME/.ssh"
+        printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur_ed25519"
+        chmod 600 "$HOME/.ssh/aur_ed25519"
+        ssh-keyscan aur.archlinux.org >> "$HOME/.ssh/known_hosts" 2>/dev/null
+        echo "GIT_SSH_COMMAND=ssh -i $HOME/.ssh/aur_ed25519 -o IdentitiesOnly=yes" >> "$GITHUB_ENV"
+        git config --global user.name "Chris"
+        git config --global user.email "goabonga@pm.me"
+    - name: Push ${{ inputs.component }} to AUR
+      if: steps.aur.outputs.available == 'true'
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+      run: bash packaging/push-aur.sh "$COMPONENT"

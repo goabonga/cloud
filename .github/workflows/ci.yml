@@ -648,6 +648,13 @@ jobs:
         uses: ./.github/actions/publish-component
         with:
           component: ${{ matrix.component }}
+      # infra-spa is a standalone SPA tarball, not one of the nine Arch
+      # packages - see publish-component's own infra-spa branch.
+      - if: matrix.component != 'infra-spa'
+        uses: ./.github/actions/push-aur
+        with:
+          component: ${{ matrix.component }}
+          aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
