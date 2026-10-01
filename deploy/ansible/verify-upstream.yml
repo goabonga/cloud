@@ -19,8 +19,9 @@
   become: true
   vars:
     edge_ips: "{{ vms | selectattr('name', 'in', groups['edges']) | map(attribute='wan_ip') | list }}"
-    # An address in the block, e.g. 203.0.113.10.
-    probe: "{{ eip_block | regex_replace('\\.0/[0-9]+$', '.10') }}"
+    # An address of the block nothing holds: public ip_addresses are handed
+    # out from .10 to .249, so .254 stays unassigned, e.g. 203.0.113.254.
+    probe: "{{ eip_block | regex_replace('\\.0/[0-9]+$', '.254') }}"
   tasks:
     - name: The inet client reaches its gateway
       ansible.builtin.command: "ip netns exec inet ping -c1 -W2 {{ upstream.inet_gateway }}"
@@ -105,3 +106,22 @@
     - name: The inet client reaches the real LAN through the NAT
       ansible.builtin.command: "ip netns exec inet ping -c1 -W2 {{ gateway }}"
       changed_when: false
+
+    # Only once the Terraform demo is applied: it publishes www in the public
+    # zone and reserves that address for its load balancer.
+    - name: Resolve the demo's public name from the inet client
+      ansible.builtin.command: "ip netns exec inet dig +short +time=2 +tries=2 @{{ dns_public_addr }} www.{{ public_dns_domains | first }}"
+      register: verify_www
+      changed_when: false
+
+    - name: Reach the demo's load balancer by its public name
+      ansible.builtin.command: "ip netns exec inet curl -fsS -m 5 http://www.{{ public_dns_domains | first }}/"
+      register: verify_www_http
+      changed_when: false
+      when: verify_www.stdout | length > 0
+
+    - name: The load balancer answers on its public address
+      ansible.builtin.assert:
+        that: verify_www_http.stdout is search('Served by')
+        fail_msg: "{{ verify_www_http.stdout }}"
+      when: verify_www.stdout | length > 0
