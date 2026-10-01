@@ -12,6 +12,14 @@
   ansible.builtin.apt:
     deb: "/tmp/{{ item }}.deb"
   loop: "{{ control_packages }}"
+  # A same-content config task further down is what normally notifies these,
+  # but a .deb install changes the binary a running service already loaded
+  # into memory regardless of whether its config did - so this notifies
+  # every one of them unconditionally rather than relying on that coincidence.
+  notify:
+    - Restart infra-api
+    - Restart infra-exporter
+    - Restart infra-idp
 
 - name: Ensure the control-plane drop-in directories exist
   ansible.builtin.file:
