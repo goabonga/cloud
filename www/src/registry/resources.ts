@@ -27,8 +27,8 @@ import {
 import type { ResourceDef } from "./types";
 
 // RESOURCES is keyed by kind and mirrors KINDS in api/generic.ts one-to-one
-// (enforced by registry.test.ts). listColumns/searchableFields are dot-paths
-// drawn from each kind's Go spec/status struct in
+// (enforced by registry.test.ts). listColumns/searchableFields/fields are
+// drawn from each kind's Go spec/status struct and its Validate() method in
 // internal/domain/resource/*.go.
 export const RESOURCES: Record<string, ResourceDef> = {
   vpc: {
@@ -42,6 +42,7 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.bridgeName", label: "Bridge" },
     ],
     searchableFields: ["spec.cidr"],
+    fields: [{ key: "cidr", label: "CIDR", type: "string", required: true, helpText: "e.g. 10.0.0.0/16" }],
   },
   subnet: {
     kind: "subnet",
@@ -56,6 +57,11 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.gateway", label: "Gateway" },
     ],
     searchableFields: ["spec.vpcId", "spec.cidr"],
+    fields: [
+      { key: "vpcId", label: "VPC", type: "reference", referenceKind: "vpc", required: true },
+      { key: "cidr", label: "CIDR", type: "string", required: true },
+      { key: "type", label: "Type", type: "enum", enumValues: ["public", "private"], helpText: "Default private" },
+    ],
   },
   security_group: {
     kind: "security_group",
@@ -69,6 +75,10 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.chain", label: "Chain" },
     ],
     searchableFields: ["spec.vpcId", "spec.name"],
+    fields: [
+      { key: "vpcId", label: "VPC", type: "reference", referenceKind: "vpc", required: true },
+      { key: "name", label: "Name", type: "string" },
+    ],
   },
   security_group_rule: {
     kind: "security_group_rule",
@@ -84,6 +94,13 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.cidr", label: "CIDR" },
     ],
     searchableFields: ["spec.securityGroupId", "spec.cidr"],
+    fields: [
+      { key: "securityGroupId", label: "Security group", type: "reference", referenceKind: "security_group", required: true },
+      { key: "direction", label: "Direction", type: "enum", enumValues: ["ingress", "egress"], required: true },
+      { key: "protocol", label: "Protocol", type: "enum", enumValues: ["tcp", "udp", "icmp", "all"], required: true },
+      { key: "port", label: "Port", type: "number", helpText: "TCP/UDP only; empty means any" },
+      { key: "cidr", label: "CIDR", type: "string", helpText: "Source range; empty means any" },
+    ],
   },
   ip_address: {
     kind: "ip_address",
@@ -98,6 +115,13 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.computeId", label: "Compute" },
     ],
     searchableFields: ["status.address", "spec.address"],
+    fields: [
+      { key: "type", label: "Type", type: "enum", enumValues: ["private", "public"] },
+      { key: "vpcId", label: "VPC", type: "reference", referenceKind: "vpc" },
+      { key: "subnetId", label: "Subnet", type: "reference", referenceKind: "subnet" },
+      { key: "computeId", label: "Compute", type: "reference", referenceKind: "compute" },
+      { key: "address", label: "Requested address", type: "string", helpText: "Optional: request a specific IP" },
+    ],
   },
   igw: {
     kind: "igw",
@@ -110,6 +134,7 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.hostIface", label: "Host interface" },
     ],
     searchableFields: ["spec.vpcId"],
+    fields: [{ key: "vpcId", label: "VPC", type: "reference", referenceKind: "vpc", required: true }],
   },
   route: {
     kind: "route",
@@ -123,6 +148,12 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.gateway", label: "Gateway" },
     ],
     searchableFields: ["spec.vpcId", "spec.destination"],
+    fields: [
+      { key: "vpcId", label: "VPC", type: "reference", referenceKind: "vpc", required: true },
+      { key: "subnetId", label: "Subnet", type: "reference", referenceKind: "subnet" },
+      { key: "destination", label: "Destination", type: "string", required: true, helpText: "CIDR, e.g. 0.0.0.0/0" },
+      { key: "gateway", label: "Gateway", type: "string", required: true, helpText: "An igw uid, \"local\", or a peer" },
+    ],
   },
   kms_keyring: {
     kind: "kms_keyring",
@@ -132,6 +163,7 @@ export const RESOURCES: Record<string, ResourceDef> = {
     icon: KeyRound,
     listColumns: [{ key: "spec.name", label: "Name" }],
     searchableFields: ["spec.name"],
+    fields: [{ key: "name", label: "Name", type: "string", required: true }],
   },
   kms_key: {
     kind: "kms_key",
@@ -146,6 +178,13 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.algorithm", label: "Algorithm" },
     ],
     searchableFields: ["spec.keyringId", "spec.name"],
+    fields: [
+      { key: "keyringId", label: "Keyring", type: "reference", referenceKind: "kms_keyring", required: true },
+      { key: "name", label: "Name", type: "string", required: true },
+      { key: "purpose", label: "Purpose", type: "string" },
+      { key: "algorithm", label: "Algorithm", type: "string" },
+      { key: "rotationPeriod", label: "Rotation period", type: "string" },
+    ],
   },
   disk: {
     kind: "disk",
@@ -159,6 +198,11 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.encrypted", label: "Encrypted" },
     ],
     searchableFields: ["spec.name"],
+    fields: [
+      { key: "name", label: "Name", type: "string" },
+      { key: "sizeMb", label: "Size (MB)", type: "number", required: true },
+      { key: "kmsKeyId", label: "KMS key", type: "reference", referenceKind: "kms_key", helpText: "Encrypts the disk at rest" },
+    ],
   },
   disk_file: {
     kind: "disk_file",
@@ -172,6 +216,12 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.mode", label: "Mode" },
     ],
     searchableFields: ["spec.diskId", "spec.path"],
+    fields: [
+      { key: "diskId", label: "Disk", type: "reference", referenceKind: "disk", required: true },
+      { key: "path", label: "Path", type: "string", required: true },
+      { key: "content", label: "Content", type: "string" },
+      { key: "mode", label: "Mode", type: "string", helpText: "e.g. 0644" },
+    ],
   },
   compute: {
     kind: "compute",
@@ -186,6 +236,31 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.ip", label: "IP" },
     ],
     searchableFields: ["spec.name", "spec.image", "status.ip"],
+    fields: [
+      { key: "name", label: "Name", type: "string" },
+      { key: "subnetId", label: "Subnet", type: "reference", referenceKind: "subnet", required: true },
+      { key: "securityGroupId", label: "Security group", type: "reference", referenceKind: "security_group" },
+      { key: "nodePoolId", label: "Node pool", type: "reference", referenceKind: "node_pool" },
+      { key: "hostname", label: "Hostname", type: "string" },
+      { key: "cpu", label: "CPU", type: "number" },
+      { key: "memoryMb", label: "Memory (MB)", type: "number" },
+      { key: "pidsMax", label: "Max PIDs", type: "number" },
+      { key: "image", label: "Image", type: "string", required: true },
+      { key: "command", label: "Command", type: "string" },
+      { key: "env", label: "Environment", type: "keyValue" },
+      { key: "ports", label: "Ports", type: "stringList" },
+      {
+        key: "disks",
+        label: "Disks",
+        type: "group",
+        fields: [
+          { key: "diskId", label: "Disk", type: "reference", referenceKind: "disk", required: true },
+          { key: "mountPath", label: "Mount path", type: "string", required: true },
+          { key: "readOnly", label: "Read only", type: "boolean" },
+        ],
+      },
+      { key: "privileged", label: "Privileged", type: "boolean" },
+    ],
   },
   acl_policy: {
     kind: "acl_policy",
@@ -198,6 +273,21 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.appliedRules", label: "Applied" },
     ],
     searchableFields: [],
+    fields: [
+      {
+        key: "rules",
+        label: "Rules",
+        type: "group",
+        required: true,
+        fields: [
+          { key: "action", label: "Action", type: "enum", enumValues: ["allow", "deny"], required: true },
+          { key: "protocol", label: "Protocol", type: "enum", enumValues: ["all", "tcp", "udp", "icmp"] },
+          { key: "port", label: "Port", type: "number" },
+          { key: "cidr", label: "CIDR", type: "string" },
+          { key: "rateLimit", label: "Rate limit", type: "string", helpText: "iptables limit expression, e.g. 10/second" },
+        ],
+      },
+    ],
   },
   dns_zone: {
     kind: "dns_zone",
@@ -211,6 +301,12 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.vpcIds.length", label: "VPCs" },
     ],
     searchableFields: ["spec.domain"],
+    fields: [
+      { key: "name", label: "Name", type: "string" },
+      { key: "domain", label: "Domain", type: "string", required: true },
+      { key: "visibility", label: "Visibility", type: "enum", enumValues: ["public", "private"], helpText: "Default private" },
+      { key: "vpcIds", label: "VPC uids", type: "stringList", helpText: "Private zones only: which VPCs resolve it" },
+    ],
   },
   dns_record: {
     kind: "dns_record",
@@ -225,6 +321,19 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.records.length", label: "Values" },
     ],
     searchableFields: ["spec.zoneId", "spec.name"],
+    fields: [
+      { key: "zoneId", label: "Zone", type: "reference", referenceKind: "dns_zone", required: true },
+      { key: "name", label: "Name", type: "string", required: true },
+      {
+        key: "type",
+        label: "Type",
+        type: "enum",
+        enumValues: ["A", "AAAA", "CNAME", "TXT", "MX", "NS", "SRV", "PTR", "CAA"],
+        required: true,
+      },
+      { key: "ttl", label: "TTL", type: "number" },
+      { key: "records", label: "Values", type: "stringList", required: true },
+    ],
   },
   peering: {
     kind: "peering",
@@ -237,6 +346,10 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.vpc2Id", label: "VPC 2" },
     ],
     searchableFields: ["spec.vpc1Id", "spec.vpc2Id"],
+    fields: [
+      { key: "vpc1Id", label: "VPC 1", type: "reference", referenceKind: "vpc", required: true },
+      { key: "vpc2Id", label: "VPC 2", type: "reference", referenceKind: "vpc", required: true },
+    ],
   },
   load_balancer: {
     kind: "load_balancer",
@@ -251,6 +364,21 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.address", label: "Address" },
     ],
     searchableFields: ["spec.name", "status.address"],
+    fields: [
+      { key: "name", label: "Name", type: "string" },
+      { key: "vpcId", label: "VPC", type: "reference", referenceKind: "vpc", required: true },
+      { key: "address", label: "Address", type: "string" },
+      { key: "port", label: "Port", type: "number", required: true },
+      { key: "protocol", label: "Protocol", type: "enum", enumValues: ["tcp", "udp"], helpText: "Default tcp" },
+      {
+        key: "algorithm",
+        label: "Algorithm",
+        type: "enum",
+        enumValues: ["round_robin", "least_conn", "source"],
+        helpText: "Default round_robin",
+      },
+      { key: "publicIpId", label: "Public IP", type: "reference", referenceKind: "ip_address" },
+    ],
   },
   lb_backend: {
     kind: "lb_backend",
@@ -265,6 +393,12 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.weight", label: "Weight" },
     ],
     searchableFields: ["spec.lbId", "spec.computeId"],
+    fields: [
+      { key: "lbId", label: "Load balancer", type: "reference", referenceKind: "load_balancer", required: true },
+      { key: "computeId", label: "Compute", type: "reference", referenceKind: "compute", required: true },
+      { key: "port", label: "Port", type: "number", required: true },
+      { key: "weight", label: "Weight", type: "number" },
+    ],
   },
   waf_policy: {
     kind: "waf_policy",
@@ -278,6 +412,12 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.chain", label: "Chain" },
     ],
     searchableFields: ["spec.targetId"],
+    fields: [
+      { key: "name", label: "Name", type: "string" },
+      { key: "targetType", label: "Target type", type: "enum", enumValues: ["igw", "subnet", "compute"], required: true },
+      { key: "targetId", label: "Target", type: "string", required: true, helpText: "UID of the igw/subnet/compute above" },
+      { key: "logEnabled", label: "Log enabled", type: "boolean" },
+    ],
   },
   waf_rule: {
     kind: "waf_rule",
@@ -291,6 +431,15 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.action", label: "Action" },
     ],
     searchableFields: ["spec.policyId"],
+    fields: [
+      { key: "policyId", label: "Policy", type: "reference", referenceKind: "waf_policy", required: true },
+      { key: "priority", label: "Priority", type: "number" },
+      { key: "matchType", label: "Match type", type: "string", required: true },
+      { key: "matchValue", label: "Match value", type: "string" },
+      { key: "action", label: "Action", type: "enum", enumValues: ["block", "allow", "log", "ratelimit"], required: true },
+      { key: "rateLimit", label: "Rate limit", type: "number" },
+      { key: "rateWindow", label: "Rate window", type: "number" },
+    ],
   },
   node: {
     kind: "node",
@@ -305,6 +454,14 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "spec.capacity.memoryMb", label: "Memory (MB)" },
     ],
     searchableFields: ["spec.hostname", "spec.address"],
+    fields: [
+      { key: "hostname", label: "Hostname", type: "string", required: true },
+      { key: "address", label: "Address", type: "string", required: true },
+      { key: "labels", label: "Labels", type: "keyValue" },
+      { key: "capacity.cpus", label: "CPUs", type: "number", required: true },
+      { key: "capacity.memoryMb", label: "Memory (MB)", type: "number", required: true },
+      { key: "capacity.maxPods", label: "Max pods", type: "number" },
+    ],
   },
   node_pool: {
     kind: "node_pool",
@@ -318,5 +475,11 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "status.totalNodes", label: "Total" },
     ],
     searchableFields: ["spec.name"],
+    fields: [
+      { key: "name", label: "Name", type: "string", required: true },
+      { key: "nodeSelector", label: "Node selector", type: "keyValue" },
+      { key: "minNodes", label: "Min nodes", type: "number" },
+      { key: "maxNodes", label: "Max nodes", type: "number" },
+    ],
   },
 };

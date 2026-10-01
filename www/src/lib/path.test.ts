@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { formatValue, getPath } from "./path";
+import { formatValue, getPath, setPath } from "./path";
 
 describe("getPath", () => {
   it("resolves a nested path", () => {
@@ -17,6 +17,22 @@ describe("getPath", () => {
   it("returns undefined for a missing path", () => {
     expect(getPath({ spec: {} }, "spec.cidr")).toBeUndefined();
     expect(getPath({ spec: null }, "spec.cidr")).toBeUndefined();
+  });
+});
+
+describe("setPath", () => {
+  it("sets a top-level key", () => {
+    expect(setPath({}, "cidr", "10.0.0.0/16")).toEqual({ cidr: "10.0.0.0/16" });
+  });
+
+  it("creates intermediate objects for a nested path", () => {
+    expect(setPath({}, "capacity.cpus", 4)).toEqual({ capacity: { cpus: 4 } });
+  });
+
+  it("merges into an existing object at the same prefix", () => {
+    const target = { capacity: { cpus: 4 } };
+    setPath(target, "capacity.memoryMb", 2048);
+    expect(target).toEqual({ capacity: { cpus: 4, memoryMb: 2048 } });
   });
 });
 
