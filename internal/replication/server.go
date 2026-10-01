@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,16 @@ import (
 
 	"github.com/goabonga/infrastructure/internal/httpsec"
 )
+
+// Port extracts the port infra-agent's GOA_REPLICATION_ADDR/-replication-addr
+// listens on, so a caller holding a peer's bare address (NodeSpec.Address)
+// can build that peer's replication address with net.JoinHostPort. Kept
+// here rather than inlined at call sites because cmd/agent/main.go already
+// has an unrelated local variable named "net" shadowing the package.
+func Port(listenAddr string) (string, error) {
+	_, port, err := net.SplitHostPort(listenAddr)
+	return port, err
+}
 
 // validUID matches the UID shape resources are given throughout the
 // codebase (see e.g. ExecDiskBackend.mapperName). Rejecting anything else
