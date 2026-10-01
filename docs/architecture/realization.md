@@ -358,12 +358,12 @@ second), removes the TAP device and the firewall rules.
 
 The kernel and initramfs are host-prepared absolute paths given in the spec
 (`kernelPath`, `initrdPath`) - there is no kernel fetch/cache. There is no
-CLI or Terraform support yet; only the control-plane API and the agent
-realize this resource so far. There is also no scheduler
-support: like compute before a scheduler assigns it, a micro-VM with no
-`status.nodeName` is realized by every agent (the single-host default); with
-`GOA_NODE_ID` set on a multi-host cluster it stays `Pending` until scheduling
-support lands.
+CLI support (the CLI itself only covers `vpc` today, nothing resource-generic
+yet); the control-plane API, the agent and the Terraform provider
+(`infra_microvm`) realize and expose this resource. Placement is scheduled
+by a separate `microvm-scheduler` controller, with a caveat on capacity
+accounting shared with compute - see
+[scheduling](scheduling.md#microvms-and-compute-share-nodes-not-capacity-accounting).
 
 ## The end-to-end chain
 
