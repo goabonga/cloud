@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.14.0] - 2026-10-01
+
+### Added
+
+- **agent**: start the replication transport in infra-agent (`e2cecbc`)
+
 ## [0.13.1] - 2026-10-01
 
 ### Fixed
