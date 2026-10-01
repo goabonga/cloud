@@ -6,6 +6,15 @@ description: |
   eslint, tsc, vitest with coverage (uploaded to Codecov) and a production
   vite build of the SPA.
 
+inputs:
+  codecov-token:
+    required: false
+    default: ""
+    description: |
+      Codecov upload token (secrets.CODECOV_TOKEN from the calling
+      workflow) - a composite action can't read the secrets context
+      itself, so the caller must pass it through.
+
 runs:
   using: composite
   steps:
@@ -36,7 +45,7 @@ runs:
         working-directory: www
         files: coverage/lcov.info
         flags: www
-        token: ${{ secrets.CODECOV_TOKEN }}
+        token: ${{ inputs.codecov-token }}
         fail_ci_if_error: false
         disable_search: true
     - run: npm run build

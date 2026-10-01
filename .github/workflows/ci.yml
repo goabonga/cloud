@@ -129,6 +129,8 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/bump-preview
       - uses: ./.github/actions/www-quality
+        with:
+          codecov-token: ${{ secrets.CODECOV_TOKEN }}
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
@@ -518,6 +520,9 @@ jobs:
           token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
       - id: release
         uses: ./.github/actions/cut-release
+        with:
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
