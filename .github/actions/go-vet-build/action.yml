@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: go vet + build
+description: Run `go vet` (both build tags) and `go build ./...`.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    - name: go vet
+      shell: bash
+      run: |
+        go vet ./...
+        go vet -tags=integration ./...
+    - name: go build
+      shell: bash
+      run: go build ./...
