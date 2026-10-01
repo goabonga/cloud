@@ -78,14 +78,19 @@ The demo also publishes DNS, served by the agents:
   ssh ubuntu@<agent-ip> 'dig +short @10.20.0.1 www.internal.demo'
   ```
 
-- **Public zone `demo.test`**: `ns` is the edges' public DNS address and `www`
-  is reserved for the load balancer's public address (the edges do not realise
-  public addresses yet). The edges answer it on `203.0.113.53`, from the
-  simulated Internet:
+- **Public zone `demo.test`**: the apex is an A record to the load balancer's
+  public address, `www` a CNAME to the apex, and `ns` the edges' public DNS
+  address. The edges answer it on `203.0.113.53`.
 
-  ```bash
-  ssh ubuntu@192.168.122.30 'sudo ip netns exec inet dig +short @203.0.113.53 www.demo.test'
-  ```
+The load balancer is also reachable from outside the VPC: the demo reserves
+`203.0.113.10` as a public `infra_ip_address`, the edges serve the load balancer
+on it, and `demo.test` - so `www.demo.test` too - names it. Every lab machine resolves `demo.test`
+through the public DNS, so from any of them, or from the simulated Internet:
+
+```bash
+ssh ubuntu@192.168.122.10 'curl -s http://www.demo.test/'
+ssh ubuntu@192.168.122.30 'sudo ip netns exec inet curl -s http://www.demo.test/'
+```
 
 ## Tear down
 
