@@ -59,7 +59,7 @@ run as root.
 | Listener         | infra-lb in the VPC's load-balancer namespace, on the load balancer's VIP and, on the edges, public address |
 | Public IP address | an address of the edges' public block, reserved in the shared store |
 | Compute          | a network namespace running an OCI image |
-| MicroVM          | a cloud-hypervisor process attached to the VPC bridge by a TAP device |
+| MicroVM          | an infra-hypervisor process attached to the VPC bridge by a TAP device |
 
 ## VPCs across hosts
 
@@ -379,17 +379,26 @@ disks.
 
 A micro-VM is a second realization path alongside compute, for workloads that
 need a kernel of their own rather than a namespaced container. It is a real
-VM booted under **cloud-hypervisor**, which the agent drives like any other
-external tool (`iproute2`, `iptables`): a process the agent starts and talks
-to over its REST API, not a Go dependency.
+VM booted under **infra-hypervisor**, a hand-rolled, pure-Go VMM driving
+`/dev/kvm` directly (no cgo, no external VMM binary — see
+[go-hypervisor.md](go-hypervisor.md) for the design), which the agent drives
+like any other external tool (`iproute2`, `iptables`): a process the agent
+starts and talks to over its own control socket, not a Go dependency itself
+(`internal/hypervisor`'s packages are, but the agent only ever spawns and
+speaks to the compiled `infra-hypervisor` binary, shipped alongside
+`infra-agent` in the same package).
 
 ```
 TAP device: tap-<hash>, enslaved to the VPC bridge, created with
             `ip tuntap add ... mode tap` (the same device-creation style as
-            the rest of this package, not a raw netlink/ioctl call)
-cloud-hypervisor: one process per instance, its API on a unix socket under
-            the agent's state directory; vm.create then vm.boot configure
-            and start it
+            the rest of this package, not a raw netlink/ioctl call) - then
+            re-opened by infra-hypervisor itself (TUNSETIFF) for frame I/O,
+            since unlike cloud-hypervisor before it, it needs the fd
+            directly rather than attaching by name
+infra-hypervisor: one process per instance, its control protocol
+            (newline-delimited JSON, not REST) on a unix socket under the
+            agent's state directory; a single `create` request configures
+            and boots it
 kernel cmdline: the allocated address is passed as a static `ip=` directive,
             so the guest configures eth0 at boot - `net.ifnames=0
             biosdevname=0` keep it named eth0, since udev's predictable
@@ -415,9 +424,9 @@ firewall:   FORWARD/OUTPUT -d <ip> -j <security-group chain>, the same rule
 
 The reconciler resolves the subnet gateway, the VPC bridge, an address
 (reserved the same way as compute's) and the security-group chain, then asks
-the backend to boot cloud-hypervisor. Creation happens once: a subsequent
-pass that finds the process still alive is a no-op. The finalizer asks
-cloud-hypervisor to shut down (killing it if it doesn't respond within a
+the backend to boot infra-hypervisor. Creation happens once: a subsequent
+pass that finds the process still alive is a no-op. The finalizer asks it to
+shut down over the control socket (killing it if it doesn't respond within a
 second), removes the TAP device and the firewall rules.
 
 The kernel and initramfs are host-prepared absolute paths given in the spec

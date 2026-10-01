@@ -17,8 +17,8 @@ import (
 // address and GSI must be assigned before the kernel command line
 // referencing it is built. The disk file must already exist; this
 // package never fetches, creates or clones one (that stays
-// internal/manager's vmImageCache's job, same as it is for
-// cloud-hypervisor today).
+// internal/manager's vmImageCache's job, the same role it had for
+// cloud-hypervisor before).
 func (m *Machine) setupDisk(cfg Config) (cmdlineParam string, err error) {
 	flag := os.O_RDWR
 	if cfg.DiskReadonly {

@@ -5,15 +5,15 @@ package resource
 
 import "fmt"
 
-// KindMicroVM is the resource kind for cloud-hypervisor micro-VMs.
+// KindMicroVM is the resource kind for infra-hypervisor micro-VMs.
 const KindMicroVM = "microvm"
 
-// MicroVMFinalizer is attached by the agent so the cloud-hypervisor process,
+// MicroVMFinalizer is attached by the agent so the infra-hypervisor process,
 // TAP device and firewall rules are torn down before the record is removed.
 const MicroVMFinalizer = "infra.io/microvm"
 
 // MicroVMSpec is the desired state of a micro-VM: a kernel and a disk image
-// booted under cloud-hypervisor, attached to a subnet.
+// booted under infra-hypervisor, attached to a subnet.
 type MicroVMSpec struct {
 	Name            string `json:"name,omitempty"`
 	SubnetID        string `json:"subnetId"`

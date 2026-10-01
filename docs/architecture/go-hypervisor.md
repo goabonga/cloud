@@ -1,30 +1,26 @@
 # Go hypervisor
 
 `internal/hypervisor` and `cmd/hypervisor` are a hand-rolled, pure-Go VMM
-driving `/dev/kvm` directly: no cgo, no external VMM binary. It is a
-from-scratch replacement for the [cloud-hypervisor](realization.md#microvms)
-backend `microvm` uses today, built both to remove that external
-dependency and as a deliberate choice to own the hypervisor layer rather
-than only integrate one.
-
-It is **not yet wired into `microvm`** as a selectable backend —
-`internal/manager/vmm.go` and `ExecMicroVMBackend` are untouched, and
-`cloud-hypervisor` remains the only realization path in production. This
-page describes what exists today and the milestones ahead of it being an
-option there.
+driving `/dev/kvm` directly: no cgo, no external VMM binary. It is
+`microvm`'s realization backend — `internal/manager/vmm.go` drives the
+compiled `cmd/hypervisor` binary (packaged as `infra-hypervisor`, shipped
+inside the `infra-agent` `.deb`) exactly the way it used to drive
+cloud-hypervisor; see [realization.md](realization.md#microvms) for that
+integration. This page covers the hypervisor itself: its design and why
+it exists at all, not the `microvm` wiring around it.
 
 ## Status
 
 All five milestones this effort planned are done: single-vCPU direct
 kernel boot, serial console, multi-vCPU/SMP, virtio-net, virtio-blk, and a
-combined parity pass. `cmd/hypervisor` can boot a real Linux kernel under
-KVM with any number of vCPUs, a working `ttyS0` console, a network
-interface backed by a host TAP device and a disk backed by a raw file —
-all at once in a single VM (`TestHypervisorBootFull`). Shutdown (the
-`shutdown` request and `SIGTERM`/`SIGINT` alike) cleanly closes every
-KVM/tap/disk fd and removes the control socket file; `create` requests are
-validated (vcpus/memory/kernel path) before this process ever opens
-`/dev/kvm`.
+combined parity pass — and it is now `microvm`'s only backend.
+`cmd/hypervisor` boots a real Linux kernel under KVM with any number of
+vCPUs, a working `ttyS0` console, a network interface backed by a host TAP
+device and a disk backed by a raw file — all at once in a single VM
+(`TestHypervisorBootFull`). Shutdown (the `shutdown` request and
+`SIGTERM`/`SIGINT` alike) cleanly closes every KVM/tap/disk fd and removes
+the control socket file; `create` requests are validated (vcpus/memory/
+kernel path) before this process ever opens `/dev/kvm`.
 
 Deliberately not implemented, a real-world performance refinement rather
 than a correctness requirement, and not attempted here:
@@ -34,33 +30,29 @@ than a correctness requirement, and not attempted here:
   `KVM_IRQ_LINE` pulse, correct but not the fastest path.
 
 Also not done, genuinely out of scope for this effort rather than a
-milestone away: wiring this in as a selectable `microvm` backend (see the
-note at the top of this page), multiqueue virtio, more than 8 MMIO
-devices (the default IOAPIC's GSI 16-23 range), and anything needing
-virtio-pci.
+milestone away: multiqueue virtio, more than 8 MMIO devices (the default
+IOAPIC's GSI 16-23 range), and anything needing virtio-pci.
 
 ## Why a hand-rolled hypervisor, not cloud-hypervisor
 
-cloud-hypervisor is a mature, security-reviewed VMM shared with Kata
-Containers and used in production elsewhere — the original, and still
-generally the *safer*, choice for `microvm` (see
-[realization.md](realization.md#microvms) for that rationale, which still
-applies to the shipped backend). This effort exists because the project
-is also meant to be a vehicle for learning to build the tools it depends
-on, not only integrate them — an explicit, accepted tradeoff: months of
-systems-level work and the security exposure of a hand-rolled VMM, for
-full control of the hypervisor layer and the learning that comes with
-writing it.
+cloud-hypervisor — what `microvm` used before this — is a mature,
+security-reviewed VMM shared with Kata Containers and used in production
+elsewhere: by most measures, still the *safer* choice, and this effort
+accepted that tradeoff knowingly rather than disputing it. The project is
+also meant to be a vehicle for learning to build the tools it depends on,
+not only integrate them — months of systems-level work and the security
+exposure of a hand-rolled VMM, for full control of the hypervisor layer
+and the learning that comes with writing it.
 
 ## Process model
 
 One `cmd/hypervisor` OS process per VM, spawned and controlled over a Unix
-socket — the same isolation granularity `cloud-hypervisor` has today (each
-`microvm` instance already gets its own process; see `vmm.go`'s
-`startVMM`). A bug in this hypervisor's KVM-ioctl or virtio code crashing
-its process cannot take `infra-agent` or another VM down with it, and a VM
-survives an `infra-agent` restart — the same properties the current
-backend has, not a regression traded for simplicity.
+socket — the same isolation granularity cloud-hypervisor had: each
+`microvm` instance gets its own process (see `vmm.go`'s `startVMM`). A bug
+in this hypervisor's KVM-ioctl or virtio code crashing its process cannot
+take `infra-agent` or another VM down with it, and a VM survives an
+`infra-agent` restart — the same properties the previous backend had, not
+a regression traded for simplicity.
 
 ## Package layout
 
@@ -165,16 +157,16 @@ write.
 
 **virtio-blk** (`internal/hypervisor/virtio/blk.go`) is backed by a single
 raw disk file — the same convention `internal/manager`'s
-`vmImageCache`/`cloneFile` already produce for cloud-hypervisor's boot
-images, via a small `BlockBackend` interface (`io.ReaderAt` +
-`io.WriterAt` + `Sync`) `*os.File` satisfies directly. A request is three
-or more descriptors — a read-only header (request type, sector), zero or
-more data segments, a writable 1-byte status — handled entirely from
-`Blk.HandleNotify`; `VIRTIO_BLK_T_IN`/`OUT`/`FLUSH` are answered,
-anything else (discard, write-zeroes, get-id) gets `VIRTIO_BLK_S_UNSUPP`,
-genuine parity with what cloud-hypervisor's own `chDiskConfig{Path,
-Readonly}` exposes today rather than a reduced target. No multi-queue is
-offered either, for the same reason.
+`vmImageCache`/`cloneFile` already produce today, unchanged from when they
+fed cloud-hypervisor's boot images — via a small `BlockBackend` interface
+(`io.ReaderAt` + `io.WriterAt` + `Sync`) `*os.File` satisfies directly. A
+request is three or more descriptors — a read-only header (request type,
+sector), zero or more data segments, a writable 1-byte status — handled
+entirely from `Blk.HandleNotify`; `VIRTIO_BLK_T_IN`/`OUT`/`FLUSH` are
+answered, anything else (discard, write-zeroes, get-id) gets
+`VIRTIO_BLK_S_UNSUPP` — genuine parity with what cloud-hypervisor's own
+`chDiskConfig{Path, Readonly}` used to expose, not a reduced target. No
+multi-queue is offered either, for the same reason.
 
 ## Control-socket protocol
 
@@ -194,15 +186,15 @@ Three request types today:
   `vcpus`/`memory_mb`/`kernel_path`/`initrd_path`/`cmdline`/`tap_name`/
   `mac`/`disk_path`/`disk_readonly`.
 - **`status`** — `{phase, pid, error}`. `pid` is the `cmd/hypervisor`
-  process's own pid, serving the same role a cloud-hypervisor pidfile does
-  for `infra-agent`'s liveness checks today. Works on a freshly connected
+  process's own pid, the same role a cloud-hypervisor pidfile used to play
+  for `infra-agent`'s liveness checks. Works on a freshly connected
   client, including one reconnecting after its own restart — server state
   (the running `Machine`, its phase) lives for the process's lifetime, not
   per connection.
 - **`shutdown`** — stops the vCPU loop, tears the VM down, and exits the
-  process. `infra-agent`'s existing grace-period-then-`SIGKILL` pattern
-  (`chvShutdownGrace`) needs no change to work against this process
-  instead of a cloud-hypervisor one.
+  process. `infra-agent`'s grace-period-then-`SIGKILL` pattern
+  (`vmmShutdownGrace` in `internal/manager/microvm.go`) needed no change
+  to move from cloud-hypervisor to this process.
 
 ## Running it manually
 
@@ -226,9 +218,9 @@ sense (see `cmd/hypervisor/validate.go`).
 Add `"tap_name":"<an existing bridge-attached tap>"` and/or
 `"disk_path":"<a raw disk file>"` to the `create` payload to attach a
 network device or a disk — both need to already exist (this process never
-creates a tap or fetches/clones a disk image itself, the same division of
-labor `internal/manager`'s `ExecMicroVMBackend` already has with
-cloud-hypervisor).
+creates a tap or fetches/clones a disk image itself; `internal/manager`'s
+`ExecMicroVMBackend` does that, the same division of labor it had with
+cloud-hypervisor before).
 
 ## Testing
 
@@ -269,10 +261,10 @@ after `Close` — no `goleak` dependency in this repo, so this is
 `TestHypervisorBootNetworking` is the fullest proof so far: it creates a
 real bridge and TAP device, boots a VM with `ip=`-based static networking
 (the same early, rootfs-independent configuration `internal/manager`'s
-`guestCmdline` already uses for cloud-hypervisor), and pings the guest
-from the host — a successful reply is a full round trip through both
-Net.ReadLoop (host → guest) and Net.HandleNotify (guest → host), not just
-"an interface showed up".
+`guestCmdline` uses regardless of which backend is on the other end), and
+pings the guest from the host — a successful reply is a full round trip
+through both Net.ReadLoop (host → guest) and Net.HandleNotify (guest →
+host), not just "an interface showed up".
 
 `TestHypervisorBootDisk` attaches a plain (not a real filesystem) raw
 file and asks the kernel to mount it as root — there's no init to boot

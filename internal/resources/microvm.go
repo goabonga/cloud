@@ -40,7 +40,7 @@ func NewMicroVMResource() resource.Resource {
 	return newGeneric(resourceDef[microvmModel, infra.MicroVMSpec, infra.MicroVMStatus]{
 		kind: infra.KindMicroVM,
 		schema: schema.Schema{
-			MarkdownDescription: "A micro-VM: a kernel and disk image booted under cloud-hypervisor, attached to a subnet.",
+			MarkdownDescription: "A micro-VM: a kernel and disk image booted under infra-hypervisor, attached to a subnet.",
 			Attributes: map[string]schema.Attribute{
 				"id":                 idAttribute(),
 				"name":               schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Display name."},
@@ -57,7 +57,7 @@ func NewMicroVMResource() resource.Resource {
 				"user_data":          schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Raw cloud-init user-data, overriding the generated cloud-config."},
 				"ip":                 schema.StringAttribute{Computed: true, MarkdownDescription: "Assigned IP."},
 				"tap":                schema.StringAttribute{Computed: true, MarkdownDescription: "Host TAP device name."},
-				"pid":                schema.Int64Attribute{Computed: true, MarkdownDescription: "cloud-hypervisor process id."},
+				"pid":                schema.Int64Attribute{Computed: true, MarkdownDescription: "infra-hypervisor process id."},
 				"ready":              schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the instance is ready."},
 				"phase":              phaseAttribute(),
 			},

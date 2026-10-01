@@ -406,7 +406,7 @@ output "egress_proxy_address" {
 }
 
 # --- Micro-VM demo: a 3-node kubeadm cluster -------------------------------
-# A real VM per node under cloud-hypervisor (infra_microvm), not a namespaced
+# A real VM per node under infra-hypervisor (infra_microvm), not a namespaced
 # container like infra_compute above: one control plane and two workers,
 # seeded entirely by cloud-init - no image baked for either role. Stock
 # kubeadm, not a lighter distribution: each micro-VM gets enough CPU/RAM to
@@ -588,7 +588,7 @@ output "k8s_worker_ips" {
 }
 
 output "k8s_phases" {
-  description = "Lifecycle phase of every k8s micro-VM: Ready once cloud-hypervisor has booted it."
+  description = "Lifecycle phase of every k8s micro-VM: Ready once infra-hypervisor has booted it."
   value = merge(
     { "k8s-cp" = infra_microvm.k8s_control_plane.phase },
     { for k, v in infra_microvm.k8s_worker : "k8s-${k}" => v.phase }

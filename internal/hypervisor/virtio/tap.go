@@ -12,7 +12,7 @@ import (
 
 // OpenTap re-opens an already-persistent TAP device — one
 // internal/manager's ExecBackend already created and attached to the VPC
-// bridge the same way it does for cloud-hypervisor today (`ip tuntap add
+// bridge the same way it did for cloud-hypervisor before (`ip tuntap add
 // ... mode tap`) — and returns its raw character-device fd configured for
 // plain Ethernet frame I/O: IFF_TAP (link-layer frames, not IFF_TUN's
 // IP-layer packets) and IFF_NO_PI (no 4-byte packet-info header

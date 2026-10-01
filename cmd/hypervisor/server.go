@@ -40,8 +40,8 @@ func newServer(logger *slog.Logger) *server {
 }
 
 // listenAndServe creates sockPath (removing a stale leftover file first,
-// the same accommodation startVMM's socket-wait loop makes for
-// cloud-hypervisor's own socket) and serves connections until one of them
+// the same accommodation internal/manager's startVMM makes before
+// spawning this process) and serves connections until one of them
 // sends a shutdown request, which this method does not return from — the
 // process exits from inside handleShutdown instead, since by that point
 // there is nothing left to serve.

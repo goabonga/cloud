@@ -39,9 +39,9 @@ const (
 // Net is a virtio-net device backed by an already-open TAP file descriptor
 // (OpenTap) for frame I/O. Config space is just a MAC and a permanently
 // "up" link status — minimal, but genuine parity with what microvm's
-// current cloud-hypervisor backend configures via its own net.tap-by-name
-// attachment (see internal/manager/vmm.go's chNetConfig): a single
-// network interface, no offload features, no multiqueue.
+// cloud-hypervisor backend used to configure via its own net.tap-by-name
+// attachment: a single network interface, no offload features, no
+// multiqueue.
 type Net struct {
 	transport   *Transport
 	tap         io.ReadWriter
