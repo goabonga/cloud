@@ -11,7 +11,6 @@
 # Routing rules (first-match wins):
 #
 #   .github/workflows/*.yml   -> ci:
-#   packaging/docker/*        -> fix(deps):  a base image is part of the image
 #   go.mod / go.sum           -> fix(deps):  if a binary links something new
 #                                chore(deps): otherwise
 #   www/package*.json         -> fix(deps):  if the bump reaches the bundle
@@ -20,9 +19,8 @@
 #
 # fix(deps) is what makes multicz release: it patch-bumps the components that
 # own the touched files (go.mod / go.sum -> every Go binary, www/** ->
-# infra-spa, packaging/docker/* -> the images built from it), while
-# chore(deps) releases nothing. The test is therefore "does a shipped artifact
-# change", not "is this a dev dependency":
+# infra-spa), while chore(deps) releases nothing. The test is therefore "does
+# a shipped artifact change", not "is this a dev dependency":
 #
 #   - Go has no dev dependencies, so compare what ./cmd/... actually links
 #     (`go list -deps`, test-only packages excluded) at HEAD~1 and HEAD. A
@@ -86,9 +84,6 @@ npm_bump_ships() {
 case "$changed" in
     *.github/workflows/*)
         prefix="ci"
-        ;;
-    *packaging/docker/*)
-        prefix="fix(deps)"
         ;;
     *go.mod* | *go.sum*)
         if go_bump_ships; then prefix="fix(deps)"; else prefix="chore(deps)"; fi

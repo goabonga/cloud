@@ -19,27 +19,22 @@ initial_version = "0.0.0"
 # committed module metadata stays consistent.
 post_bump_policy = "allow"
 state_file = ".multicz/state.json"
-# packaging/docker/Dockerfile is claimed by infra-api, infra-idp,
-# infra-exporter and infra-controller-manager: it is the one Dockerfile all
-# four build from. "all" is the intended reading of that overlap - a base-image
-# bump changes every image built from it, so every one of them ships a release.
-# The default would reject the config outright; "first-match" would release
-# whichever component happens to be declared first and silently leave the other
-# three on a stale base.
-#
-# go.mod and go.sum are claimed by every Go component on the same reading:
-# a dependency or toolchain bump changes the binaries linked against it, so a
-# fix touching only them has to release each one. Whether a given bump ships
-# at all is still decided by its commit type: chore(deps) releases nothing,
-# and scripts/rewrite-dependabot-commit.sh types a Dependabot bump fix(deps)
-# only when it changes what the binaries link.
+# go.mod and go.sum are claimed by every Go component: a dependency or
+# toolchain bump changes the binaries linked against it, so a fix touching
+# only them has to release each one. "all" is the intended reading of that
+# overlap. The default would reject the config outright; "first-match" would
+# release whichever component happens to be declared first and silently leave
+# the rest on a stale dependency. Whether a given bump ships at all is still
+# decided by its commit type: chore(deps) releases nothing, and
+# scripts/rewrite-dependabot-commit.sh types a Dependabot bump fix(deps) only
+# when it changes what the binaries link.
 #
 # CAUTION: this fans out the BUMP PLAN only. `multicz changed` does not honour
 # it - it attributes a shared file to a single component, and has been observed
 # to name components with no changed file at all. So never gate a per-component
 # build on `multicz changed` output while an overlap exists; CI builds every
-# container and every package on any change for exactly this reason (see the
-# `container` job in .github/workflows/ci.yml).
+# package on any change for exactly this reason (see the `deb` job in
+# .github/workflows/ci.yml).
 overlap_policy = "all"
 
 # Custom commit types layered on the conventional defaults. `deprecate:`
@@ -77,7 +72,7 @@ types = ["perf"]
 # ── Control plane ─────────────────────────────────────────────────────────
 
 [components.infra-api]
-paths = ["cmd/api/**", "internal/handler/**", "internal/httpsrv/**", "internal/httpsec/**", "web/**", "packaging/docker/Dockerfile", "go.mod", "go.sum", "deploy/systemd/infra-api.service"]
+paths = ["cmd/api/**", "internal/handler/**", "internal/httpsrv/**", "internal/httpsec/**", "web/**", "go.mod", "go.sum", "deploy/systemd/infra-api.service"]
 bump_files = [
     { file = "cmd/api/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -89,7 +84,7 @@ mirrors = [
 post_bump = ["go mod tidy"]
 
 [components.infra-controller-manager]
-paths = ["cmd/controller-manager/**", "internal/controllers/**", "internal/scheduler/**", "packaging/docker/Dockerfile", "go.mod", "go.sum", "deploy/systemd/infra-controller-manager.service"]
+paths = ["cmd/controller-manager/**", "internal/controllers/**", "internal/scheduler/**", "go.mod", "go.sum", "deploy/systemd/infra-controller-manager.service"]
 bump_files = [
     { file = "cmd/controller-manager/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -137,7 +132,7 @@ post_bump = ["go mod tidy"]
 [components.infra-idp]
 # internal/auth is shared core (consumed by the API too), so it is intentionally
 # not owned here; it is added back when the IDP itself is built.
-paths = ["cmd/idp/**", "internal/idp/**", "packaging/docker/Dockerfile", "go.mod", "go.sum", "deploy/systemd/infra-idp.service"]
+paths = ["cmd/idp/**", "internal/idp/**", "go.mod", "go.sum", "deploy/systemd/infra-idp.service"]
 bump_files = [
     { file = "cmd/idp/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -150,7 +145,7 @@ post_bump = ["go mod tidy"]
 # ── Observability ─────────────────────────────────────────────────────────
 
 [components.infra-exporter]
-paths = ["cmd/exporter/**", "internal/metrics/**", "packaging/docker/Dockerfile", "go.mod", "go.sum", "deploy/systemd/infra-exporter.service"]
+paths = ["cmd/exporter/**", "internal/metrics/**", "go.mod", "go.sum", "deploy/systemd/infra-exporter.service"]
 bump_files = [
     { file = "cmd/exporter/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
@@ -184,7 +179,7 @@ changelog = "www/CHANGELOG.md"
 # The web dashboard server embeds the SPA, so it depends on infra-spa: a SPA
 # change bumps infra-spa and cascades a bump here, rebuilding the embedded binary.
 [components.infra-www]
-paths = ["cmd/www/**", "internal/web/**", "internal/httpsec/**", "packaging/docker/www.Dockerfile", "deploy/systemd/infra-www.service", "go.mod", "go.sum"]
+paths = ["cmd/www/**", "internal/web/**", "internal/httpsec/**", "deploy/systemd/infra-www.service", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/www/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]

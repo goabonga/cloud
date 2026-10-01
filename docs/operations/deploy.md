@@ -40,8 +40,9 @@ and iptables.
 
 ## Observability
 
-`infra-exporter` exposes Prometheus metrics; a docker-compose stack with
-Prometheus and Grafana dashboards is provided for local monitoring.
+`infra-exporter` exposes Prometheus metrics. `deploy/ansible/roles/monitoring`
+installs a native Prometheus + Grafana stack (no Docker) alongside the
+control plane - see the multi-host section below.
 
 ## Multi-host (libvirt + Ansible)
 

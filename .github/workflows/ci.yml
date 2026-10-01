@@ -295,11 +295,11 @@ jobs:
     name: www
     needs: detect
     # Gated on www_changed alone: `go build ./...` in vet-build embeds only
-    # cmd/www/dist/.gitkeep (see packaging/docker/www.Dockerfile), never the
-    # real bundle, and `container` rebuilds the SPA from the current www/
-    # tree on every run regardless of this job - so this eslint/tsc/vitest
-    # gate has nothing to re-validate when www/ itself hasn't changed.
-    # `release` and `docs`, which need this job, already tolerate a skip.
+    # cmd/www/dist/.gitkeep, never the real bundle, and `deb` rebuilds the SPA
+    # from the current www/ tree on every run regardless of this job - so this
+    # eslint/tsc/vitest gate has nothing to re-validate when www/ itself
+    # hasn't changed. `release` and `docs`, which need this job, already
+    # tolerate a skip.
     if: needs.detect.outputs.www_changed == 'true'
     runs-on: ubuntu-24.04
     defaults:
@@ -548,222 +548,6 @@ jobs:
             `go test -tags=integration` against a postgres service, with
             `/dev/kvm` opened up for the hypervisor tests. The kernel-level
             cases (bridge, firewall) self-skip without root.
-
-  # ---------------------------------------------------------------------
-  # Container chain. Only the network daemons are containerised - see
-  # packaging/docker/Dockerfile for why infra-agent and infra-container-init
-  # are not. Each stage hands the previous one's artifact forward rather than
-  # rebuilding, so what gets scanned, signed and pushed is one identical
-  # image: container -> sbom -> grype -> (release) publish.
-  # ---------------------------------------------------------------------
-
-  hadolint:
-    name: hadolint
-    needs: detect
-    if: needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - name: Lint the shared daemon Dockerfile
-        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
-        with:
-          dockerfile: packaging/docker/Dockerfile
-          format: tty
-      - name: Lint the www Dockerfile
-        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
-        with:
-          dockerfile: packaging/docker/www.Dockerfile
-          format: tty
-      - name: Summary
-        if: always()
-        uses: ./.github/actions/summary
-        with:
-          title: hadolint
-          body: "`hadolint` on both Dockerfiles under `packaging/docker/`."
-
-  container:
-    name: container (${{ matrix.component }})
-    # Behind the quality gates: an image is worth building only once the code
-    # in it compiles, passes tests and clears the scanners. Tolerates skips so
-    # a docs-only push does not strand the matrix.
-    needs: [detect, hadolint, lint, vet-build, test, gosec, govulncheck, osv-scanner]
-    if: >-
-      !cancelled() && !failure()
-      && needs.detect.outputs.has_package_changes == 'true'
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - component: infra-api
-            cmd_dir: api
-            dockerfile: packaging/docker/Dockerfile
-          - component: infra-idp
-            cmd_dir: idp
-            dockerfile: packaging/docker/Dockerfile
-          - component: infra-exporter
-            cmd_dir: exporter
-            dockerfile: packaging/docker/Dockerfile
-          - component: infra-controller-manager
-            cmd_dir: controller-manager
-            dockerfile: packaging/docker/Dockerfile
-          - component: infra-www
-            cmd_dir: www
-            dockerfile: packaging/docker/www.Dockerfile
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      # The image carries its version as an OCI label, so it has to be the
-      # version the release will publish, not the last one it shipped.
-      - uses: ./.github/actions/bump-preview
-      # Every leg builds, on every run where anything changed - there is no
-      # per-component skip here.
-      #
-      # The obvious optimisation is to build only the components listed in
-      # `detect.packages`, and it is wrong: `multicz changed` cannot attribute a
-      # file claimed by several components. packaging/docker/Dockerfile is
-      # claimed by four, and `changed` hands it to exactly one of them - so a
-      # base-image bump would rebuild one image, cascade a release to all four
-      # (overlap_policy = "all" does fan out, but only in the bump plan), and
-      # publish three of them pointing at a stale image. It over-reports too,
-      # naming components with no changed file at all.
-      #
-      # Building all five is what keeps the release honest. The gha layer cache
-      # makes an unchanged component nearly free, which is a smaller price than
-      # reasoning about which images a shared file invalidates.
-      - id: version
-        run: |
-          set -euo pipefail
-          echo "value=$(multicz get '${{ matrix.component }}')" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Build ${{ matrix.component }}:ci
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          # load, not push: the image stays local, gets scanned, and is only
-          # pushed from the release path once grype has cleared it.
-          load: true
-          tags: ${{ matrix.component }}:ci
-          build-args: |
-            CMD_DIR=${{ matrix.cmd_dir }}
-            COMPONENT=${{ matrix.component }}
-            VERSION=${{ steps.version.outputs.value }}
-          cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }},ignore-error=true
-      - name: Save image tarball
-        run: docker save "${{ matrix.component }}:ci" -o "/tmp/${{ matrix.component }}.tar"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.component }}-image
-          path: /tmp/${{ matrix.component }}.tar
-          # Consumed within the same run by sbom / grype / publish, and
-          # deleted after publish. One day is slack, not storage.
-          retention-days: 1
-      - name: Summary
-        if: always()
-        uses: ./.github/actions/summary
-        with:
-          title: container (${{ matrix.component }})
-          body: |
-            Image `${{ matrix.component }}:ci` at version
-            `${{ steps.version.outputs.value }}`, saved to artifact
-            `${{ matrix.component }}-image`.
-
-  sbom:
-    name: sbom (${{ matrix.component }})
-    needs: container
-    if: needs.container.result == 'success'
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        component:
-          - infra-api
-          - infra-idp
-          - infra-exporter
-          - infra-controller-manager
-          - infra-www
-    steps:
-      - uses: actions/checkout@v7
-      # No probe: `container` builds every leg on every run, so the artifact is
-      # always present, and if its leg failed this job is skipped by
-      # `!failure()` before reaching here. A missing artifact is therefore a
-      # real error, and download-artifact should say so rather than be
-      # tiptoed around.
-      - uses: actions/download-artifact@v8
-        with:
-          name: ${{ matrix.component }}-image
-          path: /tmp
-      # syft directly, not anchore/sbom-action: that action curls its
-      # installer from the tool's default branch, so a SHA pin on the action
-      # does not pin what actually runs.
-      - uses: ./.github/actions/install-tool
-        with:
-          repo: anchore/syft
-          version: "1.50.0"
-          binary: syft
-          sha256: bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788
-      # Read the docker-archive directly, so the SBOM describes the layers as
-      # built rather than a re-resolved dependency list.
-      - name: Generate the SPDX SBOM
-        run: |
-          syft "docker-archive:/tmp/${{ matrix.component }}.tar" \
-            -o "spdx-json=/tmp/${{ matrix.component }}.sbom.spdx.json"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.component }}-sbom
-          path: /tmp/${{ matrix.component }}.sbom.spdx.json
-          retention-days: 1
-      - name: Summary
-        if: always()
-        uses: ./.github/actions/summary
-        with:
-          title: sbom (${{ matrix.component }})
-          body: |
-            SPDX SBOM via syft, uploaded as `${{ matrix.component }}-sbom`.
-
-  grype:
-    name: grype (${{ matrix.component }})
-    needs: sbom
-    if: needs.sbom.result == 'success'
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        component:
-          - infra-api
-          - infra-idp
-          - infra-exporter
-          - infra-controller-manager
-          - infra-www
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: ${{ matrix.component }}-sbom
-          path: /tmp
-      - uses: ./.github/actions/install-tool
-        with:
-          repo: anchore/grype
-          version: "0.116.1"
-          binary: grype
-          sha256: 0122df7b655981abe547ad3d2190d65551dac6a2bfc80b4dc2a989b5d0587458
-      # Scan the SBOM, not the image: same answer, and it proves the SBOM we
-      # are about to attest is the thing that was actually vetted.
-      - name: Scan the SBOM
-        run: |
-          grype "sbom:/tmp/${{ matrix.component }}.sbom.spdx.json" \
-            --fail-on high
-      - name: Summary
-        if: always()
-        uses: ./.github/actions/summary
-        with:
-          title: grype (${{ matrix.component }})
-          body: |
-            grype at `--fail-on high` against the `${{ matrix.component }}`
-            SBOM.
 
   # ---------------------------------------------------------------------
   # Debian packaging chain. Every component except infra-spa ships as a .deb -
@@ -1181,8 +965,6 @@ jobs:
       - govulncheck
       - osv-scanner
       - integration
-      - hadolint
-      - grype
       - deb-validate
       - chart-package
       - e2e
@@ -1316,10 +1098,10 @@ jobs:
             `${{ steps.gpg.outputs.available }}`. `multicz plan` and
             `multicz bump` append their own detail above.
 
-  # Build and publish the bumped components: cross-compiled binaries attached
-  # to a per-component GitHub Release. Matrix over each bumped component so one
-  # failure does not abort the others. .deb packaging and Docker images are
-  # added in later milestones (see PLAN.md).
+  # Build and publish the bumped components: cross-compiled binaries and .deb
+  # packages attached to a per-component GitHub Release, plus the Helm chart.
+  # Matrix over each bumped component so one failure does not abort the
+  # others.
   publish:
     name: publish (${{ matrix.component }})
     needs: [detect, release]
@@ -1335,8 +1117,7 @@ jobs:
         component: ${{ fromJson(needs.release.outputs.bumped_json) }}
     permissions:
       contents: write
-      packages: write # push to GHCR
-      id-token: write # cosign keyless signing via Sigstore
+      packages: write # push the Helm chart to GHCR
       actions: write # delete the consumed CI artifacts
     steps:
       - uses: actions/checkout@v7
@@ -1475,55 +1256,14 @@ jobs:
             --title "$tag" \
             --notes "$notes" \
             dist/${component}_${version}_*
-      # Only the five containerised components have an image artifact from
-      # this run, and only when they actually changed. Probe instead of
-      # branching on a hardcoded component list, which would drift the moment
-      # the container matrix gains or loses an entry.
-      - id: has_image
-        name: Check for a container image from this run
-        if: matrix.component != 'infra-chart'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if gh api --paginate \
-               "/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
-               --jq '.artifacts[].name' | grep -qx "${{ matrix.component }}-image"; then
-            echo "value=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=false" >> "$GITHUB_OUTPUT"
-            echo "${{ matrix.component }} ships no container image this run"
-          fi
-      - id: meta
-        if: steps.has_image.outputs.value == 'true'
-        run: |
-          set -euo pipefail
-          echo "version=$(multicz get '${{ matrix.component }}')" >> "$GITHUB_OUTPUT"
-          # GHCR namespaces are lowercase; the org name already is, but a
-          # rename to a mixed-case owner would otherwise fail the push here
-          # rather than anywhere legible.
-          echo "owner=$(printf '%s' '${{ github.repository_owner }}' \
-            | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/publish-image
-        if: steps.has_image.outputs.value == 'true'
-        with:
-          component: ${{ matrix.component }}
-          version: ${{ steps.meta.outputs.version }}
-          owner: ${{ steps.meta.outputs.owner }}
-          token: ${{ github.token }}
-      # The image and its SBOM are published and signed; keeping the run
-      # artifacts would leave a second, unsigned copy of the same bits around
-      # for anyone reading the run page to pick up by mistake.
+      # The .deb is published and attested by deb-validate; keeping the run
+      # artifact would leave a second, unreleased copy of it around for
+      # anyone reading the run page to pick up by mistake.
       - name: Delete the consumed CI artifacts
-        if: >-
-          steps.has_image.outputs.value == 'true'
-          || steps.has_deb.outputs.value == 'true'
+        if: steps.has_deb.outputs.value == 'true'
         uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
         with:
-          name: |
-            ${{ matrix.component }}-image
-            ${{ matrix.component }}-sbom
-            ${{ matrix.component }}-deb
+          name: ${{ matrix.component }}-deb
           failOnError: false
       - name: Summary
         if: always()
@@ -1533,9 +1273,7 @@ jobs:
           body: |
             Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`s
             and cut the GitHub Release for `${{ matrix.component }}`. Published
-            the validated amd64 `.deb`:
-            `${{ steps.has_deb.outputs.value }}`. Container image pushed and
-            cosign-signed: `${{ steps.has_image.outputs.value }}`.
+            the validated amd64 `.deb`: `${{ steps.has_deb.outputs.value }}`.
 
   # Build the Zensical site and deploy to GitHub Pages. Runs on either signal
   # that can change the published output: a direct edit under docs/ or
@@ -1563,8 +1301,6 @@ jobs:
       - govulncheck
       - osv-scanner
       - integration
-      - hadolint
-      - grype
       - deb-validate
       - chart-package
       - e2e

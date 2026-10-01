@@ -27,12 +27,6 @@ github:
         # Go toolchain and quality gates
         - golangci/golangci-lint-action # golangci-lint upstream
         - codecov/codecov-action # Codecov
-        # Container build and supply chain
-        - docker/setup-buildx-action # Docker, Inc.
-        - docker/build-push-action # Docker, Inc.
-        - docker/login-action # Docker, Inc.
-        - hadolint/hadolint-action # hadolint upstream
-        - sigstore/cosign-installer # Sigstore project
         # Kubernetes and Helm
         - azure/setup-helm # Microsoft, maintained with the Helm project
         - helm/kind-action # Helm project
@@ -43,10 +37,9 @@ github:
         - geekyeggo/delete-artifact # de-facto standard for artifact cleanup
         - getplumber/plumber # this audit
 
-    # syft, grype and osv-scanner are installed from pinned releases with a
-    # verified SHA-256 (see .github/actions/install-tool) rather than through
-    # the vendor actions, which curl their installers from a default branch.
-    # Left enabled so a reintroduction is caught.
+    # osv-scanner is installed from a pinned release with a verified SHA-256
+    # rather than through a vendor action, which would curl its installer
+    # from a default branch. Left enabled so a reintroduction is caught.
     actionsMustNotExecuteMutableRemoteCode:
       enabled: true
 
