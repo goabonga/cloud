@@ -15,18 +15,17 @@ option there.
 
 ## Status
 
-Milestone 1 (single vCPU, direct kernel boot, serial console), milestone 2
-(multi-vCPU/SMP) and milestone 3 (virtio-mmio + virtio-net) are done:
-`cmd/hypervisor` can boot a real Linux kernel under KVM with any number of
-vCPUs, a working `ttyS0` console, and a real network interface backed by a
-host TAP device. Ahead: virtio-blk, then a combined parity pass and
-hardening — see the plan this series follows for the full milestone
+Milestones 1 through 4 are done: single-vCPU direct kernel boot, serial
+console, multi-vCPU/SMP, virtio-net and virtio-blk. `cmd/hypervisor` can
+boot a real Linux kernel under KVM with any number of vCPUs, a working
+`ttyS0` console, a network interface backed by a host TAP device, and a
+disk backed by a raw file. Ahead: a combined parity pass (all of the above
+together in one VM) and hardening (fd/resource hygiene, config
+validation) — see the plan this series follows for the full milestone
 breakdown.
 
-Not implemented yet, each deliberately scoped to a later milestone:
+Not implemented yet, deliberately scoped to the final milestone:
 
-- virtio-blk — no disk. A VM boots from its kernel and initrd only; there
-  is no way to mount a root filesystem yet.
 - `KVM_IOEVENTFD` for `QueueNotify` and `KVM_IRQFD` for interrupt
   injection (every device's interrupt, UART included, is a synchronous
   `KVM_IRQ_LINE` pulse — correct but not the fastest path; both are
@@ -156,6 +155,19 @@ the same tradeoff a real NIC under memory pressure makes; TX is driven by
 `Net.HandleNotify`, called from `mmio.go`'s dispatcher on a `QueueNotify`
 write.
 
+**virtio-blk** (`internal/hypervisor/virtio/blk.go`) is backed by a single
+raw disk file — the same convention `internal/manager`'s
+`vmImageCache`/`cloneFile` already produce for cloud-hypervisor's boot
+images, via a small `BlockBackend` interface (`io.ReaderAt` +
+`io.WriterAt` + `Sync`) `*os.File` satisfies directly. A request is three
+or more descriptors — a read-only header (request type, sector), zero or
+more data segments, a writable 1-byte status — handled entirely from
+`Blk.HandleNotify`; `VIRTIO_BLK_T_IN`/`OUT`/`FLUSH` are answered,
+anything else (discard, write-zeroes, get-id) gets `VIRTIO_BLK_S_UNSUPP`,
+genuine parity with what cloud-hypervisor's own `chDiskConfig{Path,
+Readonly}` exposes today rather than a reduced target. No multi-queue is
+offered either, for the same reason.
+
 ## Control-socket protocol
 
 `cmd/hypervisor` listens on a Unix domain socket (its path given via
@@ -170,10 +182,9 @@ Three request types today:
 
 - **`create`** — boots the VM (cloud-hypervisor's separate `vm.create`
   and `vm.boot` calls are deliberately combined into one, since this
-  process only ever boots once). `vcpus`/`memory_mb`/`kernel_path`/
-  `initrd_path`/`cmdline`/`tap_name`/`mac` are all honored; `disk_path`/
-  `disk_readonly` are part of the schema already so it doesn't need a
-  breaking change later, but are ignored until virtio-blk lands.
+  process only ever boots once). Every field is honored today —
+  `vcpus`/`memory_mb`/`kernel_path`/`initrd_path`/`cmdline`/`tap_name`/
+  `mac`/`disk_path`/`disk_readonly`.
 - **`status`** — `{phase, pid, error}`. `pid` is the `cmd/hypervisor`
   process's own pid, serving the same role a cloud-hypervisor pidfile does
   for `infra-agent`'s liveness checks today. Works on a freshly connected
@@ -216,11 +227,11 @@ sudo GOA_ITEST_HYPERVISOR_KERNEL=/boot/vmlinuz-$(uname -r) \
 GitHub-hosted CI runners do have `/dev/kvm` (nested virtualization on the
 hosts behind them) once ci.yml's `integration` job opens it up with a udev
 rule - `TestKVMOpen` and `TestKVMCreateVMAndVCPU` run for real there.
-`TestHypervisorBoot`, `TestHypervisorBootNetworking` and
-`TestExecMicroVMBackendBoot` still self-skip in CI regardless: they gate
-on `GOA_ITEST_HYPERVISOR_KERNEL`, and no kernel image is provisioned there
-- the same limitation `microvm`'s own integration test already has, not
-something this effort tries to solve.
+`TestHypervisorBoot`, `TestHypervisorBootNetworking`,
+`TestHypervisorBootDisk` and `TestExecMicroVMBackendBoot` still self-skip
+in CI regardless: they gate on `GOA_ITEST_HYPERVISOR_KERNEL`, and no
+kernel image is provisioned there - the same limitation `microvm`'s own
+integration test already has, not something this effort tries to solve.
 
 `TestHypervisorBootNetworking` is the fullest proof so far: it creates a
 real bridge and TAP device, boots a VM with `ip=`-based static networking
@@ -229,3 +240,13 @@ real bridge and TAP device, boots a VM with `ip=`-based static networking
 from the host — a successful reply is a full round trip through both
 Net.ReadLoop (host → guest) and Net.HandleNotify (guest → host), not just
 "an interface showed up".
+
+`TestHypervisorBootDisk` attaches a plain (not a real filesystem) raw
+file and asks the kernel to mount it as root — there's no init to boot
+into, so the mount necessarily fails, but reaching "VFS: Unable to mount
+root fs" at all means the kernel's virtio_blk driver really probed the
+device and performed real reads against it through `Blk.HandleNotify`.
+Verifying an exact byte round-trip at the guest-userspace level needs a
+prepared bootable disk image (with a real init) this automated test
+doesn't attempt to build; that's a manual verification step, the same way
+running `cmd/hypervisor` by hand already is.
