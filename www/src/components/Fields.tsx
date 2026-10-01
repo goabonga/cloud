@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Chris <goabonga@pm.me>
 
+import { formatValue } from "../lib/path";
+
 // Status keys that are framework noise rather than resource-specific state.
 export const STATUS_SKIP = new Set(["phase", "conditions", "observedGeneration"]);
 
@@ -14,18 +16,12 @@ export function PhaseBadge({ phase }: { phase?: string }) {
   return <span className={cls}>{p || "-"}</span>;
 }
 
-function render(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
 // Fields renders an object's entries as compact key/value chips, dropping empty
 // values and any keys in skip.
 export function Fields({ data, skip }: { data: Record<string, unknown>; skip?: Set<string> }) {
   const entries = Object.entries(data).filter(([k, v]) => {
     if (skip?.has(k)) return false;
-    const s = render(v);
+    const s = formatValue(v);
     return s !== "" && s !== "{}" && s !== "[]" && s !== "null";
   });
   if (entries.length === 0) return <span className="muted">-</span>;
@@ -34,7 +30,7 @@ export function Fields({ data, skip }: { data: Record<string, unknown>; skip?: S
       {entries.map(([k, v]) => (
         <span className="field" key={k}>
           <span className="k">{k}</span>
-          <span className="v">{render(v)}</span>
+          <span className="v">{formatValue(v)}</span>
         </span>
       ))}
     </div>
