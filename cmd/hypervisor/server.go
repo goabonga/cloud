@@ -132,6 +132,8 @@ func (s *server) handleCreate(params protocol.CreateParams) (json.RawMessage, er
 		InitrdPath: params.InitrdPath,
 		CmdLine:    params.CmdLine,
 		Console:    os.Stdout,
+		TapName:    params.TapName,
+		MAC:        params.MAC,
 	})
 	if err != nil {
 		s.phase = protocol.PhaseError
