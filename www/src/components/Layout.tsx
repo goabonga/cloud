@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Chris <goabonga@pm.me>
 
-import { useEffect, useState } from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 
-import { userinfo } from "../api/idp";
+import { AuthProvider, useAuth } from "../auth-context";
 import { getToken, setToken } from "../auth";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
@@ -24,22 +23,21 @@ function navClass({ isActive }: { isActive: boolean }): string {
 }
 
 export default function Layout() {
-  const navigate = useNavigate();
   const token = getToken();
-  const [subject, setSubject] = useState("");
-
-  useEffect(() => {
-    if (!token) {
-      return;
-    }
-    userinfo()
-      .then((info) => setSubject(info.subject))
-      .catch(() => setSubject(""));
-  }, [token]);
-
   if (!token) {
     return <Navigate to="/login" replace />;
   }
+
+  return (
+    <AuthProvider>
+      <LayoutShell />
+    </AuthProvider>
+  );
+}
+
+function LayoutShell() {
+  const navigate = useNavigate();
+  const { subject, roles } = useAuth();
 
   function signOut() {
     setToken("");
@@ -66,6 +64,17 @@ export default function Layout() {
           <NavLink to="/settings" className={navClass}>
             Settings
           </NavLink>
+          {roles.includes("admin") && (
+            <>
+              <p className="px-3 pt-4 pb-1 text-xs font-semibold tracking-wide text-slate-500 uppercase">IAM</p>
+              <NavLink to="/iam" end className={navClass}>
+                Users
+              </NavLink>
+              <NavLink to="/iam/tokens" className={navClass}>
+                Access tokens
+              </NavLink>
+            </>
+          )}
         </nav>
       </aside>
       <div className="flex flex-1 flex-col overflow-hidden">

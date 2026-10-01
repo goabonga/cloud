@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Chris <goabonga@pm.me>
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as idp from "../api/idp";
 import { setToken } from "../auth";
@@ -48,5 +48,41 @@ describe("Layout", () => {
     );
 
     screen.getByText("overview");
+  });
+
+  it("shows the IAM nav links only for an admin", async () => {
+    setToken("a-token");
+    vi.mocked(idp.userinfo).mockResolvedValue({ subject: "alice", roles: ["admin"] });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route index element={<div>overview</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => screen.getByText("Users"));
+    screen.getByText("Access tokens");
+  });
+
+  it("hides the IAM nav links for a non-admin", async () => {
+    setToken("a-token");
+    vi.mocked(idp.userinfo).mockResolvedValue({ subject: "bob", roles: [] });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route index element={<div>overview</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => screen.getByText("overview"));
+    expect(screen.queryByText("Users")).toBeNull();
   });
 });
