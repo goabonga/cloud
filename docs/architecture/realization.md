@@ -55,7 +55,7 @@ run as root.
 | SSL CA           | the CA certificate, in the trust bundle of the instances that trust it |
 | Security group   | an allow-list iptables chain |
 | WAF policy       | an iptables chain attached inbound to the target |
-| Load balancer    | an IPVS virtual service on a VIP, full-NAT through the node port; on the edges, also on its public address |
+| Load balancer    | an IPVS virtual service in the VPC's load-balancer namespace, full-NAT through its node port; on the edges, also on its public address |
 | Public IP address | an address of the edges' public block, reserved in the shared store |
 | Compute          | a network namespace running an OCI image |
 
@@ -78,21 +78,40 @@ vx-<uid>  VXLAN device enslaved to br-<uid>, UDP 4789
 Nodes joining or leaving update each device's flood list on the next tick, and
 the devices of deleted VPCs are removed.
 
-Each host carries the subnet gateways and load balancer addresses on its own
-bridge. The bridge takes the same MAC on every host, derived from the VPC, and
-a `tc` filter keeps frames from that MAC off the overlay: the gateway is an
-anycast gateway, and an instance always routes through the host it runs on.
+Each host carries the subnet gateways on its own bridge. The bridge takes the
+same MAC on every host, derived from the VPC, and a `tc` filter keeps frames
+from that MAC off the overlay: the gateway is an anycast gateway, and an
+instance always routes through the host it runs on. The host answers only its
+own instances - their gateway, their resolver - so the subnets' connected
+routes sit on the bridge.
 
-What the host itself sends into the VPC must not carry that MAC, or the reply
-would stay on the receiving host. It leaves through the VPC's node port:
+## Load-balancer namespaces
+
+Every VPC has, on every host, a network namespace of its own for its load
+balancers: their virtual services live there rather than in the host, so two
+VPCs never share a virtual-service table. The namespace is held by a systemd
+unit, `infra-netns@lb-<uid>.service` (`PrivateNetwork=yes`, a sleeping
+process with no capability): the agent runs in a private mount namespace,
+where a namespace it named under `/run/netns` would vanish when it restarts,
+so the unit keeps it alive and the agent enters it through
+`/proc/<MainPID>/ns/net`. Restarting the agent leaves the load balancers
+serving; if the holder dies, systemd starts it again and the agent plugs the
+new, empty namespace in on its next pass.
 
 ```
-np-<uid> <-> nb-<uid>  veth pair, nb-<uid> enslaved to br-<uid>
-  np-<uid>  a MAC of its own; this host's address in each subnet; the subnets'
-            connected routes (the gateways sit on the bridge as noprefixroute)
-  address   counted down from the subnet's last usable host by the host's rank
-            among the registered nodes: .254, .253, ... in a /24
-  ARP       arp_ignore=1 on the bridge and the node port
+la0 <-> la-<uid>  anycast port, la-<uid> enslaved to br-<uid>
+  la0       the VIPs; a MAC derived from the VPC, the same on every host, kept
+            off the overlay by a second tc filter: an instance's ARP for a VIP
+            is answered by its own host's namespace
+np0 <-> nb-<uid>  node port, nb-<uid> enslaved to br-<uid>
+  np0       a MAC of its own; this host's address in each subnet, counted down
+            from the subnet's last usable host by the host's rank among the
+            registered nodes: .254, .253, ... in a /24
+pub0 <-> lp-<uid> public leg, on an edge only: a routed veth to the host
+  pub0      169.254.0.2, default route via the host's 169.254.0.1; the public
+            addresses on lo
+ARP         arp_ignore=1 on the bridge, la0 and np0; rp_filter off in the
+            namespace, where a request comes in on la0 and its reply leaves np0
 ```
 
 At most five hosts get an address per subnet, and the compute allocator never
@@ -100,13 +119,22 @@ hands those top addresses out.
 
 ## Load balancers
 
-A load balancer is an IPVS virtual service on a VIP held by every host's
-bridge, so an instance reaches it through its own host. IPVS forwards in NAT
+A load balancer is an IPVS virtual service in its VPC's load-balancer
+namespace, on a VIP held by the anycast port of every host's namespace, so an
+instance reaches it through its own host. An instance in the VIP's subnet
+resolves it on the bridge directly; one outside sends it to its gateway, and
+the host routes the VIP onto the bridge (`send_redirects=0` there, since it
+forwards back out the interface the request came in on). IPVS forwards in NAT
 mode, and the connections it forwards leave through the node port masqueraded
 to this host's address there (`net.ipv4.vs.conntrack=1` exposes them to
-netfilter). Every backend therefore replies to the host that took the
+netfilter). Every backend therefore replies to the namespace that took the
 connection: backends on other hosts and clients in a backend's own subnet are
 both served.
+
+An agent that realized load balancers in the host itself, before the
+namespace, left their VIP on the bridge, their public address on the loopback,
+their virtual services and the node port in the host. The first pass of a
+newer agent removes them.
 
 ## Public addresses
 
@@ -119,9 +147,11 @@ address. A conflict puts the latecomer in `Error`. `ip_address` carries no
 finalizer, so the reservations of deleted ones are released on the next pass.
 
 A load balancer naming a public `ip_address` (`publicIpId`) is also served on
-the edges on that address: it goes on the loopback, with the same IPVS virtual
-service as the VIP, full-NAT included, so traffic the upstream routes to an
-edge for it reaches the backends on any host. Each edge tracks which public
+the edges on that address: the edge routes it to its VPC's load-balancer
+namespace through the public leg, where it sits on the loopback with the same
+IPVS virtual service as the VIP, full-NAT included, so traffic the upstream
+routes to an edge for it reaches the backends on any host. The namespace's
+replies leave through its default route, back through the leg. Each edge tracks which public
 address it serves per load balancer and removes it when the load balancer
 moves to another one or is deleted.
 
