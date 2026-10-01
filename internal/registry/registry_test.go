@@ -108,6 +108,100 @@ func TestRegistryList(t *testing.T) {
 	}
 }
 
+func TestRegistryTryUpdateApplies(t *testing.T) {
+	t.Parallel()
+
+	r := newRegistry(t)
+	if err := r.Put(&resource.Resource[vpcSpec, vpcStatus]{
+		Metadata: resource.ObjectMeta{UID: "vpc-1"},
+		Spec:     vpcSpec{CIDR: "10.0.0.0/16"},
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	ok, err := r.TryUpdate("vpc-1", func(res *resource.Resource[vpcSpec, vpcStatus]) error {
+		res.Status.AssignedCIDR = "10.0.0.1/32"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("tryupdate: %v", err)
+	}
+	if !ok {
+		t.Fatal("want the update applied with no concurrent writer")
+	}
+
+	out, err := r.Get("vpc-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if out.Status.AssignedCIDR != "10.0.0.1/32" {
+		t.Fatalf("AssignedCIDR = %q, want 10.0.0.1/32", out.Status.AssignedCIDR)
+	}
+}
+
+func TestRegistryTryUpdateLosesRaceOnStaleRead(t *testing.T) {
+	t.Parallel()
+
+	r := newRegistry(t)
+	if err := r.Put(&resource.Resource[vpcSpec, vpcStatus]{
+		Metadata: resource.ObjectMeta{UID: "vpc-1"},
+		Spec:     vpcSpec{CIDR: "10.0.0.0/16"},
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	// A concurrent writer changes the stored value between TryUpdate's read
+	// and its compare-and-swap by mutating inside the callback itself.
+	first := true
+	ok, err := r.TryUpdate("vpc-1", func(res *resource.Resource[vpcSpec, vpcStatus]) error {
+		if first {
+			first = false
+			if err := r.Put(&resource.Resource[vpcSpec, vpcStatus]{
+				Metadata: resource.ObjectMeta{UID: "vpc-1"},
+				Spec:     vpcSpec{CIDR: "10.0.0.0/16"},
+				Status:   vpcStatus{AssignedCIDR: "raced-in-first"},
+			}); err != nil {
+				t.Fatalf("concurrent put: %v", err)
+			}
+		}
+		res.Status.AssignedCIDR = "lost-the-race"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("tryupdate: %v", err)
+	}
+	if ok {
+		t.Fatal("want the update to lose the race against the concurrent write")
+	}
+
+	out, err := r.Get("vpc-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if out.Status.AssignedCIDR != "raced-in-first" {
+		t.Fatalf("AssignedCIDR = %q, want the concurrent writer's value to win", out.Status.AssignedCIDR)
+	}
+}
+
+func TestRegistryTryUpdatePropagatesMutateError(t *testing.T) {
+	t.Parallel()
+
+	r := newRegistry(t)
+	if err := r.Put(&resource.Resource[vpcSpec, vpcStatus]{
+		Metadata: resource.ObjectMeta{UID: "vpc-1"},
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	wantErr := errors.New("boom")
+	_, err := r.TryUpdate("vpc-1", func(*resource.Resource[vpcSpec, vpcStatus]) error {
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+}
+
 func TestRegistryDelete(t *testing.T) {
 	t.Parallel()
 
