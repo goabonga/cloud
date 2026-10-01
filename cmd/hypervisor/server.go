@@ -120,6 +120,10 @@ func (s *server) dispatch(req protocol.Request) (json.RawMessage, error) {
 // from the already-running machine instead of trying to boot a second one,
 // matching EnsureMicroVM's documented idempotency contract one layer up.
 func (s *server) handleCreate(params protocol.CreateParams) (json.RawMessage, error) {
+	if err := validateCreateParams(params); err != nil {
+		return nil, err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
