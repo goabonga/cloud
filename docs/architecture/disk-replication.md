@@ -45,8 +45,41 @@ infra-agent (secondary)              infra-agent (primary)
   transit. mTLS off the existing `internal/ssl` root CA machinery is a
   possible later hardening, not required for this foundation.
 
+## Async replica (`infra_async_disk_replica`)
+
+The first, and simpler, of two replica kinds a disk can have attached (the
+other, `infra_sync_disk_replica`, mirrors writes in real time and is covered
+separately). Attaching nothing to a disk means no replication at all - this
+is opt-in, not a default every disk pays for.
+
+- **Scheduling** (`AsyncDiskReplicaSchedulerController`): placed on the
+  least-loaded ready node that is explicitly **not** the disk's own current
+  node, honouring `target_node_pool_id` when set. A replica whose disk has
+  no placement yet, or references a missing pool, waits unscheduled rather
+  than erroring - both resolve themselves once the disk (or pool) catches
+  up.
+- **Syncing** (`AsyncDiskReplicaReconciler`, on the replica's own node):
+  every `interval_seconds` (default 60), pulls the disk's current backing
+  file from its primary node's replication server (see Transport above)
+  into its own copy, recording `last_synced_at` and `bytes_synced`. A v1
+  full pull every interval, not an incremental block-diff - correctness
+  over efficiency for the foundation; `replication.Client.PullDisk`'s resume
+  support only covers a transfer interrupted mid-pull, not a diff against
+  the previous copy.
+- **Where the copy lives**: apart from the primary disk's own backing-file
+  directory (`<stateDir>/disk-replicas/<replica-uid>.img`, not
+  `<stateDir>/disks/<disk-uid>.img`). A replica becoming the new primary is
+  a deliberate, separate step - the failover controller - not something
+  this reconciler does by writing into the primary's path itself.
+- **`failover_policy.mode`** (`optimistic` or `confirmed`, default
+  `confirmed`): consumed by the failover controller, not by this
+  reconciler - recorded here because it travels with the replica, the thing
+  that gets promoted.
+
 ## What's not here yet
 
-The transport has no consumer yet: there is no resource kind that uses it to
-actually keep a replica in sync, and no automatic failover. Those land in
-later changes on top of this one.
+No automatic failover, and no sync replica kind yet - both land in later
+changes on top of this one. Nothing promotes a replica onto the disk it
+replicates: today, losing the primary node still loses the compute/micro-VM's
+access to its data, but the replica itself keeps a recoverable copy a human
+can act on.
