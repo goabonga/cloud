@@ -52,6 +52,7 @@ run as root.
 | DNS zone/record  | answered by the agent: a resolver per VPC, and public zones on a public address |
 | Disk             | a backing image, optionally dm-crypt (LUKS) encrypted |
 | Disk file        | the file, written into the disk through the mounts of this host's instances |
+| SSL CA           | the CA certificate, in the trust bundle of the instances that trust it |
 | Security group   | an allow-list iptables chain |
 | WAF policy       | an iptables chain attached inbound to the target |
 | Load balancer    | an IPVS virtual service on a VIP, full-NAT through the node port; on the edges, also on its public address |
@@ -169,6 +170,28 @@ and missing
 directories are created 0755. The mode defaults to `0644` and is set
 explicitly, whatever the agent's umask. The file is rewritten only when its
 content differs. Deleting a disk file leaves its content on the disk.
+
+A disk file can hold a part of an `ssl_cert` instead of literal content:
+`certificate`, `chain` (the certificate followed by its CA's, as nginx's
+`ssl_certificate` expects) or `private_key`. The agent renders it from the
+store, decrypting the key with the KMS key (`GOA_KMS_KEY`), so the key reaches
+the instance's disk without passing through Terraform; a private key defaults
+to mode `0600`. A certificate not issued yet leaves the file `Pending`, and an
+agent without the KMS key puts it in `Error`.
+
+## CA trust
+
+Every instance on a host trusts the platform's global CAs - the public root,
+`public-root`, which the API creates at its first start - and the CAs whose
+`vpcIds` name its VPC. The agent keeps their certificates in a block between
+`# BEGIN infra-agent trusted CAs` and `# END infra-agent trusted CAs` in the
+system trust bundle of the instance's rootfs: `/etc/ssl/certs/ca-certificates.crt`
+(Debian, Ubuntu, Alpine), `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`
+(Fedora, RHEL) and `/etc/ssl/ca-bundle.pem` (SUSE), whichever exist; with none,
+it creates the first. The image's own CAs stay untouched. Bundles are opened
+like disk files, beneath the rootfs and never through a symlink, and rewritten
+every pass when the CAs change: a CA created, rescoped or deleted reaches running
+instances on the next tick.
 
 ## Compute
 
