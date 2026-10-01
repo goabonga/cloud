@@ -4,97 +4,52 @@
 package manager
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/goabonga/infrastructure/internal/hypervisor/protocol"
 )
 
-// chBinary is the default cloud-hypervisor executable name, resolved through
-// PATH like iptables and cryptsetup are elsewhere in this package.
-const chBinary = "cloud-hypervisor"
+// hypervisorBinary is the default infra-hypervisor executable name,
+// resolved through PATH like iptables and cryptsetup are elsewhere in
+// this package. It ships inside the infra-agent .deb alongside infra-lb
+// (see packaging/build-debs.sh), not installed separately the way
+// cloud-hypervisor used to be.
+const hypervisorBinary = "infra-hypervisor"
 
-// chStartupTimeout bounds how long EnsureMicroVM waits for the freshly
-// started cloud-hypervisor process to open its API socket.
-const chStartupTimeout = 5 * time.Second
+// hypervisorStartupTimeout bounds how long EnsureMicroVM waits for the
+// freshly started infra-hypervisor process to open its control socket.
+const hypervisorStartupTimeout = 5 * time.Second
 
-// chCPUsConfig is the "cpus" section of a cloud-hypervisor VmConfig.
-type chCPUsConfig struct {
-	BootVCPUs int `json:"boot_vcpus"`
-	MaxVCPUs  int `json:"max_vcpus"`
-}
-
-// chMemoryConfig is the "memory" section of a cloud-hypervisor VmConfig.
-type chMemoryConfig struct {
-	SizeBytes int64 `json:"size"`
-}
-
-// chPayloadConfig is the "payload" section: kernel, optional initramfs and
-// the kernel command line.
-type chPayloadConfig struct {
-	Kernel    string `json:"kernel"`
-	Initramfs string `json:"initramfs,omitempty"`
-	Cmdline   string `json:"cmdline,omitempty"`
-}
-
-// chDiskConfig describes one block device attached to the VM.
-type chDiskConfig struct {
-	Path     string `json:"path"`
-	Readonly bool   `json:"readonly,omitempty"`
-}
-
-// chNetConfig attaches an existing, already-configured TAP device by name;
-// cloud-hypervisor opens it itself, so the agent never touches the tap fd.
-type chNetConfig struct {
-	Tap string `json:"tap"`
-}
-
-// chConsoleConfig is shared by the "serial" and "console" VmConfig sections.
-type chConsoleConfig struct {
-	Mode string `json:"mode"`
-}
-
-// chVMConfig is the subset of cloud-hypervisor's VmConfig this agent drives:
-// https://github.com/cloud-hypervisor/cloud-hypervisor's vm.create payload.
-type chVMConfig struct {
-	CPUs    chCPUsConfig    `json:"cpus"`
-	Memory  chMemoryConfig  `json:"memory"`
-	Payload chPayloadConfig `json:"payload"`
-	Disks   []chDiskConfig  `json:"disks,omitempty"`
-	Net     []chNetConfig   `json:"net,omitempty"`
-	Serial  chConsoleConfig `json:"serial"`
-	Console chConsoleConfig `json:"console"`
-}
-
-// vmmHandle is a running cloud-hypervisor process: its pid and the unix
-// socket its REST API listens on.
+// vmmHandle is a running infra-hypervisor process: its pid and the unix
+// socket its control protocol (internal/hypervisor/protocol) listens on.
 type vmmHandle struct {
 	pid  int
 	sock string
 }
 
-// startVMM launches a cloud-hypervisor process with its API socket at sock,
-// detached so it survives the agent, and waits for the socket to appear.
+// startVMM launches an infra-hypervisor process with its control socket at
+// sock, detached so it survives the agent, and waits for the socket to
+// appear.
 func startVMM(ctx context.Context, binary, sock, logPath string) (*vmmHandle, error) {
 	if binary == "" {
-		binary = chBinary
+		binary = hypervisorBinary
 	}
 	_ = os.Remove(sock)
 
-	// #nosec G204 -- binary is agent-configured (defaults to "cloud-hypervisor"
-	// resolved through PATH), not user input.
-	cmd := exec.Command(binary, "--api-socket", sock)
+	// #nosec G204 -- binary is agent-configured (defaults to
+	// "infra-hypervisor" resolved through PATH), not user input.
+	cmd := exec.Command(binary, "-control-socket", sock)
 	logf, err := os.Create(logPath) // #nosec G304 -- agent-owned log path
 	if err == nil {
-		cmd.Stdout = logf
-		cmd.Stderr = logf
+		cmd.Stdout = logf // the guest's own serial console output
+		cmd.Stderr = logf // infra-hypervisor's structured diagnostic log
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -102,14 +57,14 @@ func startVMM(ctx context.Context, binary, sock, logPath string) (*vmmHandle, er
 	}
 	go func() { _ = cmd.Wait() }()
 
-	deadline := time.Now().Add(chStartupTimeout)
+	deadline := time.Now().Add(hypervisorStartupTimeout)
 	for {
 		if _, err := os.Stat(sock); err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
 			_ = cmd.Process.Kill()
-			return nil, fmt.Errorf("manager: %s did not open %s within %s", binary, sock, chStartupTimeout)
+			return nil, fmt.Errorf("manager: %s did not open %s within %s", binary, sock, hypervisorStartupTimeout)
 		}
 		select {
 		case <-ctx.Done():
@@ -134,65 +89,66 @@ func processAlive(pid int) bool {
 	return proc.Signal(syscall.Signal(0)) == nil
 }
 
-// vmmClient drives one cloud-hypervisor instance's REST API over its unix
-// socket with the stdlib HTTP client, no third-party SDK.
+// vmmClient drives one infra-hypervisor instance's control protocol
+// (internal/hypervisor/protocol) over its unix socket: newline-delimited
+// JSON, not REST — see docs/architecture/go-hypervisor.md for why.
 type vmmClient struct {
-	http *http.Client
+	conn   net.Conn
+	enc    *protocol.Encoder
+	dec    *protocol.Decoder
+	nextID int
 }
 
-func newVMMClient(sock string) *vmmClient {
-	return &vmmClient{http: &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, "unix", sock)
-			},
-		},
-		Timeout: 10 * time.Second,
-	}}
+func newVMMClient(ctx context.Context, sock string) (*vmmClient, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sock)
+	if err != nil {
+		return nil, fmt.Errorf("manager: connect to %s: %w", sock, err)
+	}
+	return &vmmClient{conn: conn, enc: protocol.NewEncoder(conn), dec: protocol.NewDecoder(conn)}, nil
 }
 
-// put issues a PUT to the cloud-hypervisor API with an optional JSON body.
-func (c *vmmClient) put(ctx context.Context, path string, body any) error {
-	var r io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
+func (c *vmmClient) Close() error {
+	return c.conn.Close()
+}
+
+// call sends one request and returns its response, turning a
+// not-OK response into a Go error the same way the old REST client turned
+// a >=300 HTTP status into one.
+func (c *vmmClient) call(reqType string, payload any) (*protocol.Response, error) {
+	c.nextID++
+	req := protocol.Request{ID: c.nextID, Type: reqType}
+	if payload != nil {
+		data, err := json.Marshal(payload)
 		if err != nil {
-			return fmt.Errorf("manager: encode %s: %w", path, err)
+			return nil, fmt.Errorf("manager: encode %s: %w", reqType, err)
 		}
-		r = bytes.NewReader(data)
+		req.Payload = data
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://cloud-hypervisor.sock"+path, r)
-	if err != nil {
-		return err
+	if err := c.enc.Encode(req); err != nil {
+		return nil, fmt.Errorf("manager: send %s: %w", reqType, err)
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	var resp protocol.Response
+	if err := c.dec.Decode(&resp); err != nil {
+		return nil, fmt.Errorf("manager: receive %s response: %w", reqType, err)
 	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("manager: %s: %w", path, err)
+	if !resp.OK {
+		return nil, fmt.Errorf("manager: %s: %s", reqType, resp.Error)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("manager: %s: status %d: %s", path, resp.StatusCode, string(data))
-	}
-	return nil
+	return &resp, nil
 }
 
-// createVM sends vm.create, which configures but does not start the VM.
-func (c *vmmClient) createVM(ctx context.Context, cfg chVMConfig) error {
-	return c.put(ctx, "/api/v1/vm.create", cfg)
+// create boots the VM: infra-hypervisor combines what was cloud-hypervisor's
+// separate vm.create and vm.boot calls into this single request, since an
+// infra-hypervisor process only ever boots once.
+func (c *vmmClient) create(params protocol.CreateParams) error {
+	_, err := c.call(protocol.TypeCreate, params)
+	return err
 }
 
-// bootVM sends vm.boot, which starts a previously created VM.
-func (c *vmmClient) bootVM(ctx context.Context) error {
-	return c.put(ctx, "/api/v1/vm.boot", nil)
-}
-
-// shutdownVMM asks the whole cloud-hypervisor process to exit, which powers
-// the VM off first. Best effort: a process that doesn't respond is killed by
-// the caller.
-func (c *vmmClient) shutdownVMM(ctx context.Context) error {
-	return c.put(ctx, "/api/v1/vmm.shutdown", nil)
+// shutdown asks the whole infra-hypervisor process to exit, which tears
+// the VM and every fd it holds down first. Best effort: a process that
+// doesn't respond is killed by the caller.
+func (c *vmmClient) shutdown() error {
+	_, err := c.call(protocol.TypeShutdown, nil)
+	return err
 }

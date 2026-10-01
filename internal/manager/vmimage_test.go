@@ -18,7 +18,7 @@ import (
 // TestExecMicroVMBackendResolvesLocalImage exercises the image cache's local
 // (non-URL) path through EnsureMicroVM: the source file is cloned into the
 // cache and then into the instance's own disk, both readable with the
-// original content, before the (expected) failure to start cloud-hypervisor.
+// original content, before the (expected) failure to start infra-hypervisor.
 func TestExecMicroVMBackendResolvesLocalImage(t *testing.T) {
 	t.Parallel()
 
@@ -44,7 +44,7 @@ func TestExecMicroVMBackendResolvesLocalImage(t *testing.T) {
 		Image:      src,
 	}
 	if _, err := be.EnsureMicroVM(context.Background(), req); err == nil {
-		t.Fatal("expected an error: no cloud-hypervisor binary in this test environment")
+		t.Fatal("expected an error: no infra-hypervisor binary in this test environment")
 	}
 
 	instancePath := filepath.Join(dir, "microvm", "vm-1", "disk.raw")
@@ -88,7 +88,7 @@ func TestExecMicroVMBackendFetchesImageOnce(t *testing.T) {
 			Image:      srv.URL,
 		}
 		if _, err := be.EnsureMicroVM(context.Background(), req); err == nil {
-			t.Fatalf("%s: expected an error: no cloud-hypervisor binary in this test environment", uid)
+			t.Fatalf("%s: expected an error: no infra-hypervisor binary in this test environment", uid)
 		}
 	}
 
