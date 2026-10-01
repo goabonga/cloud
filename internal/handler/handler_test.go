@@ -156,6 +156,28 @@ func TestHandlerRejectsBadInput(t *testing.T) {
 	}
 }
 
+func TestHandlerStoresTheSpecWithItsDefaults(t *testing.T) {
+	t.Parallel()
+
+	reg := registry.New[resource.LBTargetSpec, resource.LBTargetStatus](state.NewFileStore(t.TempDir()), resource.KindLBTarget)
+	mux := http.NewServeMux()
+	handler.New(reg, resource.KindLBTarget).Register(mux, "/api/v1")
+
+	rec := do(t, mux, http.MethodPut, "/api/v1/lb_target/t-1", resource.LBTarget{Spec: resource.LBTargetSpec{TargetGroupID: "tg-1", ComputeID: "i-1"}})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body %s", rec.Code, rec.Body)
+	}
+	var created resource.LBTarget
+	mustDecode(t, rec, &created)
+	if created.Spec.Weight != 1 {
+		t.Fatalf("response weight = %d, want the default 1", created.Spec.Weight)
+	}
+	stored, err := reg.Get("t-1")
+	if err != nil || stored.Spec.Weight != 1 {
+		t.Fatalf("stored weight = %+v, %v, want the default 1", stored, err)
+	}
+}
+
 func TestHandlerSoftDeleteWithFinalizer(t *testing.T) {
 	t.Parallel()
 
