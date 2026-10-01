@@ -120,7 +120,7 @@ func run() error {
 		manager.NewPeeringReconciler(peerings, vpcs, manager.NewExecPeering()),
 		// GOA_DNS_PUBLIC_ADDR (set on the edges) answers the public zones.
 		dnsReconciler,
-		manager.NewDiskReconciler(disks, manager.NewExecDiskBackend(filepath.Join(*stateDir, "disks")), master),
+		manager.NewDiskReconciler(disks, manager.NewExecDiskBackend(filepath.Join(*stateDir, "disks")), master, nodeID),
 		manager.NewSecurityGroupReconciler(sgs, sgRules, manager.NewExecSecurityGroup()),
 		manager.NewACLReconciler(acls, manager.NewExecFirewall()),
 		manager.NewComputeReconciler(computes, subnets, vpcs, disks, sgs, manager.NewExecComputeBackend(*stateDir), nodeID).WithAddressStore(store),

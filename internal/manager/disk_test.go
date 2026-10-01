@@ -61,7 +61,7 @@ func TestDiskReconcileUnencrypted(t *testing.T) {
 	reg := newDiskRegistry(t)
 	be := newFakeDiskBackend()
 	seedDisk(t, reg, "disk-1", "")
-	rec := manager.NewDiskReconciler(reg, be, nil)
+	rec := manager.NewDiskReconciler(reg, be, nil, "")
 
 	if err := rec.Reconcile(context.Background(), "disk-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -85,7 +85,7 @@ func TestDiskReconcileEncrypted(t *testing.T) {
 	reg := newDiskRegistry(t)
 	be := newFakeDiskBackend()
 	seedDisk(t, reg, "disk-1", "key-1")
-	rec := manager.NewDiskReconciler(reg, be, master)
+	rec := manager.NewDiskReconciler(reg, be, master, "")
 
 	if err := rec.Reconcile(context.Background(), "disk-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -104,7 +104,7 @@ func TestDiskReconcileEncryptionWithoutMaster(t *testing.T) {
 
 	reg := newDiskRegistry(t)
 	seedDisk(t, reg, "disk-1", "key-1")
-	rec := manager.NewDiskReconciler(reg, newFakeDiskBackend(), nil)
+	rec := manager.NewDiskReconciler(reg, newFakeDiskBackend(), nil, "")
 
 	if err := rec.Reconcile(context.Background(), "disk-1"); err == nil {
 		t.Fatal("expected error when encryption is requested without a master key")
@@ -121,7 +121,7 @@ func TestDiskFinalize(t *testing.T) {
 	reg := newDiskRegistry(t)
 	be := newFakeDiskBackend()
 	seedDisk(t, reg, "disk-1", "")
-	rec := manager.NewDiskReconciler(reg, be, nil)
+	rec := manager.NewDiskReconciler(reg, be, nil, "")
 	if err := rec.Reconcile(context.Background(), "disk-1"); err != nil {
 		t.Fatalf("reconcile up: %v", err)
 	}
