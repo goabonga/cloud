@@ -54,6 +54,12 @@ for the control-plane API to verify."
 starts: reaps zombies and forwards signals to the workload."
 )
 
+# Further units a package ships next to its service, from deploy/systemd.
+# infra-agent starts infra-netns@ instances itself, one per namespace it holds.
+declare -A EXTRA_UNITS=(
+  [infra-agent]="infra-netns@.service"
+)
+
 # component -> "cmd-dir:binary:service-unit" (empty service = not a daemon)
 declare -A COMPONENTS=(
   [infra]="cli:infra:"
@@ -181,6 +187,10 @@ EOF
     install -d "$stage/usr/lib/systemd/system"
     install -m 0644 "$ROOT/deploy/systemd/$svc.service" \
       "$stage/usr/lib/systemd/system/$svc.service"
+    local extra
+    for extra in ${EXTRA_UNITS[$pkg]:-}; do
+      install -m 0644 "$ROOT/deploy/systemd/$extra" "$stage/usr/lib/systemd/system/$extra"
+    done
     # Every unit references the `infra` system user or group, so each package
     # shipping one has to be able to create it - packages install in any
     # order and none can assume a sibling went first. adduser --system is
@@ -205,6 +215,7 @@ EOF
 set -e
 if [ "\$1" = remove ]; then
   systemctl disable --now $svc.service || true
+$(for extra in ${EXTRA_UNITS[$pkg]:-}; do echo "  systemctl stop '${extra/@./@*.}' || true"; done)
 fi
 EOF
     # The `infra` user is deliberately NOT removed on purge: it owns

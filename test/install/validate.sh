@@ -115,8 +115,25 @@ systemctl daemon-reload
 
 # The agent reconciles real kernel state - namespaces, nftables, dm-crypt - so
 # starting it on a CI runner would mutate the host. Its unit is verified and
-# scored, not run.
+# scored, not run. The namespace holder it ships only creates an empty network
+# namespace, so that one is started: its hardening must leave it running, in a
+# namespace of its own the agent can enter as root.
 if [ "$PKG" = "infra-agent" ]; then
+  NETNS_PATH=/usr/lib/systemd/system/infra-netns@.service
+  [ -f "$NETNS_PATH" ] || fail "unit $NETNS_PATH not installed"
+  systemd-analyze verify "$NETNS_PATH" || fail "infra-netns@ does not parse"
+  systemctl start infra-netns@validate.service || {
+    journalctl -u infra-netns@validate.service --no-pager -n 50 || true
+    fail "infra-netns@ did not start"
+  }
+  pid=$(systemctl show --property=MainPID --value infra-netns@validate.service)
+  [ "${pid:-0}" -gt 0 ] || fail "infra-netns@ has no main process"
+  [ "$(readlink "/proc/$pid/ns/net")" != "$(readlink /proc/1/ns/net)" ] ||
+    fail "infra-netns@ shares the host's network namespace"
+  nsenter --net="/proc/$pid/ns/net" -- ip link show lo > /dev/null ||
+    fail "infra-netns@'s namespace cannot be entered"
+  systemctl stop infra-netns@validate.service
+  ok "infra-netns@ holds a namespace of its own"
   echo "validate($PKG): unit verified; not started (mutates host kernel state)"
   exit 0
 fi
