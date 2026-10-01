@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# The load balancers' data plane for one load-balancer namespace, %i
+# (lb-<vpc>): infra-lb serving the listeners infra-agent writes to
+# /run/infra-lb/%i/config.json, inside the namespace infra-netns@%i holds, and
+# reporting to /run/infra-lb/%i/status.json. The agent starts it, reloads it
+# with SIGHUP when the configuration changes, and stops it with the last
+# listener. It stops with its namespace and comes back with it.
+[Unit]
+Description=infra load balancers of namespace %i
+Documentation=https://github.com/goabonga/infrastructure
+BindsTo=infra-netns@%i.service
+After=infra-netns@%i.service
+JoinsNamespaceOf=infra-netns@%i.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/infra-lb -config /run/infra-lb/%i/config.json -status /run/infra-lb/%i/status.json
+ExecReload=/bin/kill -HUP $MAINPID
+# The holder's network namespace, not a new one: JoinsNamespaceOf= takes
+# effect for units that both set PrivateNetwork=.
+PrivateNetwork=yes
+Restart=always
+RestartSec=1
+
+# --- Hardening --------------------------------------------------------------
+# Root only to read the configuration, which holds private keys and which the
+# agent writes 0600; the only capability left is binding ports under 1024.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/run/infra-lb/%i
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

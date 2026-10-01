@@ -132,8 +132,36 @@ if [ "$PKG" = "infra-agent" ]; then
     fail "infra-netns@ shares the host's network namespace"
   nsenter --net="/proc/$pid/ns/net" -- ip link show lo > /dev/null ||
     fail "infra-netns@'s namespace cannot be entered"
-  systemctl stop infra-netns@validate.service
   ok "infra-netns@ holds a namespace of its own"
+
+  # infra-lb@ joins that namespace and serves what the agent writes; an empty
+  # configuration is enough to prove its hardening leaves it running.
+  [ -x /usr/bin/infra-lb ] || fail "/usr/bin/infra-lb is missing"
+  LB_PATH=/usr/lib/systemd/system/infra-lb@.service
+  [ -f "$LB_PATH" ] || fail "unit $LB_PATH not installed"
+  systemd-analyze verify "$LB_PATH" || fail "infra-lb@ does not parse"
+  install -d -m 0700 /run/infra-lb/validate
+  printf '{"listeners":[],"targetGroups":[]}\n' > /run/infra-lb/validate/config.json
+  chmod 0600 /run/infra-lb/validate/config.json
+  systemctl start infra-lb@validate.service || {
+    journalctl -u infra-lb@validate.service --no-pager -n 50 || true
+    fail "infra-lb@ did not start"
+  }
+  deadline=$((SECONDS + 10))
+  until [ -s /run/infra-lb/validate/status.json ]; do
+    systemctl is-active --quiet infra-lb@validate.service || {
+      journalctl -u infra-lb@validate.service --no-pager -n 50 || true
+      fail "infra-lb@ started then exited"
+    }
+    [ "$SECONDS" -lt "$deadline" ] || fail "infra-lb@ wrote no status within 10s"
+    sleep 1
+  done
+  lbpid=$(systemctl show --property=MainPID --value infra-lb@validate.service)
+  [ "$(readlink "/proc/$lbpid/ns/net")" = "$(readlink "/proc/$pid/ns/net")" ] ||
+    fail "infra-lb@ runs outside infra-netns@'s namespace"
+  systemctl stop infra-lb@validate.service infra-netns@validate.service
+  rm -rf /run/infra-lb/validate
+  ok "infra-lb@ serves inside the holder's namespace"
   echo "validate($PKG): unit verified; not started (mutates host kernel state)"
   exit 0
 fi

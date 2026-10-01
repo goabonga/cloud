@@ -55,9 +55,16 @@ starts: reaps zombies and forwards signals to the workload."
 )
 
 # Further units a package ships next to its service, from deploy/systemd.
-# infra-agent starts infra-netns@ instances itself, one per namespace it holds.
+# infra-agent starts infra-netns@ instances itself, one per namespace it holds,
+# and an infra-lb@ instance in each that has listeners.
 declare -A EXTRA_UNITS=(
-  [infra-agent]="infra-netns@.service"
+  [infra-agent]="infra-netns@.service infra-lb@.service"
+)
+
+# Further binaries a package ships, as "cmd-dir:binary". infra-agent runs
+# infra-lb, the load balancers' data plane.
+declare -A EXTRA_BINARIES=(
+  [infra-agent]="lb:infra-lb"
 )
 
 # component -> "cmd-dir:binary:service-unit" (empty service = not a daemon)
@@ -93,6 +100,13 @@ build_deb() {
   CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" \
     go build -ldflags='-s -w' -o "$stage/usr/bin/$bin" "$ROOT/cmd/$dir/"
   chmod 0755 "$stage/usr/bin/$bin"
+  local extra_bin extra_dir extra_name
+  for extra_bin in ${EXTRA_BINARIES[$pkg]:-}; do
+    IFS=: read -r extra_dir extra_name <<<"$extra_bin"
+    CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" \
+      go build -ldflags='-s -w' -o "$stage/usr/bin/$extra_name" "$ROOT/cmd/$extra_dir/"
+    chmod 0755 "$stage/usr/bin/$extra_name"
+  done
 
   # Only the daemons run a maintainer script, and only those need adduser.
   local depends=""
@@ -179,6 +193,9 @@ EOF
 # this project ships, so there is no dynamic linkage to restore.
 $pkg: statically-linked-binary [usr/bin/$bin]
 EOF
+  for extra_bin in ${EXTRA_BINARIES[$pkg]:-}; do
+    echo "$pkg: statically-linked-binary [usr/bin/${extra_bin#*:}]" >>"$stage/usr/share/lintian/overrides/$pkg"
+  done
   chmod 0644 "$stage/usr/share/lintian/overrides/$pkg"
 
   if [ -n "$svc" ]; then
