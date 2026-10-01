@@ -14,8 +14,7 @@
 #     infra_microvm resources in the Terraform demo.
 #
 # Build the artifacts first (from the repository root):
-#   make deb VERSION=<version>   # the .deb packages, into dist/
-#   make build-www              # the dashboard binary, into build/
+#   make deb VERSION=<version>   # the .deb packages (incl. infra-www), into dist/
 #   make build-provider         # the Terraform provider, into build/
 # Keep `version` in group_vars/all.yml in sync with VERSION.
 #

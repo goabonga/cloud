@@ -36,6 +36,7 @@ declare -A EXPECT=(
   [infra-agent]="infra-agent:infra-agent:"
   [infra-container-init]="infra-container-init::"
   [terraform-provider-infra]="terraform-provider-infra::"
+  [infra-www]="infra-www:infra-www:8088"
 )
 
 if [ -z "${EXPECT[$PKG]:-}" ]; then

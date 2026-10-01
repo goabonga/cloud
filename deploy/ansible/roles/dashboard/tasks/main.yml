@@ -1,31 +1,27 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Chris <goabonga@pm.me>
 ---
-- name: Check the dashboard binary was built
-  ansible.builtin.stat:
-    path: "{{ www_binary }}"
-  delegate_to: localhost
-  become: false
-  register: dashboard_www_bin_stat
+# infra-www is already installed as part of control_packages; this configures
+# it (same pattern as roles/idp).
+- name: Ensure the infra-www drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/infra-www.service.d
+    state: directory
+    mode: "0755"
 
-- name: Fail when the dashboard binary is missing
-  ansible.builtin.fail:
-    msg: "Dashboard binary {{ www_binary }} not found. Build it first with `make build-www`."
-  when: not dashboard_www_bin_stat.stat.exists
-
-- name: Install the dashboard binary
-  ansible.builtin.copy:
-    src: "{{ www_binary }}"
-    dest: /usr/local/bin/infra-www
+- name: Write the dashboard environment file
+  ansible.builtin.template:
+    src: www.env.j2
+    dest: "{{ infra_conf_dir }}/www.env"
     owner: root
     group: root
-    mode: "0755"
+    mode: "0640"
   notify: Restart infra-www
 
-- name: Install the infra-www systemd unit
+- name: Install the infra-www systemd drop-in
   ansible.builtin.template:
-    src: infra-www.service.j2
-    dest: /etc/systemd/system/infra-www.service
+    src: infra-www.override.conf.j2
+    dest: /etc/systemd/system/infra-www.service.d/override.conf
     mode: "0644"
   notify: Restart infra-www
 

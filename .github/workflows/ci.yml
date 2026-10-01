@@ -766,10 +766,10 @@ jobs:
             SBOM.
 
   # ---------------------------------------------------------------------
-  # Debian packaging chain. Every component except infra-www and infra-spa
-  # ships as a .deb - the two frontend components are served, not installed.
-  # The .deb the release publishes is the artifact this chain cleared, not a
-  # rebuild of it.
+  # Debian packaging chain. Every component except infra-spa ships as a .deb -
+  # the SPA bundle is embedded into infra-www's binary rather than installed
+  # on its own. The .deb the release publishes is the artifact this chain
+  # cleared, not a rebuild of it.
   # ---------------------------------------------------------------------
 
   deb:
@@ -791,6 +791,7 @@ jobs:
           - infra-agent
           - infra-container-init
           - terraform-provider-infra
+          - infra-www
     steps:
       - uses: actions/checkout@v7
         with:
@@ -802,7 +803,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # All eight, every run, for the reason spelled out in the `container`
+      - uses: actions/setup-node@v7
+        if: matrix.component == 'infra-www'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: www/package-lock.json
+      # All nine, every run, for the reason spelled out in the `container`
       # job: a component released by cascade needs a package too, and
       # `multicz changed` cannot tell us which those are.
       - name: Build the ${{ matrix.component }} .deb
@@ -859,6 +866,8 @@ jobs:
           - component: infra-agent
             has_unit: "true"
             security_threshold: "75"
+          - component: infra-www
+            has_unit: "true"
     steps:
       - uses: actions/checkout@v7
       # No probe, for the same reason as the sbom job: `deb` builds all eight
@@ -1423,22 +1432,17 @@ jobs:
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
               go build -ldflags='-s -w' -o "$out" "./cmd/${dir}/"
           done
-          # Debian packages for the binary components. infra-www ships as a
-          # container image instead.
-          #
           # arm64 is always built here: deb-validate installs and starts the
           # package on an amd64 runner, so an arm64 .deb cannot go through
           # those gates and is published on the strength of the shared build
           # script alone. amd64 is only rebuilt when the validated artifact is
           # missing.
-          if [ "$component" != "infra-www" ]; then
-            ARCH=arm64 ./packaging/build-debs.sh "$version" "$component"
-            if [ "$HAS_VALIDATED_DEB" = "true" ]; then
-              echo "publishing the validated amd64 .deb from deb-validate"
-              ls -l "dist/${component}_${version}_amd64.deb"
-            else
-              ARCH=amd64 ./packaging/build-debs.sh "$version" "$component"
-            fi
+          ARCH=arm64 ./packaging/build-debs.sh "$version" "$component"
+          if [ "$HAS_VALIDATED_DEB" = "true" ]; then
+            echo "publishing the validated amd64 .deb from deb-validate"
+            ls -l "dist/${component}_${version}_amd64.deb"
+          else
+            ARCH=amd64 ./packaging/build-debs.sh "$version" "$component"
           fi
           ( cd dist && sha256sum ${component}_${version}_* > "${component}_${version}_checksums.txt" )
           ls -l dist

@@ -24,9 +24,8 @@ On the libvirt host:
 From the repository root:
 
 ```bash
-make deb VERSION=0.1.0   # .deb packages          -> dist/
-make build-www           # dashboard (SPA embedded) -> build/infra-www
-make build-provider      # Terraform provider       -> build/terraform-provider-infra
+make deb VERSION=0.1.0   # .deb packages (incl. infra-www, SPA embedded) -> dist/
+make build-provider      # Terraform provider                            -> build/terraform-provider-infra
 ```
 
 Keep `version` in `group_vars/all.yml` in sync with the `VERSION` you build.
