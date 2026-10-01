@@ -72,11 +72,10 @@ upstream:
 # routes to an address as equal paths.
 edge_asn: 65010
 
-# Micro-VMs under cloud-hypervisor on the agent hosts (role: microvm). A
-# single static binary - see the microvm role - and the lab's own base_image
-# converted to raw once per agent, both consumed by the Terraform demo's
+# Micro-VMs under infra-hypervisor on the agent hosts (role: microvm),
+# shipped inside the infra-agent package itself - the lab's own base_image
+# converted to raw once per agent, consumed by the Terraform demo's
 # infra_microvm resources (see terraform/main.tf).
-cloud_hypervisor_version: "v53.0"
 microvm_images_dir: "/var/lib/infra-microvm-images"
 microvm_base_image_name: "noble-base.raw"
 
