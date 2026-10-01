@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goabonga/infrastructure/internal/accesstoken"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/identity"
 	"github.com/goabonga/infrastructure/internal/idp"
@@ -30,8 +31,10 @@ func startIDP(t *testing.T) (*httptest.Server, *identity.Service) {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	users := identity.NewService(registry.New[resource.UserSpec, resource.UserStatus](state.NewFileStore(t.TempDir()), resource.KindUser))
-	srv := idp.NewServer(idp.NewIssuer(key, "http://idp", time.Hour), nil, users, &key.PublicKey, "http://idp", "http://console.example")
+	store := state.NewFileStore(t.TempDir())
+	users := identity.NewService(registry.New[resource.UserSpec, resource.UserStatus](store, resource.KindUser))
+	tokens := accesstoken.NewService(registry.New[resource.AccessTokenSpec, resource.AccessTokenStatus](store, resource.KindAccessToken), users)
+	srv := idp.NewServer(idp.NewIssuer(key, "http://idp", time.Hour), nil, users, tokens, &key.PublicKey, "http://idp", "http://console.example")
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, users

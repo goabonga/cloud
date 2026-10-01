@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/goabonga/infrastructure/internal/accesstoken"
 	"github.com/goabonga/infrastructure/internal/auth"
 	"github.com/goabonga/infrastructure/internal/handler"
 	"github.com/goabonga/infrastructure/internal/identity"
@@ -25,6 +26,7 @@ var publicPaths = map[string]bool{
 	"/token":                            true,
 	"/login":                            true,
 	"/device_authorization":             true,
+	"/introspect":                       true,
 	"/jwks.json":                        true,
 	"/.well-known/openid-configuration": true,
 	"/healthz":                          true,
@@ -32,36 +34,41 @@ var publicPaths = map[string]bool{
 
 // Server is the identity provider HTTP surface: an OAuth2 client-credentials
 // token endpoint, a password login endpoint for human users, a device
-// authorization grant, user management, and JWKS/discovery documents.
+// authorization grant, revocable access tokens with introspection, user
+// management, and JWKS/discovery documents.
 type Server struct {
-	mux        *http.ServeMux
-	issuer     *Issuer
-	clients    map[string]string // client_id -> client_secret
-	users      *identity.Service
-	devices    *deviceStore
-	authn      auth.Authenticator
-	pub        *ecdsa.PublicKey
-	issuerURL  string
-	consoleURL string
+	mux         *http.ServeMux
+	issuer      *Issuer
+	clients     map[string]string // client_id -> client_secret
+	users       *identity.Service
+	devices     *deviceStore
+	accessToken *accesstoken.Service
+	authn       auth.Authenticator
+	pub         *ecdsa.PublicKey
+	issuerURL   string
+	consoleURL  string
 }
 
 // NewServer builds an IdP server. clients maps client_id to client_secret for
-// the client-credentials grant; users backs password login and user
-// management; pub is the public half of the issuer key; issuerURL is the
-// externally reachable base URL used in discovery and the issuer claim;
-// consoleURL is where a human approves a device authorization (idp has no
-// concept of "www" beyond this - it is just the console's own address).
-func NewServer(issuer *Issuer, clients map[string]string, users *identity.Service, pub *ecdsa.PublicKey, issuerURL, consoleURL string) *Server {
+// the client-credentials grant (and for authenticating callers of
+// /introspect); users backs password login and user management; accessToken
+// backs the revocable-token endpoints; pub is the public half of the issuer
+// key; issuerURL is the externally reachable base URL used in discovery and
+// the issuer claim; consoleURL is where a human approves a device
+// authorization (idp has no concept of "www" beyond this - it is just the
+// console's own address).
+func NewServer(issuer *Issuer, clients map[string]string, users *identity.Service, accessToken *accesstoken.Service, pub *ecdsa.PublicKey, issuerURL, consoleURL string) *Server {
 	s := &Server{
-		mux:        http.NewServeMux(),
-		issuer:     issuer,
-		clients:    clients,
-		users:      users,
-		devices:    newDeviceStore(deviceCodeTTL),
-		authn:      auth.NewJWTAuthenticator(pub, issuerURL),
-		pub:        pub,
-		issuerURL:  issuerURL,
-		consoleURL: consoleURL,
+		mux:         http.NewServeMux(),
+		issuer:      issuer,
+		clients:     clients,
+		users:       users,
+		devices:     newDeviceStore(deviceCodeTTL),
+		accessToken: accessToken,
+		authn:       auth.NewJWTAuthenticator(pub, issuerURL),
+		pub:         pub,
+		issuerURL:   issuerURL,
+		consoleURL:  consoleURL,
 	}
 	s.routes()
 	return s
@@ -72,6 +79,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /login", s.login)
 	s.mux.HandleFunc("POST /device_authorization", s.deviceAuthorization)
 	s.mux.HandleFunc("POST /device/verify", s.deviceVerify)
+	s.mux.HandleFunc("POST /introspect", s.introspect)
 	s.mux.HandleFunc("GET /userinfo", s.userinfo)
 	s.mux.HandleFunc("GET /jwks.json", s.jwks)
 	s.mux.HandleFunc("GET /.well-known/openid-configuration", s.discovery)
@@ -80,6 +88,7 @@ func (s *Server) routes() {
 		_, _ = w.Write([]byte("ok"))
 	})
 	handler.NewUserHandler(s.users).Register(s.mux, "")
+	handler.NewAccessTokenHandler(s.accessToken).Register(s.mux, "")
 }
 
 // Handler returns the routed HTTP handler. Every route requires a valid
@@ -274,6 +283,34 @@ func (s *Server) deviceVerify(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// introspect implements RFC 7662 for access tokens minted via /access_token:
+// it is itself authenticated by client-credentials Basic auth (the same
+// clients the client_credentials grant trusts), not a bearer token, since the
+// caller here is infra-api, not a human.
+func (s *Server) introspect(w http.ResponseWriter, r *http.Request) {
+	clientID, clientSecret, ok := r.BasicAuth()
+	if !ok || !s.validClient(clientID, clientSecret) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return
+	}
+	subject, roles, err := s.accessToken.Introspect(r.PostForm.Get("token"))
+	if err != nil {
+		// RFC 7662: an inactive or unknown token is still a 200 with
+		// active:false, not an error status - only bad client credentials are.
+		writeJSON(w, http.StatusOK, map[string]any{"active": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"active": true,
+		"sub":    subject,
+		"roles":  roles,
+	})
+}
+
 // userinfo returns the caller's own subject and roles, decoded from their
 // bearer token by the auth middleware.
 func (s *Server) userinfo(w http.ResponseWriter, r *http.Request) {
@@ -302,6 +339,7 @@ func (s *Server) discovery(w http.ResponseWriter, _ *http.Request) {
 		"issuer":                                s.issuerURL,
 		"token_endpoint":                        s.issuerURL + "/token",
 		"device_authorization_endpoint":         s.issuerURL + "/device_authorization",
+		"introspection_endpoint":                s.issuerURL + "/introspect",
 		"jwks_uri":                              s.issuerURL + "/jwks.json",
 		"grant_types_supported":                 []string{"client_credentials", "password", deviceGrantType},
 		"id_token_signing_alg_values_supported": []string{"ES256"},
