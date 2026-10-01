@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: validate Arch package
+description: |
+  Install a freshly built .pkg.tar.zst and put it through:
+
+    1. namcap - packaging QA, Arch's lintian equivalent. Errors (E:) fail;
+       warnings (W:) are reported. The RELRO/PIE warnings every component
+       gets are accepted, same as the .deb's statically-linked-binary
+       lintian override - CGO_ENABLED=0 Go binaries are static by
+       construction, there is nothing to harden there.
+    2. test/install/validate-archlinux.sh - package installs, file list is
+       real, license present, binary loads, unit parses, sysusers.d entry
+       present for a daemon.
+
+  Does NOT start the service or score its systemd hardening the way
+  deb-validate does: this runs inside archlinux:base-devel, whose PID 1 is
+  not systemd, so there is no live instance to start one against. The unit
+  file is byte-identical to the one deb-validate already starts and scores,
+  so that would be re-testing the unit's content under a different packaging
+  format rather than learning anything new about it.
+
+  Must run in a job using `container: archlinux:base-devel`.
+
+  On any failure the upstream `<component>-archlinux` artifact is deleted, so
+  a package proven broken cannot be picked up afterwards. The caller MUST
+  therefore grant `actions: write`.
+
+inputs:
+  component:
+    required: true
+    description: Package name, e.g. infra-api.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: ${{ inputs.component }}-archlinux
+        path: /tmp/archlinux
+
+    - name: Install namcap
+      shell: bash
+      run: pacman -Sy --noconfirm --needed namcap
+
+    - name: namcap - packaging QA
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+      run: |
+        set -euo pipefail
+        pkg="/tmp/archlinux/${COMPONENT}-"*-x86_64.pkg.tar.zst
+        namcap $pkg || true
+        if namcap $pkg | grep -q '^[^ ]* E:'; then
+          echo "namcap reported errors (E:) above" >&2
+          exit 1
+        fi
+
+    - name: Install the package
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+      run: pacman -U --noconfirm "/tmp/archlinux/${COMPONENT}-"*-x86_64.pkg.tar.zst
+
+    - name: Install validation suite
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+      run: bash test/install/validate-archlinux.sh "$COMPONENT"
+
+    # Runs on failure only. A package that failed any gate above must not
+    # remain downloadable from the run - the release path picks packages up
+    # by artifact name, and a human debugging the run is the other consumer.
+    - name: Delete the artifact for a package that failed validation
+      if: failure()
+      uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
+      with:
+        name: ${{ inputs.component }}-archlinux
+        failOnError: false
