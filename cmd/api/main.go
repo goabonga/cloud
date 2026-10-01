@@ -11,8 +11,11 @@ import (
 
 	"github.com/goabonga/infrastructure/internal/auth"
 	"github.com/goabonga/infrastructure/internal/crypto"
+	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/httpsrv"
 	"github.com/goabonga/infrastructure/internal/meta"
+	"github.com/goabonga/infrastructure/internal/registry"
+	"github.com/goabonga/infrastructure/internal/ssl"
 	"github.com/goabonga/infrastructure/internal/state"
 )
 
@@ -35,6 +38,13 @@ func main() {
 		}
 		opts = append(opts, httpsrv.WithSecretEncryption(kek))
 		log.Print("infra-api: secret encryption enabled")
+		// The platform's public root CA: created once, then kept across
+		// restarts. Every machine and instance trusts it.
+		cas := registry.New[resource.SSLCASpec, resource.SSLCAStatus](store, resource.KindSSLCA)
+		certs := registry.New[resource.SSLCertSpec, resource.SSLCertStatus](store, resource.KindSSLCert)
+		if _, err := ssl.NewService(cas, certs, kek).EnsureGlobalRoot(envOr("GOA_PUBLIC_ROOT_CN", "infra public root"), "infra"); err != nil {
+			log.Fatalf("infra-api: public root CA: %v", err)
+		}
 	} else {
 		log.Print("infra-api: GOA_KMS_KEY unset; secret routes disabled")
 	}

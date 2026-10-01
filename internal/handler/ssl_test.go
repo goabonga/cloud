@@ -88,3 +88,21 @@ type issueBody struct {
 	DNSNames   []string `json:"dnsNames,omitempty"`
 	ValidDays  int      `json:"validDays,omitempty"`
 }
+
+func TestSSLHandlerLeavesTheGlobalRootToThePlatform(t *testing.T) {
+	t.Parallel()
+
+	mux := newSSLMux(t)
+	for _, tc := range []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodPut, "/api/v1/ssl_ca/mine", resource.SSLCA{Spec: resource.SSLCASpec{CommonName: "Mine", Global: true}}},
+		{http.MethodPut, "/api/v1/ssl_ca/public-root", resource.SSLCA{Spec: resource.SSLCASpec{CommonName: "Imposter"}}},
+		{http.MethodDelete, "/api/v1/ssl_ca/public-root", nil},
+	} {
+		if rec := do(t, mux, tc.method, tc.path, tc.body); rec.Code != http.StatusForbidden {
+			t.Fatalf("%s %s: status %d, want 403", tc.method, tc.path, rec.Code)
+		}
+	}
+}
