@@ -36,11 +36,14 @@ func NewLoadBalancerResource() resource.Resource {
 		schema: schema.Schema{
 			MarkdownDescription: "A layer-4 load balancer fronting compute backends.",
 			Attributes: map[string]schema.Attribute{
-				"id":             idAttribute(),
-				"name":           schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Display name."},
-				"vpc_id":         schema.StringAttribute{Required: true, MarkdownDescription: "Parent VPC id."},
-				"address":        schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Virtual address; assigned when omitted."},
-				"port":           schema.Int64Attribute{Required: true, MarkdownDescription: "Listening port."},
+				"id":      idAttribute(),
+				"name":    schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Display name."},
+				"vpc_id":  schema.StringAttribute{Required: true, MarkdownDescription: "Parent VPC id."},
+				"address": schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Virtual address; assigned when omitted."},
+				// Not computed: leaving it out must reach the API as no port, not
+				// keep the state's.
+				"port": schema.Int64Attribute{Optional: true,
+					MarkdownDescription: "Port of the layer-4 virtual service; omitted, none: the load balancer's `infra_lb_listener`s serve it."},
 				"protocol":       schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "tcp or udp."},
 				"algorithm":      schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "round_robin, least_conn or source."},
 				"service_id":     schema.StringAttribute{Computed: true, MarkdownDescription: "Backend service identifier."},
@@ -70,7 +73,7 @@ func NewLoadBalancerResource() resource.Resource {
 				Name:          types.StringValue(r.Spec.Name),
 				VPCID:         types.StringValue(r.Spec.VPCID),
 				Address:       types.StringValue(address),
-				Port:          types.Int64Value(int64(r.Spec.Port)),
+				Port:          optionalPort(r.Spec.Port),
 				Protocol:      types.StringValue(r.Spec.Protocol),
 				Algorithm:     types.StringValue(r.Spec.Algorithm),
 				ServiceID:     types.StringValue(r.Status.ServiceID),
@@ -130,4 +133,12 @@ func NewLBBackendResource() resource.Resource {
 		},
 		id: func(m lbBackendModel) string { return m.ID.ValueString() },
 	})
+}
+
+// optionalPort is a port as an optional attribute: null for none.
+func optionalPort(p int) types.Int64 {
+	if p == 0 {
+		return types.Int64Null()
+	}
+	return types.Int64Value(int64(p))
 }

@@ -21,7 +21,7 @@ func TestNewResourceMetadataAndSchema(t *testing.T) {
 		{NewDNSZoneResource, "infra_dns_zone", []string{"domain"}},
 		{NewDNSRecordResource, "infra_dns_record", []string{"zone_id", "name", "type", "records"}},
 		{NewPeeringResource, "infra_peering", []string{"vpc1_id", "vpc2_id"}},
-		{NewLoadBalancerResource, "infra_load_balancer", []string{"vpc_id", "port"}},
+		{NewLoadBalancerResource, "infra_load_balancer", []string{"vpc_id"}},
 		{NewLBBackendResource, "infra_lb_backend", []string{"lb_id", "compute_id", "port"}},
 		{NewLBTargetGroupResource, "infra_lb_target_group", []string{"vpc_id", "port"}},
 		{NewLBTargetResource, "infra_lb_target", []string{"target_group_id", "compute_id"}},
@@ -62,5 +62,13 @@ func TestNewResourceMetadataAndSchema(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLoadBalancerWithoutPortReadsBackNull(t *testing.T) {
+	t.Parallel()
+
+	if !optionalPort(0).IsNull() || optionalPort(443).ValueInt64() != 443 {
+		t.Fatal("a load balancer without a port must read back as null, so leaving it out plans no change")
 	}
 }
