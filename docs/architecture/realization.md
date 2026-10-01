@@ -401,9 +401,11 @@ cloud-init: one HTTP listener for every micro-VM on the host (port 8912,
             `sshAuthorizedKey` - keyed by instance UID, forgotten on delete
 boot disk:  `image` (a URL or a local path) is fetched/copied once into a
             node-local cache keyed by its hash, then cloned - copy-on-write
-            (FICLONE) where the filesystem supports it, a plain copy
-            otherwise - into the instance's own disk, so instances never
-            share writable state and the cache is never mutated
+            (FICLONE) where the filesystem supports it, a hole-preserving
+            (SEEK_DATA/SEEK_HOLE) copy otherwise - into the instance's own
+            disk, so instances never share writable state, the cache is
+            never mutated, and a mostly-empty source stays mostly-empty on
+            disk either way
 firewall:   FORWARD/OUTPUT -d <ip> -j <security-group chain>, the same rule
             shape as compute
 ```
