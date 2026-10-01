@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goabonga/infrastructure/internal/accesstoken"
 	"github.com/goabonga/infrastructure/internal/auth"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/handler"
@@ -59,8 +60,9 @@ func run() error {
 	if err := bootstrapAdmin(users); err != nil {
 		return err
 	}
+	accessTokens := accesstoken.NewService(registry.New[resource.AccessTokenSpec, resource.AccessTokenStatus](store, resource.KindAccessToken), users)
 
-	server := idp.NewServer(idp.NewIssuer(key, *issuerURL, *ttl), clients, users, &key.PublicKey, *issuerURL, *consoleURL)
+	server := idp.NewServer(idp.NewIssuer(key, *issuerURL, *ttl), clients, users, accessTokens, &key.PublicKey, *issuerURL, *consoleURL)
 
 	log.Printf("%s listening on %s (issuer %s)", meta.Line("infra-idp", Version), *addr, *issuerURL)
 	pub, err := idp.MarshalPublicKeyPEM(&key.PublicKey)

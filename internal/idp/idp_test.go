@@ -18,6 +18,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/goabonga/infrastructure/internal/accesstoken"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/identity"
 	"github.com/goabonga/infrastructure/internal/idp"
@@ -25,10 +26,12 @@ import (
 	"github.com/goabonga/infrastructure/internal/state"
 )
 
-func newIdentityService(t *testing.T) *identity.Service {
+func newServices(t *testing.T) (*identity.Service, *accesstoken.Service) {
 	t.Helper()
 	store := state.NewFileStore(t.TempDir())
-	return identity.NewService(registry.New[resource.UserSpec, resource.UserStatus](store, resource.KindUser))
+	users := identity.NewService(registry.New[resource.UserSpec, resource.UserStatus](store, resource.KindUser))
+	tokens := accesstoken.NewService(registry.New[resource.AccessTokenSpec, resource.AccessTokenStatus](store, resource.KindAccessToken), users)
+	return users, tokens
 }
 
 func TestKeyPEMRoundtrip(t *testing.T) {
@@ -117,35 +120,32 @@ const testConsoleURL = "http://console.example"
 
 func newServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	key, _ := idp.GenerateKey()
-	srv := idp.NewServer(
-		idp.NewIssuer(key, "http://idp", time.Hour),
-		map[string]string{"svc": "s3cret"},
-		newIdentityService(t),
-		&key.PublicKey,
-		"http://idp",
-		testConsoleURL,
-	)
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
+	ts, _, _ := newServerWithTokens(t)
 	return ts
 }
 
 func newServerWithUsers(t *testing.T) (*httptest.Server, *identity.Service) {
 	t.Helper()
+	ts, users, _ := newServerWithTokens(t)
+	return ts, users
+}
+
+func newServerWithTokens(t *testing.T) (*httptest.Server, *identity.Service, *accesstoken.Service) {
+	t.Helper()
 	key, _ := idp.GenerateKey()
-	users := newIdentityService(t)
+	users, tokens := newServices(t)
 	srv := idp.NewServer(
 		idp.NewIssuer(key, "http://idp", time.Hour),
 		map[string]string{"svc": "s3cret"},
 		users,
+		tokens,
 		&key.PublicKey,
 		"http://idp",
 		testConsoleURL,
 	)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return ts, users
+	return ts, users, tokens
 }
 
 func TestServerLoginEndpoint(t *testing.T) {
@@ -519,5 +519,137 @@ func TestDeviceVerifyUnknownUserCode(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("verify unknown user_code status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func putAccessToken(t *testing.T, ts *httptest.Server, uid, token, name string) (int, map[string]any) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/access_token/"+uid,
+		strings.NewReader(`{"spec":{"name":"`+name+`"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("put access_token: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body := map[string]any{}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	return resp.StatusCode, body
+}
+
+func introspect(t *testing.T, ts *httptest.Server, clientID, clientSecret, token string) (int, map[string]any) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/introspect", strings.NewReader(url.Values{"token": {token}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(clientID, clientSecret)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("introspect: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body := map[string]any{}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	return resp.StatusCode, body
+}
+
+func TestAccessTokenCreateRequiresAdmin(t *testing.T) {
+	t.Parallel()
+
+	ts, users := newServerWithUsers(t)
+	if _, err := users.Put("user-1", resource.UserSpec{Username: "bob", Password: "s3cr3t"}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	bobToken := loginAs(t, ts, "bob", "s3cr3t")
+
+	status, _ := putAccessToken(t, ts, "tok-1", bobToken, "ci")
+	if status != http.StatusForbidden {
+		t.Fatalf("non-admin create status = %d, want 403", status)
+	}
+}
+
+func TestAccessTokenCreateAndIntrospect(t *testing.T) {
+	t.Parallel()
+
+	ts, users := newServerWithUsers(t)
+	if _, err := users.Put("user-1", resource.UserSpec{Username: "alice", Password: "s3cr3t", Roles: []string{"admin"}}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	aliceToken := loginAs(t, ts, "alice", "s3cr3t")
+
+	status, body := putAccessToken(t, ts, "tok-1", aliceToken, "ci")
+	if status != http.StatusOK {
+		t.Fatalf("create status = %d", status)
+	}
+	plaintext, _ := body["token"].(string)
+	if plaintext == "" {
+		t.Fatalf("create response missing token: %+v", body)
+	}
+	if statusField, ok := body["status"].(map[string]any); ok {
+		if _, leaked := statusField["tokenHash"]; leaked {
+			t.Fatalf("create response leaks tokenHash: %+v", body)
+		}
+	}
+
+	status, introBody := introspect(t, ts, "svc", "s3cret", plaintext)
+	if status != http.StatusOK {
+		t.Fatalf("introspect status = %d", status)
+	}
+	if active, _ := introBody["active"].(bool); !active {
+		t.Fatalf("introspect active = %v, want true: %+v", introBody, introBody)
+	}
+	if sub, _ := introBody["sub"].(string); sub != "user-1" {
+		t.Fatalf("introspect sub = %q, want user-1", sub)
+	}
+	roles, _ := introBody["roles"].([]any)
+	if len(roles) != 1 || roles[0] != "admin" {
+		t.Fatalf("introspect roles = %v, want [admin]", roles)
+	}
+
+	// Updating the token (e.g. renaming it) must not regenerate it: the
+	// original plaintext keeps introspecting successfully.
+	if status, _ := putAccessToken(t, ts, "tok-1", aliceToken, "ci-renamed"); status != http.StatusOK {
+		t.Fatalf("rename status = %d", status)
+	}
+	if status, introBody := introspect(t, ts, "svc", "s3cret", plaintext); status != http.StatusOK || introBody["active"] != true {
+		t.Fatalf("introspect after rename: status=%d body=%v", status, introBody)
+	}
+
+	// Revoking it makes it inactive.
+	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/access_token/tok-1", nil)
+	delReq.Header.Set("Authorization", "Bearer "+aliceToken)
+	delResp, err := http.DefaultClient.Do(delReq)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	defer func() { _ = delResp.Body.Close() }()
+	if delResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d", delResp.StatusCode)
+	}
+	if _, introBody := introspect(t, ts, "svc", "s3cret", plaintext); introBody["active"] != false {
+		t.Fatalf("introspect after delete: %+v, want inactive", introBody)
+	}
+}
+
+func TestIntrospectUnknownToken(t *testing.T) {
+	t.Parallel()
+
+	ts := newServer(t)
+	status, body := introspect(t, ts, "svc", "s3cret", "infra_does-not-exist")
+	if status != http.StatusOK {
+		t.Fatalf("introspect status = %d, want 200 even for an inactive token", status)
+	}
+	if body["active"] != false {
+		t.Fatalf("introspect = %+v, want inactive", body)
+	}
+}
+
+func TestIntrospectRequiresValidClientCredentials(t *testing.T) {
+	t.Parallel()
+
+	ts := newServer(t)
+	status, _ := introspect(t, ts, "svc", "wrong-secret", "infra_whatever")
+	if status != http.StatusUnauthorized {
+		t.Fatalf("introspect with bad client creds status = %d, want 401", status)
 	}
 }
