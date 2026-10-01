@@ -10,6 +10,23 @@
     update_cache: true
     cache_valid_time: 3600
 
+# `ip netns exec inet` bind-mounts this over /etc/resolv.conf: the inet client
+# resolves through the public DNS first, like a machine on the Internet, and
+# falls back to the LAN resolver, reached through the NAT, for other names.
+- name: Ensure the inet namespace's config directory exists
+  ansible.builtin.file:
+    path: /etc/netns/inet
+    state: directory
+    mode: "0755"
+
+- name: Point the inet client at the public DNS
+  ansible.builtin.template:
+    src: inet-resolv.conf.j2
+    dest: /etc/netns/inet/resolv.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Enable forwarding and L4 multipath hashing
   ansible.builtin.template:
     src: 60-upstream-sim.conf.j2
