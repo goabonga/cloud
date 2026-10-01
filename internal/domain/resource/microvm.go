@@ -27,9 +27,11 @@ type MicroVMSpec struct {
 	KernelPath string `json:"kernelPath"`
 	// InitrdPath is an optional absolute path to an initramfs.
 	InitrdPath string `json:"initrdPath,omitempty"`
-	// CmdLine is appended to the kernel command line. The agent prepends a
-	// static "ip=" directive derived from the allocated address so the guest
-	// configures eth0 at boot without cloud-init.
+	// CmdLine is appended to the kernel command line. The agent also appends
+	// a static "ip=" directive derived from the allocated address and a
+	// "ds=nocloud-net" directive pointing cloud-init at its seed server, so
+	// the guest configures eth0 and runs cloud-init without either being
+	// baked into the image.
 	CmdLine string `json:"cmdLine,omitempty"`
 	// Image is the boot disk's source: an http(s) URL fetched once into a
 	// node-local cache, or an absolute path on the agent's host copied into
@@ -37,6 +39,14 @@ type MicroVMSpec struct {
 	// so instances never share writable state and the cache is never
 	// mutated.
 	Image string `json:"image"`
+	// SSHAuthorizedKey, when set, is written to the guest's cloud-init
+	// cloud-config as its sole authorized key.
+	SSHAuthorizedKey string `json:"sshAuthorizedKey,omitempty"`
+	// UserData, when set, is used verbatim as the guest's cloud-init
+	// user-data (a "#cloud-config" document or a "#!" script), overriding
+	// the minimal cloud-config the agent would otherwise generate from
+	// hostname and sshAuthorizedKey.
+	UserData string `json:"userData,omitempty"`
 }
 
 // Validate reports whether the spec is well-formed.
