@@ -457,17 +457,17 @@ resource "infra_security_group" "k8s" {
 # ...), plus SSH for debugging.
 resource "infra_security_group_rule" "k8s_internal" {
   security_group_id = infra_security_group.k8s.id
-  direction          = "ingress"
-  protocol           = "all"
-  cidr               = infra_subnet.k8s.cidr
+  direction         = "ingress"
+  protocol          = "all"
+  cidr              = infra_subnet.k8s.cidr
 }
 
 resource "infra_security_group_rule" "k8s_ssh" {
   security_group_id = infra_security_group.k8s.id
-  direction          = "ingress"
-  protocol           = "tcp"
-  port               = 22
-  cidr               = "0.0.0.0/0"
+  direction         = "ingress"
+  protocol          = "tcp"
+  port              = 22
+  cidr              = "0.0.0.0/0"
 }
 
 resource "infra_microvm" "k8s_control_plane" {
