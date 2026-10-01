@@ -18,6 +18,7 @@ export const KINDS = [
   "disk",
   "disk_file",
   "compute",
+  "microvm",
   "acl_policy",
   "dns_zone",
   "dns_record",
