@@ -8,9 +8,14 @@ import { createResource, getResource } from "../api/generic";
 import { getPath, setPath } from "../lib/path";
 import type { FieldSchema, ResourceDef } from "../registry";
 import FieldInput from "./fields/FieldInput";
+import ReferenceField from "./fields/ReferenceField";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+
+// PROJECT_FIELD is not part of any kind's spec - it drives the Project
+// picker, which sets metadata.projectId instead of a spec field.
+const PROJECT_FIELD: FieldSchema = { key: "projectId", label: "Project", type: "reference", referenceKind: "project" };
 
 interface KeyValuePair {
   key: string;
@@ -59,6 +64,7 @@ export default function ResourceForm({ def, uid }: { def: ResourceDef; uid?: str
   const navigate = useNavigate();
   const isEdit = uid !== undefined;
   const [newUid, setNewUid] = useState("");
+  const [projectId, setProjectId] = useState("");
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(isEdit);
   const [error, setError] = useState("");
@@ -112,7 +118,11 @@ export default function ResourceForm({ def, uid }: { def: ResourceDef; uid?: str
     const targetUid = uid ?? newUid;
     setSubmitting(true);
     try {
-      await createResource(def.kind, targetUid, spec);
+      if (!isEdit && def.scoped !== false && projectId) {
+        await createResource(def.kind, targetUid, spec, { projectId });
+      } else {
+        await createResource(def.kind, targetUid, spec);
+      }
       navigate(`/${def.kind}`);
     } catch (e) {
       setError(String(e));
@@ -146,6 +156,16 @@ export default function ResourceForm({ def, uid }: { def: ResourceDef; uid?: str
             />
           )}
         </div>
+
+        {!isEdit && def.scoped !== false && (
+          <div className="space-y-1">
+            <Label htmlFor="field-projectId">Project</Label>
+            <ReferenceField id="field-projectId" field={PROJECT_FIELD} value={projectId} onChange={setProjectId} />
+            <p className="text-xs text-slate-500">
+              Leave blank to create it unscoped, visible only to you until shared or scoped later.
+            </p>
+          </div>
+        )}
 
         {!useAdvanced &&
           def.fields.map((field) => (

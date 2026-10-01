@@ -92,6 +92,36 @@ describe("ResourceDetail", () => {
     await waitFor(() => screen.getByText("list page"));
   });
 
+  it("shows the project and owner when the resource carries them", async () => {
+    vi.mocked(generic.getResource).mockResolvedValue({
+      metadata: { uid: "vpc-1", generation: 1, createdAt: "", projectId: "project-1", ownerUid: "alice" },
+      spec: { cidr: "10.0.0.0/16" },
+      status: {},
+    });
+
+    renderAt("/vpc/vpc-1");
+
+    await waitFor(() => screen.getByText("Project"));
+    const link = screen.getByText("project-1").closest("a");
+    expect(link?.getAttribute("href")).toBe("/project/project-1");
+    screen.getByText("Owner");
+    screen.getByText("alice");
+  });
+
+  it("shows neither project nor owner when the resource carries neither", async () => {
+    vi.mocked(generic.getResource).mockResolvedValue({
+      metadata: { uid: "vpc-1", generation: 1, createdAt: "" },
+      spec: { cidr: "10.0.0.0/16" },
+      status: {},
+    });
+
+    renderAt("/vpc/vpc-1");
+
+    await waitFor(() => screen.getByText("10.0.0.0/16"));
+    expect(screen.queryByText("Project")).toBeNull();
+    expect(screen.queryByText("Owner")).toBeNull();
+  });
+
   it("shows an error for an unknown kind instead of crashing", () => {
     renderAt("/not-a-kind/x");
 

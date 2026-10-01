@@ -127,6 +127,76 @@ describe("ResourceForm", () => {
     await waitFor(() => expect(generic.createResource).toHaveBeenCalledWith("widget", "widget-1", { custom: "value" }));
   });
 
+  it("shows a Project picker for a scoped kind and sends it on create", async () => {
+    vi.mocked(generic.listResources).mockImplementation((kind) =>
+      Promise.resolve(kind === "project" ? [{ metadata: { uid: "project-1", generation: 1, createdAt: "" }, spec: {}, status: {} }] : []),
+    );
+    vi.mocked(generic.createResource).mockResolvedValue({
+      metadata: { uid: "widget-1", generation: 1, createdAt: "" },
+      spec: {},
+      status: {},
+    });
+
+    renderForm();
+
+    fireEvent.change(screen.getByLabelText("UID"), { target: { value: "widget-1" } });
+    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "My widget" } });
+    await waitFor(() => screen.getByLabelText("Project"));
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "project-1" } });
+
+    fireEvent.click(screen.getByText("Create"));
+
+    await waitFor(() =>
+      expect(generic.createResource).toHaveBeenCalledWith(
+        "widget",
+        "widget-1",
+        { name: "My widget" },
+        { projectId: "project-1" },
+      ),
+    );
+  });
+
+  it("creates an unscoped resource with exactly 3 arguments when no project is picked", async () => {
+    vi.mocked(generic.createResource).mockResolvedValue({
+      metadata: { uid: "widget-1", generation: 1, createdAt: "" },
+      spec: {},
+      status: {},
+    });
+
+    renderForm();
+
+    fireEvent.change(screen.getByLabelText("UID"), { target: { value: "widget-1" } });
+    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "My widget" } });
+    fireEvent.click(screen.getByText("Create"));
+
+    await waitFor(() => expect(generic.createResource).toHaveBeenCalledWith("widget", "widget-1", { name: "My widget" }));
+  });
+
+  it("hides the Project picker for a kind registered with scoped: false", () => {
+    render(
+      <MemoryRouter initialEntries={["/form"]}>
+        <Routes>
+          <Route path="/widget" element={<div>list page</div>} />
+          <Route path="/form" element={<ResourceForm def={{ ...widgetDef, scoped: false }} />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByLabelText("Project")).toBeNull();
+  });
+
+  it("hides the Project picker when editing, even for a scoped kind", async () => {
+    vi.mocked(generic.getResource).mockResolvedValue({
+      metadata: { uid: "widget-1", generation: 1, createdAt: "" },
+      spec: { name: "Existing" },
+      status: {},
+    });
+
+    renderForm("widget-1");
+
+    await waitFor(() => screen.getByDisplayValue("Existing"));
+    expect(screen.queryByLabelText("Project")).toBeNull();
+  });
+
   it("shows an error instead of submitting invalid Advanced JSON", async () => {
     renderForm();
     fireEvent.change(screen.getByLabelText("UID"), { target: { value: "widget-1" } });

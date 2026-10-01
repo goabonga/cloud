@@ -119,6 +119,22 @@ export default function ResourceDetail() {
             <dd className="text-slate-900">{resource.metadata.generation}</dd>
             <dt className="font-medium text-slate-500">Created</dt>
             <dd className="text-slate-900">{new Date(resource.metadata.createdAt).toLocaleString()}</dd>
+            {resource.metadata.projectId && (
+              <>
+                <dt className="font-medium text-slate-500">Project</dt>
+                <dd className="text-slate-900">
+                  <Link to={`/project/${resource.metadata.projectId}`} className="text-indigo-600 hover:underline">
+                    {resource.metadata.projectId}
+                  </Link>
+                </dd>
+              </>
+            )}
+            {resource.metadata.ownerUid && (
+              <>
+                <dt className="font-medium text-slate-500">Owner</dt>
+                <dd className="text-slate-900">{resource.metadata.ownerUid}</dd>
+              </>
+            )}
           </dl>
 
           <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-4">
