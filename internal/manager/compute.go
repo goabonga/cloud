@@ -133,10 +133,13 @@ func NewExecComputeBackendWithRunner(stateDir, netnsDir, cgroupBase string, run 
 }
 
 // EnsureCompute creates the instance the first time and only keeps its
-// firewall rules in place afterwards.
-func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeRequest) (ComputeResult, error) {
+// firewall rules in place afterwards. An instance is taken as created once
+// its namespace exists, so a creation that fails part-way tears down what it
+// made: the next pass then creates the instance again, rather than finding
+// its namespace and taking it as running.
+func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeRequest) (res ComputeResult, err error) {
 	ns, vethHost, vethNS := computeNames(req.UID)
-	res := ComputeResult{Namespace: ns, VethHost: vethHost}
+	res = ComputeResult{Namespace: ns, VethHost: vethHost}
 	if req.Image != "" {
 		res.Rootfs = b.images.rootfsPath(req.UID)
 	}
@@ -151,6 +154,11 @@ func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeReque
 		return res, b.ensureFirewall(ctx, req)
 	}
 
+	defer func() {
+		if err != nil {
+			_ = b.DeleteCompute(ctx, teardownOf(req, res.Rootfs))
+		}
+	}()
 	if err := b.setupNetwork(ctx, req, ns, vethHost, vethNS); err != nil {
 		return res, err
 	}
@@ -951,4 +959,12 @@ func firstHostOf(cidr string) string {
 		return ""
 	}
 	return hostOf(gw)
+}
+
+// teardownOf is what DeleteCompute needs to undo a creation of req.
+func teardownOf(req ComputeRequest, rootfs string) ComputeTeardown {
+	return ComputeTeardown{
+		UID: req.UID, VPCID: req.VPCID, Bridge: req.Bridge, IP: req.IP,
+		Ports: req.Ports, SGChain: req.SGChain, Rootfs: rootfs, Disks: req.Disks,
+	}
 }
