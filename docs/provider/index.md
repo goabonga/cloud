@@ -33,7 +33,7 @@ The provider manages the full network and compute topology:
 | `infra_security_group` | Firewall group. |
 | `infra_security_group_rule` | Ingress/egress rule. |
 | `infra_ip_address` | Reserved IP address. |
-| `infra_igw` | Internet gateway. |
+| `infra_igw` | Internet gateway; `egress_proxy` filters the VPC's egress to `allowed_domains` and `allowed_addresses`. |
 | `infra_route` | Static route. |
 | `infra_kms_keyring` | KMS keyring. |
 | `infra_kms_key` | KMS key (used to encrypt disks). |
