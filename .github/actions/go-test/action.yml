@@ -4,6 +4,15 @@
 name: go test
 description: Run `go test -race` with coverage, uploaded to Codecov.
 
+inputs:
+  codecov-token:
+    required: false
+    default: ""
+    description: |
+      Codecov upload token (secrets.CODECOV_TOKEN from the calling
+      workflow) - a composite action can't read the secrets context
+      itself, so the caller must pass it through.
+
 runs:
   using: composite
   steps:
@@ -19,6 +28,6 @@ runs:
       with:
         files: coverage.out
         flags: go
-        token: ${{ secrets.CODECOV_TOKEN }}
+        token: ${{ inputs.codecov-token }}
         fail_ci_if_error: false
         disable_search: true
