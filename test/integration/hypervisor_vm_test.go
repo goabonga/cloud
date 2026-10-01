@@ -6,7 +6,8 @@
 package integration
 
 import (
-	"os"
+	"errors"
+	"io/fs"
 	"testing"
 	"unsafe"
 
@@ -21,12 +22,11 @@ import (
 // registers back. It does not boot anything — that needs the boot-protocol
 // package, added in a later milestone.
 func TestKVMCreateVMAndVCPU(t *testing.T) {
-	if _, err := os.Stat(kvm.DevicePath); err != nil {
-		t.Skipf("%s not available: %v", kvm.DevicePath, err)
-	}
-
 	dev, err := kvm.Open()
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+			t.Skipf("%s not usable: %v", kvm.DevicePath, err)
+		}
 		t.Fatalf("open: %v", err)
 	}
 	defer dev.Close()
