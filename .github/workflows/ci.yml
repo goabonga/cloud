@@ -243,14 +243,13 @@ jobs:
   www:
     name: www
     needs: detect
-    # Run on www changes (PRs) and on every main push, so the frontend gate is
-    # validated before a release can publish infra-www. The unconditional
-    # main-push arm has to yield to the release-commit bypass explicitly - it
-    # would otherwise be the one job that still runs on a chore(release) push.
-    if: >-
-      needs.detect.outputs.release_commit != 'true'
-      && (needs.detect.outputs.www_changed == 'true'
-          || github.ref == 'refs/heads/main')
+    # Gated on www_changed alone: `go build ./...` in vet-build embeds only
+    # cmd/www/dist/.gitkeep (see packaging/docker/www.Dockerfile), never the
+    # real bundle, and `container` rebuilds the SPA from the current www/
+    # tree on every run regardless of this job - so this eslint/tsc/vitest
+    # gate has nothing to re-validate when www/ itself hasn't changed.
+    # `release` and `docs`, which need this job, already tolerate a skip.
+    if: needs.detect.outputs.www_changed == 'true'
     runs-on: ubuntu-24.04
     defaults:
       run:
