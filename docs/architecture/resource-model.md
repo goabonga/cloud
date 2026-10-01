@@ -36,7 +36,8 @@ VPC, subnet, internet gateway, route, peering, security group (+ rule), IP
 address, compute, microvm, disk, disk file, DNS zone, DNS record, KMS
 keyring, KMS key, secret (+ version), SSL CA, SSL cert, WAF policy (+ rule),
 ACL policy (+ rule), load balancer (+ backend), load balancer target group
-(+ target), listener, organization, folder, project and IAM binding.
+(+ target), listener, organization, folder, project, IAM binding, function
+and function instance (see [FaaS functions](faas.md)).
 
 ## Defaults
 
