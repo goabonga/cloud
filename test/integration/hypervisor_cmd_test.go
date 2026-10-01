@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goabonga/infrastructure/internal/hypervisor/kvm"
 	"github.com/goabonga/infrastructure/internal/hypervisor/protocol"
 )
 
@@ -30,9 +29,6 @@ import (
 // (GOA_ITEST_HYPERVISOR_KERNEL), and a working `go build` toolchain, or
 // this test skips.
 func TestHypervisorBoot(t *testing.T) {
-	if _, err := os.Stat(kvm.DevicePath); err != nil {
-		t.Skipf("%s not available: %v", kvm.DevicePath, err)
-	}
 	kernel := os.Getenv("GOA_ITEST_HYPERVISOR_KERNEL")
 	if kernel == "" {
 		t.Skip("GOA_ITEST_HYPERVISOR_KERNEL not set")
@@ -83,6 +79,17 @@ func TestHypervisorBoot(t *testing.T) {
 		t.Fatalf("decode create response: %v", err)
 	}
 	if !resp.OK {
+		// /dev/kvm existing but not opening (EACCES on a host where the
+		// test's own user isn't in the kvm group, e.g. the device
+		// permissions GitHub-hosted runners ship with before ci.yml's
+		// udev fix applies) surfaces here as a create error, not a Go
+		// error this process can errors.Is against directly — the real
+		// open happens inside the spawned hypervisor process. See
+		// skipIfKVMUnusable in hypervisor_boot_test.go for the same
+		// condition checked the direct way.
+		if strings.Contains(resp.Error, "permission denied") || strings.Contains(resp.Error, "no such file or directory") {
+			t.Skipf("/dev/kvm not usable: %s", resp.Error)
+		}
 		t.Fatalf("create failed: %s", resp.Error)
 	}
 
