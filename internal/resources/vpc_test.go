@@ -17,17 +17,14 @@ import (
 func TestNewID(t *testing.T) {
 	t.Parallel()
 
-	id, err := newID("vpc")
-	if err != nil {
-		t.Fatalf("newID: %v", err)
-	}
+	id := newID("vpc")
 	if !strings.HasPrefix(id, "vpc-") {
 		t.Fatalf("id %q missing kind prefix", id)
 	}
 	if len(id) != len("vpc-")+12 { // 6 random bytes -> 12 hex chars
 		t.Fatalf("id %q has unexpected length %d", id, len(id))
 	}
-	if other, _ := newID("vpc"); id == other {
+	if other := newID("vpc"); id == other {
 		t.Fatal("newID should not repeat")
 	}
 }
