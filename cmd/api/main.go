@@ -51,10 +51,15 @@ func main() {
 	}
 }
 
-// buildAuth selects the authenticator from the environment: a JWT verifier when
-// GOA_API_JWT_PUBKEY is set, otherwise static tokens from GOA_API_TOKENS,
-// otherwise none (the API is open).
+// buildAuth combines every authenticator the environment configures: a JWT
+// verifier (GOA_API_JWT_PUBKEY), access-token introspection against infra-idp
+// (GOA_API_IDP_INTROSPECT_URL), and static tokens (GOA_API_TOKENS). More than
+// one may be set at once - e.g. so a browser's Phase-1 JWT and a Phase-3
+// access token both work - in which case they are tried in order via
+// auth.Chain. None configured leaves the API open.
 func buildAuth() auth.Authenticator {
+	var authns []auth.Authenticator
+
 	if pubPEM := os.Getenv("GOA_API_JWT_PUBKEY"); pubPEM != "" {
 		pub, err := auth.ParseECPublicKeyPEM([]byte(pubPEM))
 		if err != nil {
@@ -65,18 +70,37 @@ func buildAuth() auth.Authenticator {
 			log.Fatal("infra-api: GOA_API_JWT_ISSUER is required with GOA_API_JWT_PUBKEY")
 		}
 		log.Print("infra-api: JWT authentication enabled")
-		return auth.NewJWTAuthenticator(pub, issuer)
+		authns = append(authns, auth.NewJWTAuthenticator(pub, issuer))
 	}
+
+	if introspectURL := os.Getenv("GOA_API_IDP_INTROSPECT_URL"); introspectURL != "" {
+		clientID := os.Getenv("GOA_API_IDP_CLIENT_ID")
+		clientSecret := os.Getenv("GOA_API_IDP_CLIENT_SECRET")
+		if clientID == "" || clientSecret == "" {
+			log.Fatal("infra-api: GOA_API_IDP_CLIENT_ID and GOA_API_IDP_CLIENT_SECRET are required with GOA_API_IDP_INTROSPECT_URL")
+		}
+		log.Print("infra-api: access-token introspection enabled")
+		authns = append(authns, auth.NewIntrospectionAuthenticator(introspectURL, clientID, clientSecret))
+	}
+
 	if spec := os.Getenv("GOA_API_TOKENS"); spec != "" {
 		tokens, err := auth.ParseTokens(spec)
 		if err != nil {
 			log.Fatalf("infra-api: GOA_API_TOKENS: %v", err)
 		}
-		log.Print("infra-api: token authentication enabled")
-		return auth.NewTokenAuthenticator(tokens)
+		log.Print("infra-api: static token authentication enabled")
+		authns = append(authns, auth.NewTokenAuthenticator(tokens))
 	}
-	log.Print("infra-api: no auth configured; API is unauthenticated")
-	return nil
+
+	switch len(authns) {
+	case 0:
+		log.Print("infra-api: no auth configured; API is unauthenticated")
+		return nil
+	case 1:
+		return authns[0]
+	default:
+		return auth.Chain(authns...)
+	}
 }
 
 func envOr(key, def string) string {
