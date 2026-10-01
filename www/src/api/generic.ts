@@ -44,6 +44,10 @@ export async function listResources(kind: string): Promise<GenericResource[]> {
   return (await apiRequest<List>("GET", `/${kind}`)).items ?? [];
 }
 
+export async function getResource(kind: string, uid: string): Promise<GenericResource> {
+  return apiRequest<GenericResource>("GET", `/${kind}/${uid}`);
+}
+
 export async function createResource(
   kind: string,
   uid: string,

@@ -11,6 +11,7 @@ import Users from "./pages/iam/Users";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Profile from "./pages/Profile";
+import ResourceDetail from "./pages/ResourceDetail";
 import Resources from "./pages/Resources";
 import Settings from "./pages/Settings";
 import Vpcs from "./pages/Vpcs";
@@ -23,6 +24,7 @@ export default function App() {
         <Route index element={<Overview />} />
         <Route path="vpcs" element={<Vpcs />} />
         <Route path="resources" element={<Resources />} />
+        <Route path="resources/:kind/:uid" element={<ResourceDetail />} />
         <Route path="acls" element={<Acls />} />
         <Route path="profile" element={<Profile />} />
         <Route path="device" element={<Device />} />
