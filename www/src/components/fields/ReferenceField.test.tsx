@@ -53,4 +53,12 @@ describe("ReferenceField", () => {
 
     await waitFor(() => screen.getByText("Could not load subnet options."));
   });
+
+  it("does not fetch options when the field has no referenceKind", () => {
+    const noKindField: FieldSchema = { key: "x", label: "X", type: "reference" };
+
+    render(<ReferenceField id="f" field={noKindField} value="" onChange={vi.fn()} />);
+
+    expect(generic.listResources).not.toHaveBeenCalled();
+  });
 });

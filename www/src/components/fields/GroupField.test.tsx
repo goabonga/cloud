@@ -58,4 +58,32 @@ describe("GroupField", () => {
     fireEvent.click(screen.getByLabelText("Remove row 1"));
     expect(onChange).toHaveBeenCalledWith([{ action: "deny" }]);
   });
+
+  it("updates one row in place, leaving the others untouched", () => {
+    const onChange = vi.fn();
+    render(
+      <GroupField
+        id="f"
+        field={rulesField}
+        value={[{ action: "allow", port: 80 }, { action: "deny", port: 443 }]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByDisplayValue("443"), { target: { value: "8443" } });
+
+    expect(onChange).toHaveBeenCalledWith([
+      { action: "allow", port: 80 },
+      { action: "deny", port: 8443 },
+    ]);
+  });
+
+  it("renders no sub-fields when the schema omits them", () => {
+    const noSubFields: FieldSchema = { key: "rules", label: "Rules", type: "group" };
+    const onChange = vi.fn();
+    render(<GroupField id="f" field={noSubFields} value={[{ anything: "x" }]} onChange={onChange} />);
+
+    fireEvent.click(screen.getByText("Add rules"));
+    expect(onChange).toHaveBeenCalledWith([{ anything: "x" }, {}]);
+  });
 });
