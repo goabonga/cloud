@@ -84,6 +84,11 @@ func TestAsyncDiskReplicaToSpecAndBack(t *testing.T) {
 	if got.DiskID.ValueString() != model.DiskID.ValueString() || got.IntervalSeconds.ValueInt64() != model.IntervalSeconds.ValueInt64() {
 		t.Fatalf("toModel() did not round-trip the spec: %+v", got)
 	}
+
+	id := NewAsyncDiskReplicaResource().(*genericResource[asyncDiskReplicaModel, infra.AsyncDiskReplicaSpec, infra.AsyncDiskReplicaStatus]).def.id
+	if id(got) != "replica-1" {
+		t.Fatalf("id() = %q, want replica-1", id(got))
+	}
 }
 
 func TestAsyncDiskReplicaToModelDefaultsTheFailoverModeAndInterval(t *testing.T) {
