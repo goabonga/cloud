@@ -15,21 +15,29 @@ option there.
 
 ## Status
 
-Milestones 1 through 4 are done: single-vCPU direct kernel boot, serial
-console, multi-vCPU/SMP, virtio-net and virtio-blk. `cmd/hypervisor` can
-boot a real Linux kernel under KVM with any number of vCPUs, a working
-`ttyS0` console, a network interface backed by a host TAP device, and a
-disk backed by a raw file. Ahead: a combined parity pass (all of the above
-together in one VM) and hardening (fd/resource hygiene, config
-validation) — see the plan this series follows for the full milestone
-breakdown.
+All five milestones this effort planned are done: single-vCPU direct
+kernel boot, serial console, multi-vCPU/SMP, virtio-net, virtio-blk, and a
+combined parity pass. `cmd/hypervisor` can boot a real Linux kernel under
+KVM with any number of vCPUs, a working `ttyS0` console, a network
+interface backed by a host TAP device and a disk backed by a raw file —
+all at once in a single VM (`TestHypervisorBootFull`). Shutdown (the
+`shutdown` request and `SIGTERM`/`SIGINT` alike) cleanly closes every
+KVM/tap/disk fd and removes the control socket file; `create` requests are
+validated (vcpus/memory/kernel path) before this process ever opens
+`/dev/kvm`.
 
-Not implemented yet, deliberately scoped to the final milestone:
+Deliberately not implemented, a real-world performance refinement rather
+than a correctness requirement, and not attempted here:
 
 - `KVM_IOEVENTFD` for `QueueNotify` and `KVM_IRQFD` for interrupt
-  injection (every device's interrupt, UART included, is a synchronous
-  `KVM_IRQ_LINE` pulse — correct but not the fastest path; both are
-  real-world performance refinements, not correctness requirements).
+  injection — every device's interrupt, UART included, is a synchronous
+  `KVM_IRQ_LINE` pulse, correct but not the fastest path.
+
+Also not done, genuinely out of scope for this effort rather than a
+milestone away: wiring this in as a selectable `microvm` backend (see the
+note at the top of this page), multiqueue virtio, more than 8 MMIO
+devices (the default IOAPIC's GSI 16-23 range), and anything needing
+virtio-pci.
 
 ## Why a hand-rolled hypervisor, not cloud-hypervisor
 
@@ -203,11 +211,24 @@ sudo go run ./cmd/hypervisor -control-socket /tmp/hv.sock &
 # from another shell, speaking the protocol directly:
 echo '{"id":1,"type":"create","payload":{"vcpus":1,"memory_mb":256,"kernel_path":"/boot/vmlinuz-'"$(uname -r)"'","cmdline":"console=ttyS0 panic=-1"}}' \
   | socat - UNIX-CONNECT:/tmp/hv.sock
+# ... later, from the same or another shell:
+echo '{"id":2,"type":"shutdown"}' | socat - UNIX-CONNECT:/tmp/hv.sock
 ```
 
 Needs root (or `kvm` group membership) for `/dev/kvm`, and a real kernel —
 most distributions ship one usable directly at `/boot/vmlinuz-$(uname -r)`.
-Serial output goes to `cmd/hypervisor`'s own stdout.
+Serial output goes to `cmd/hypervisor`'s own stdout. `shutdown`, and a
+plain `Ctrl-C`/`kill` of the process alike, cleanly close every fd and
+remove `/tmp/hv.sock`; a `create` payload is rejected immediately, before
+`/dev/kvm` is even opened, if `vcpus`/`memory_mb`/`kernel_path` don't make
+sense (see `cmd/hypervisor/validate.go`).
+
+Add `"tap_name":"<an existing bridge-attached tap>"` and/or
+`"disk_path":"<a raw disk file>"` to the `create` payload to attach a
+network device or a disk — both need to already exist (this process never
+creates a tap or fetches/clones a disk image itself, the same division of
+labor `internal/manager`'s `ExecMicroVMBackend` already has with
+cloud-hypervisor).
 
 ## Testing
 
@@ -228,10 +249,22 @@ GitHub-hosted CI runners do have `/dev/kvm` (nested virtualization on the
 hosts behind them) once ci.yml's `integration` job opens it up with a udev
 rule - `TestKVMOpen` and `TestKVMCreateVMAndVCPU` run for real there.
 `TestHypervisorBoot`, `TestHypervisorBootNetworking`,
-`TestHypervisorBootDisk` and `TestExecMicroVMBackendBoot` still self-skip
-in CI regardless: they gate on `GOA_ITEST_HYPERVISOR_KERNEL`, and no
-kernel image is provisioned there - the same limitation `microvm`'s own
-integration test already has, not something this effort tries to solve.
+`TestHypervisorBootDisk`, `TestHypervisorBootFull` and
+`TestExecMicroVMBackendBoot` still self-skip in CI regardless: they gate
+on `GOA_ITEST_HYPERVISOR_KERNEL`, and no kernel image is provisioned there
+- the same limitation `microvm`'s own integration test already has, not
+something this effort tries to solve.
+
+`TestHypervisorBootFull` is the milestone 5 parity proof: 2 vcpus, a
+tap-backed net device and a disk-backed blk device, all in the same VM at
+once — every earlier milestone's test already proves its own piece in
+isolation, this one proves they don't interfere with each other running
+together, which isn't ruled out by construction (every vcpu's goroutine,
+`Net.ReadLoop`, and whichever vcpu services a blk notify are all touching
+shared `Machine` state concurrently for the first time together here). It
+also checks the goroutine count settles back to its pre-boot baseline
+after `Close` — no `goleak` dependency in this repo, so this is
+`runtime.NumGoroutine()` deltas.
 
 `TestHypervisorBootNetworking` is the fullest proof so far: it creates a
 real bridge and TAP device, boots a VM with `ip=`-based static networking
