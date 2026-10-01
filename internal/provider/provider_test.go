@@ -50,8 +50,8 @@ func TestProviderRegistersResources(t *testing.T) {
 	t.Parallel()
 
 	p := provider.New("")()
-	if got := len(p.Resources(context.Background())); got != 28 {
-		t.Fatalf("Resources() len = %d, want 28", got)
+	if got := len(p.Resources(context.Background())); got != 29 {
+		t.Fatalf("Resources() len = %d, want 29", got)
 	}
 	if ds := p.DataSources(context.Background()); ds != nil {
 		t.Fatalf("DataSources() = %v, want nil", ds)
