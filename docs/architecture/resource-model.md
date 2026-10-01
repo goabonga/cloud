@@ -53,8 +53,10 @@ groups and targets describe layer-7 balancing on top of it:
   protocol towards them (`http` by default, `https` or `tcp`), their port, and
   a health check (protocol, path, port, interval, timeout and thresholds, each
   with a default). With `https`, `backendCaId` names the CA verifying the
-  targets' certificates; empty, the platform's global CAs. Its status lists
-  each target's health as reported by agents.
+  targets' certificates - empty, the platform's global CAs - and `serverName`
+  the name they are verified against and asked for by SNI - empty, the
+  request's host. Its status lists each target's health as reported by
+  agents.
 - **Target** (`lb_target`) - a compute instance in a group, with an optional
   port of its own and a weight (1 to 1000, 1 by default).
 - **Listener** (`lb_listener`) - a port of a load balancer and its protocol:
@@ -68,6 +70,8 @@ groups and targets describe layer-7 balancing on top of it:
 
   Requests no rule matches go to `defaultTargetGroupId`.
 
-The data plane realizing listeners is not implemented yet: the API stores and
-validates these resources, and the Terraform provider manages them, but no
-agent serves them.
+A listener serves its load balancer's VIP and public address. A load balancer
+serving only listeners leaves its `port` unset: it then gets no layer-4
+virtual service, and a listener on the load balancer's own port is refused.
+The agents serve the listeners with infra-lb (see
+[realization](realization.md#listeners)).
