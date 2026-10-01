@@ -148,6 +148,10 @@ sudo GOA_ITEST_HYPERVISOR_KERNEL=/boot/vmlinuz-$(uname -r) \
   go test -tags integration ./test/integration/ -run TestHypervisorBoot -v
 ```
 
-GitHub-hosted CI runners have no `/dev/kvm`, so these tests self-skip
-there today, the same limitation `microvm`'s own integration test already
-has — not something this effort tries to solve.
+GitHub-hosted CI runners do have `/dev/kvm` (nested virtualization on the
+hosts behind them) once ci.yml's `integration` job opens it up with a udev
+rule - `TestKVMOpen` and `TestKVMCreateVMAndVCPU` run for real there.
+`TestHypervisorBoot` and `TestExecMicroVMBackendBoot` still self-skip in CI
+regardless: they gate on `GOA_ITEST_HYPERVISOR_KERNEL`, and no kernel image
+is provisioned there - the same limitation `microvm`'s own integration test
+already has, not something this effort tries to solve.

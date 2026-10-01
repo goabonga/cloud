@@ -520,8 +520,21 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # GitHub-hosted ubuntu-24.04 runners expose /dev/kvm (nested
+      # virtualization on the hosts behind them), but it's root:kvm, mode
+      # 660, and the runner user isn't in that group - TestKVMOpen fails
+      # with EACCES, not ENOENT, which is what says the device is there and
+      # this is a permissions problem rather than a missing-feature one. A
+      # world-writable udev rule sidesteps the group entirely rather than
+      # racing udev to re-chmod the node.
+      - name: Allow KVM access for the hypervisor tests
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
       # The kernel-level tests (bridge, firewall) skip without root; the
-      # postgres test runs against the service above.
+      # hypervisor tests skip if /dev/kvm is still missing or denied after
+      # the step above; the postgres test runs against the service above.
       - name: Run integration suite
         env:
           POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/infra?sslmode=disable
@@ -532,8 +545,9 @@ jobs:
         with:
           title: integration
           body: |
-            `go test -tags=integration` against a postgres service. The
-            kernel-level cases (bridge, firewall) self-skip without root.
+            `go test -tags=integration` against a postgres service, with
+            `/dev/kvm` opened up for the hypervisor tests. The kernel-level
+            cases (bridge, firewall) self-skip without root.
 
   # ---------------------------------------------------------------------
   # Container chain. Only the network daemons are containerised - see
