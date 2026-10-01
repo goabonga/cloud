@@ -31,13 +31,15 @@ type ExitEvent struct {
 	MMIOWrite bool
 }
 
-// Run drives every vCPU's run loop, each in its own goroutine, until ctx is
-// cancelled or any one of them hits a fatal exit (kvm.ExitShutdown,
-// kvm.ExitFailEntry or kvm.ExitInternalError — each means that vCPU cannot
-// usefully continue, typically a boot-protocol setup mistake rather than
-// anything a guest triggered): Run cancels every other vCPU's loop too in
-// that case and returns the first such error. A clean stop (ctx cancelled
-// before any fatal exit) returns nil.
+// Run drives every vCPU's run loop, each in its own goroutine, plus the
+// virtio-net device's ReadLoop if one was configured (Config.TapName),
+// until ctx is cancelled or any one of them returns an error (a vCPU's
+// kvm.ExitShutdown, kvm.ExitFailEntry or kvm.ExitInternalError — each
+// means that vCPU cannot usefully continue, typically a boot-protocol
+// setup mistake rather than anything a guest triggered — or ReadLoop's
+// own unrecoverable tap read error): Run cancels every other goroutine
+// too in that case and returns the first such error. A clean stop (ctx
+// cancelled before any of that) returns nil.
 //
 // Every vCPU is configured identically at creation (see bootVCPU) and
 // started the same way, including vCPUs beyond 0: with the in-kernel
@@ -69,7 +71,11 @@ func (m *Machine) Run(ctx context.Context, onExit func(*ExitEvent)) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	errs := make(chan error, len(m.vcpus))
+	n := len(m.vcpus)
+	if m.net != nil {
+		n++
+	}
+	errs := make(chan error, n)
 	var wg sync.WaitGroup
 	for _, v := range m.vcpus {
 		wg.Add(1)
@@ -77,6 +83,13 @@ func (m *Machine) Run(ctx context.Context, onExit func(*ExitEvent)) error {
 			defer wg.Done()
 			errs <- m.runVCPU(ctx, v, onExit)
 		}(v)
+	}
+	if m.net != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- m.net.ReadLoop(ctx)
+		}()
 	}
 	go func() {
 		wg.Wait()
