@@ -103,6 +103,24 @@ func TestServerWiresACLRoutes(t *testing.T) {
 	}
 }
 
+func TestServerWiresListenerRoutes(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(httpsrv.New(state.NewFileStore(t.TempDir())).Handler())
+	defer srv.Close()
+
+	for _, kind := range []string{"lb_target_group", "lb_target", "lb_listener"} {
+		resp, err := http.Get(srv.URL + "/api/v1/" + kind)
+		if err != nil {
+			t.Fatalf("get %s collection: %v", kind, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s list status = %d", kind, resp.StatusCode)
+		}
+	}
+}
+
 func TestServerSecretRoutesDisabledByDefault(t *testing.T) {
 	t.Parallel()
 
