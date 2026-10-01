@@ -11,6 +11,18 @@ description: |
   `fetch-depth: 0`, `persist-credentials: true` and a token that bypasses
   the main-protection ruleset (RELEASE_PAT).
 
+inputs:
+  gpg-private-key:
+    required: false
+    default: ""
+    description: |
+      secrets.GPG_PRIVATE_KEY from the calling workflow - a composite
+      action can't read the secrets context itself.
+  gpg-passphrase:
+    required: false
+    default: ""
+    description: secrets.GPG_PASSPHRASE from the calling workflow.
+
 outputs:
   no_bumps:
     value: ${{ steps.bump.outputs.no_bumps }}
@@ -52,8 +64,8 @@ runs:
       id: gpg
       shell: bash
       env:
-        GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        GPG_PRIVATE_KEY: ${{ inputs.gpg-private-key }}
+        GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
       run: |
         if [ -n "$GPG_PRIVATE_KEY" ] && [ -n "$GPG_PASSPHRASE" ]; then
           echo "available=true" >> "$GITHUB_OUTPUT"
@@ -64,8 +76,8 @@ runs:
       if: steps.gpg.outputs.available == 'true'
       shell: bash
       env:
-        GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        GPG_PRIVATE_KEY: ${{ inputs.gpg-private-key }}
+        GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
       run: |
         echo "$GPG_PRIVATE_KEY" | gpg --batch --import
         echo test | gpg --batch --yes --passphrase "$GPG_PASSPHRASE" \
