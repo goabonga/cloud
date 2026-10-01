@@ -20,7 +20,8 @@ import (
 type SubnetRegistry = registry.Registry[resource.SubnetSpec, resource.SubnetStatus]
 
 // SubnetReconciler realizes a subnet by assigning its gateway address to the
-// parent VPC's bridge.
+// parent VPC's bridge, and this host's address in it to the node port of the
+// VPC's load-balancer namespace.
 type SubnetReconciler struct {
 	reg      *SubnetRegistry
 	vpcs     *VPCRegistry
@@ -65,10 +66,10 @@ func (r *SubnetReconciler) nodeRank() (int, error) {
 	return 0, nil
 }
 
-// syncNodeAddress puts this host's address for cidr on the node port and
-// removes the other ranks' addresses, which a change in the node set can leave
-// behind.
-func (r *SubnetReconciler) syncNodeAddress(ctx context.Context, port, cidr string) error {
+// syncNodeAddress puts this host's address for cidr on the node port of the
+// VPC's load-balancer namespace and removes the other ranks' addresses, which
+// a change in the node set can leave behind.
+func (r *SubnetReconciler) syncNodeAddress(ctx context.Context, vpcID, cidr string) error {
 	rank, err := r.nodeRank()
 	if err != nil {
 		return err
@@ -83,9 +84,9 @@ func (r *SubnetReconciler) syncNodeAddress(ctx context.Context, port, cidr strin
 			continue
 		}
 		if i == rank {
-			err = r.net.EnsureAddress(ctx, port, addr+prefix)
+			err = r.net.EnsureNodeAddress(ctx, vpcID, addr+prefix)
 		} else {
-			err = r.net.DeleteAddress(ctx, port, addr+prefix)
+			err = r.net.DeleteNodeAddress(ctx, vpcID, addr+prefix)
 		}
 		if err != nil {
 			return err
@@ -158,7 +159,7 @@ func (r *SubnetReconciler) ensure(ctx context.Context, sn *resource.Subnet) erro
 		_ = r.reg.Put(sn)
 		return err
 	}
-	if err := r.syncNodeAddress(ctx, nodePortName(sn.Spec.VPCID), sn.Spec.CIDR); err != nil {
+	if err := r.syncNodeAddress(ctx, sn.Spec.VPCID, sn.Spec.CIDR); err != nil {
 		sn.Status.SetPhase(resource.PhaseError, "NodeAddressError", err.Error())
 		_ = r.reg.Put(sn)
 		return err
@@ -179,7 +180,7 @@ func (r *SubnetReconciler) finalize(ctx context.Context, sn *resource.Subnet) er
 			prefix := "/" + strconv.Itoa(prefixLen(sn.Spec.CIDR))
 			for i := 0; i < maxNodePorts; i++ {
 				if addr, aErr := nodeAddress(sn.Spec.CIDR, i); aErr == nil {
-					_ = r.net.DeleteAddress(ctx, nodePortName(sn.Spec.VPCID), addr+prefix)
+					_ = r.net.DeleteNodeAddress(ctx, sn.Spec.VPCID, addr+prefix)
 				}
 			}
 			if gwCIDR, gwErr := gatewayCIDR(sn.Spec.CIDR); gwErr == nil {

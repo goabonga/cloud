@@ -5,7 +5,7 @@ package manager_test
 
 import (
 	"context"
-	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,7 +13,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/manager"
 )
 
-func TestVPCGivesTheHostANodePortAndRemovesItOnDelete(t *testing.T) {
+func TestVPCGetsALoadBalancerNamespaceRemovedOnDelete(t *testing.T) {
 	t.Parallel()
 
 	vpcs := newVPCRegistry(t)
@@ -23,7 +23,7 @@ func TestVPCGivesTheHostANodePortAndRemovesItOnDelete(t *testing.T) {
 	if err := r.Reconcile(context.Background(), "vpc1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if be.nodePorts["np-vpc1"] != "br-vpc1 nb-vpc1" {
+	if be.nodePorts["vpc1"] != "br-vpc1" {
 		t.Fatalf("node port: %v", be.nodePorts)
 	}
 
@@ -37,7 +37,7 @@ func TestVPCGivesTheHostANodePortAndRemovesItOnDelete(t *testing.T) {
 	if err := r.Reconcile(context.Background(), "vpc1"); err != nil {
 		t.Fatalf("finalize: %v", err)
 	}
-	if _, ok := be.nodePorts["np-vpc1"]; ok {
+	if _, ok := be.nodePorts["vpc1"]; ok {
 		t.Fatalf("node port left behind: %v", be.nodePorts)
 	}
 }
@@ -66,16 +66,16 @@ func TestSubnetTakesTheHostsRankOnTheNodePort(t *testing.T) {
 
 	be := newFakeBackend()
 	// A rank-0 address left from before node-a registered.
-	be.addresses["np-vpc1 10.0.1.254/24"] = true
+	be.nodeAddrs = map[string]bool{"vpc1 10.0.1.254/24": true}
 	r := manager.NewSubnetReconciler(subnets, vpcs, be).WithNodeIdentity(nodes, "node-b")
 	if err := r.Reconcile(context.Background(), "sn1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if !be.gateways["br-vpc1 10.0.1.1/24"] {
-		t.Fatalf("gateway must be assigned without its prefix route: %v", be.gateways)
+		t.Fatalf("gateway not assigned: %v", be.gateways)
 	}
-	if !be.addresses["np-vpc1 10.0.1.253/24"] || be.addresses["np-vpc1 10.0.1.254/24"] {
-		t.Fatalf("node-b (rank 1) should hold only .253 on the node port: %v", be.addresses)
+	if !be.nodeAddrs["vpc1 10.0.1.253/24"] || be.nodeAddrs["vpc1 10.0.1.254/24"] {
+		t.Fatalf("node-b (rank 1) should hold only .253 on the node port: %v", be.nodeAddrs)
 	}
 }
 
@@ -103,7 +103,7 @@ func (a *addrShow) saw(prefix string) bool {
 	return false
 }
 
-func TestEnsureGatewayAddressSetsNoPrefixRoute(t *testing.T) {
+func TestEnsureGatewayAddressKeepsThePrefixRoute(t *testing.T) {
 	t.Parallel()
 
 	const flagged = "5: br-1    inet 10.0.1.1/24 scope global noprefixroute br-1\\       valid_lft forever"
@@ -113,8 +113,8 @@ func TestEnsureGatewayAddressSetsNoPrefixRoute(t *testing.T) {
 		wantDel, want bool
 	}{
 		{"absent", "", false, true},
-		{"assigned before the node port", plain, true, true},
-		{"already flagged", flagged, false, false},
+		{"left without its route by an agent before the namespace", flagged, true, true},
+		{"already assigned", plain, false, false},
 	} {
 		a := &addrShow{out: tc.out}
 		if err := manager.NewExecBackendWithRunner(a.run).EnsureGatewayAddress(context.Background(), "br-1", "10.0.1.1/24"); err != nil {
@@ -123,41 +123,99 @@ func TestEnsureGatewayAddressSetsNoPrefixRoute(t *testing.T) {
 		if got := a.saw("ip addr del 10.0.1.1/24 dev br-1"); got != tc.wantDel {
 			t.Fatalf("%s: del=%v, calls %v", tc.name, got, a.calls)
 		}
-		if got := a.saw("ip addr add 10.0.1.1/24 dev br-1 noprefixroute"); got != tc.want {
+		if got := a.saw("ip addr add 10.0.1.1/24 dev br-1"); got != tc.want {
 			t.Fatalf("%s: add=%v, calls %v", tc.name, got, a.calls)
 		}
 	}
 }
 
-func TestEnsureNodePortCreatesAnARPQuietPair(t *testing.T) {
+func TestEnsureNodePortPlugsTheNamespaceIntoTheBridge(t *testing.T) {
 	t.Parallel()
 
-	var calls []string
-	run := func(_ context.Context, name string, args ...string) (string, error) {
-		cmd := name + " " + strings.Join(args, " ")
-		calls = append(calls, cmd)
-		if cmd == "ip link show np-1" {
-			return `Device "np-1" does not exist.`, errors.New("exit status 1")
-		}
-		return "", nil
-	}
-	if err := manager.NewExecBackendWithRunner(run).EnsureNodePort(context.Background(), "br-1", "np-1", "nb-1"); err != nil {
+	h := &nsHost{}
+	if err := manager.NewExecBackendWithRunner(h.run).EnsureNodePort(context.Background(), "vpc1", "br-vpc1"); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
 	for _, want := range []string{
-		"ip link add np-1 mtu 1450 type veth peer name nb-1 mtu 1450",
-		"ip link set nb-1 master br-1",
-		"ip link set nb-1 up",
-		"ip link set np-1 up",
-		"sysctl -w net.ipv4.conf.br-1.arp_ignore=1",
-		"sysctl -w net.ipv4.conf.np-1.arp_ignore=1",
+		"ip link add nb-vpc1 mtu 1450 type veth peer name np0 mtu 1450 netns 4242",
+		"ip link add la-vpc1 mtu 1450 type veth peer name la0 mtu 1450 netns 4242",
+		"ip link set nb-vpc1 master br-vpc1",
+		"ip link set la-vpc1 master br-vpc1",
+		"sysctl -w net.ipv4.conf.br-vpc1.arp_ignore=1",
+		inNS + "sysctl -w net.ipv4.conf.np0.arp_ignore=1",
+		inNS + "sysctl -w net.ipv4.conf.la0.arp_ignore=1",
+		inNS + "sysctl -w net.ipv4.conf.all.rp_filter=0",
 	} {
-		found := false
-		for _, c := range calls {
-			found = found || c == want
+		if !slices.Contains(h.calls, want) {
+			t.Fatalf("missing %q in\n%s", want, h.joined())
 		}
-		if !found {
-			t.Fatalf("missing %q in %v", want, calls)
+	}
+	// The anycast port takes the same MAC on every host, before coming up.
+	mac, up := -1, -1
+	for i, c := range h.calls {
+		if strings.HasPrefix(c, inNS+"ip link set la0 address 02:") {
+			mac = i
 		}
+		if c == inNS+"ip link set la0 up" {
+			up = i
+		}
+	}
+	if mac < 0 || up < mac {
+		t.Fatalf("la0 must get its anycast MAC before coming up:\n%s", h.joined())
+	}
+}
+
+func TestEnsureNodePortRemovesTheHostNodePortLeftBehind(t *testing.T) {
+	t.Parallel()
+
+	h := &nsHost{}
+	run := func(ctx context.Context, name string, args ...string) (string, error) {
+		if name+" "+strings.Join(args, " ") == "ip link show np-vpc1" {
+			h.calls = append(h.calls, "ip link show np-vpc1")
+			return "", nil
+		}
+		return h.run(ctx, name, args...)
+	}
+	if err := manager.NewExecBackendWithRunner(run).EnsureNodePort(context.Background(), "vpc1", "br-vpc1"); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if !slices.Contains(h.calls, "ip link del np-vpc1") {
+		t.Fatalf("the host's node port must go:\n%s", h.joined())
+	}
+}
+
+func TestNodeAddressesLiveInTheNamespace(t *testing.T) {
+	t.Parallel()
+
+	h := &nsHost{}
+	if err := manager.NewExecBackendWithRunner(h.run).EnsureNodeAddress(context.Background(), "vpc1", "10.0.1.254/24"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(h.calls, inNS+"ip addr replace 10.0.1.254/24 dev np0") {
+		t.Fatalf("node address not on np0:\n%s", h.joined())
+	}
+}
+
+func TestEnsureNodePortStartsAStoppedNamespace(t *testing.T) {
+	t.Parallel()
+
+	h := &nsHost{}
+	started := false
+	run := func(ctx context.Context, name string, args ...string) (string, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(cmd, "systemctl show") && !started:
+			h.calls = append(h.calls, cmd)
+			return "0\n", nil
+		case cmd == "systemctl start infra-netns@lb-vpc1.service":
+			started = true
+		}
+		return h.run(ctx, name, args...)
+	}
+	if err := manager.NewExecBackendWithRunner(run).EnsureNodePort(context.Background(), "vpc1", "br-vpc1"); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if !started || !strings.Contains(h.joined(), "netns 4242") {
+		t.Fatalf("the holder must be started and its namespace used:\n%s", h.joined())
 	}
 }

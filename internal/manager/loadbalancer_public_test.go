@@ -13,19 +13,36 @@ import (
 	"github.com/goabonga/infrastructure/internal/manager"
 )
 
-// serviceLog records every virtual service ensured and deleted.
+// serviceLog records every virtual service ensured and deleted: "vip@<vpc>"
+// for a VIP, "addr@public" for a public address, "addr@host:<iface>" for a
+// service removed from the host.
 type serviceLog struct {
-	ensured []string // "vip@bridge"
-	deleted []string // "vip@bridge"
+	ensured []string
+	deleted []string
 }
 
-func (l *serviceLog) EnsureService(_ context.Context, vip string, _ int, _, _, bridge, _ string, _ []manager.LBRealServer) error {
-	l.ensured = append(l.ensured, vip+"@"+bridge)
+func (l *serviceLog) EnsureService(_ context.Context, vpcID, _, vip string, _ int, _, _ string, _ []manager.LBRealServer) error {
+	l.ensured = append(l.ensured, vip+"@"+vpcID)
 	return nil
 }
 
-func (l *serviceLog) DeleteService(_ context.Context, vip string, _ int, _, bridge string) error {
-	l.deleted = append(l.deleted, vip+"@"+bridge)
+func (l *serviceLog) DeleteService(_ context.Context, vpcID, _, vip string, _ int, _ string) error {
+	l.deleted = append(l.deleted, vip+"@"+vpcID)
+	return nil
+}
+
+func (l *serviceLog) EnsurePublicService(_ context.Context, _, addr string, _ int, _, _ string, _ []manager.LBRealServer) error {
+	l.ensured = append(l.ensured, addr+"@public")
+	return nil
+}
+
+func (l *serviceLog) DeletePublicService(_ context.Context, _, addr string, _ int, _ string) error {
+	l.deleted = append(l.deleted, addr+"@public")
+	return nil
+}
+
+func (l *serviceLog) DeleteHostService(_ context.Context, addr string, _ int, _, iface string) error {
+	l.deleted = append(l.deleted, addr+"@host:"+iface)
 	return nil
 }
 
@@ -59,8 +76,8 @@ func TestLoadBalancerServesItsPublicAddressOnTheEdges(t *testing.T) {
 	if err := env.reconciler(edge).AsEdge(env.ips).Reconcile(context.Background(), "lb"); err != nil {
 		t.Fatalf("edge: %v", err)
 	}
-	if !slices.Equal(edge.ensured, []string{"10.0.0.10@br-vpc1", "203.0.113.10@lo"}) {
-		t.Fatalf("edge ensured %v, want the VIP on the bridge and the public address on lo", edge.ensured)
+	if !slices.Equal(edge.ensured, []string{"10.0.0.10@vpc-1", "203.0.113.10@public"}) {
+		t.Fatalf("edge ensured %v, want the VIP and the public address", edge.ensured)
 	}
 	if got, _ := env.lbs.Get("lb"); got.Status.PublicAddress != "203.0.113.10" {
 		t.Fatalf("public address %q", got.Status.PublicAddress)
@@ -70,7 +87,7 @@ func TestLoadBalancerServesItsPublicAddressOnTheEdges(t *testing.T) {
 	if err := env.reconciler(inner).Reconcile(context.Background(), "lb"); err != nil {
 		t.Fatalf("non-edge: %v", err)
 	}
-	if !slices.Equal(inner.ensured, []string{"10.0.0.10@br-vpc1"}) {
+	if !slices.Equal(inner.ensured, []string{"10.0.0.10@vpc-1"}) {
 		t.Fatalf("a host that is no edge serves only the VIP: %v", inner.ensured)
 	}
 }
@@ -86,7 +103,7 @@ func TestLoadBalancerWaitsForAnUnresolvedPublicAddress(t *testing.T) {
 		t.Fatalf("an unresolved public address must not fail the load balancer: %v", err)
 	}
 	got, _ := env.lbs.Get("lb")
-	if !slices.Equal(l.ensured, []string{"10.0.0.10@br-vpc1"}) || got.Status.Phase != resource.PhaseReady {
+	if !slices.Equal(l.ensured, []string{"10.0.0.10@vpc-1"}) || got.Status.Phase != resource.PhaseReady {
 		t.Fatalf("ensured %v, phase %q", l.ensured, got.Status.Phase)
 	}
 }
@@ -111,7 +128,7 @@ func TestLoadBalancerMovesAndDropsItsPublicAddress(t *testing.T) {
 	if err := r.Reconcile(context.Background(), "lb"); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(l.deleted, "203.0.113.10@lo") || l.ensured[len(l.ensured)-1] != "203.0.113.11@lo" {
+	if !slices.Contains(l.deleted, "203.0.113.10@public") || l.ensured[len(l.ensured)-1] != "203.0.113.11@public" {
 		t.Fatalf("moving to pub-b: ensured %v deleted %v", l.ensured, l.deleted)
 	}
 
@@ -122,7 +139,30 @@ func TestLoadBalancerMovesAndDropsItsPublicAddress(t *testing.T) {
 	if err := r.Reconcile(context.Background(), "lb"); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(l.deleted, "203.0.113.11@lo") {
+	if !slices.Contains(l.deleted, "203.0.113.11@public") {
 		t.Fatalf("deleting the load balancer must drop its public address: %v", l.deleted)
+	}
+}
+
+func TestLoadBalancerMovesItsHostServiceIntoTheNamespaceOnce(t *testing.T) {
+	t.Parallel()
+
+	env := newLBEnv(t)
+	env.putResolvedPublicIP(t, "pub", "203.0.113.10")
+	env.putPublicLB(t, "lb", "10.0.0.10", "pub")
+	// Served before by an agent that realized load balancers in the host.
+	lb, _ := env.lbs.Get("lb")
+	lb.Status.PublicAddress = "203.0.113.10"
+	_ = env.lbs.Put(lb)
+
+	l := &serviceLog{}
+	r := env.reconciler(l).AsEdge(env.ips)
+	for range 2 {
+		if err := r.Reconcile(context.Background(), "lb"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !slices.Equal(l.deleted, []string{"10.0.0.10@host:br-vpc1", "203.0.113.10@host:lo"}) {
+		t.Fatalf("deleted %v, want the host's VIP and public address removed once", l.deleted)
 	}
 }

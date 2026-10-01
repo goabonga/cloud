@@ -107,10 +107,10 @@ func TestEnsureServiceVIPIsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	k := &addrKernel{assigned: map[string]bool{}}
-	be := manager.NewExecLBWithRunner(k.run)
+	be := manager.NewExecLBWithRunner(inNamespace(k.run))
 	servers := []manager.LBRealServer{{IP: "10.0.1.10", Port: 8080, Weight: 1}}
 	for pass := 1; pass <= 2; pass++ {
-		if err := be.EnsureService(context.Background(), "10.0.5.5", 443, "tcp", "round_robin", "br-vpc1", "np-vpc1", servers); err != nil {
+		if err := be.EnsureService(context.Background(), "vpc1", "br-vpc1", "10.0.5.5", 443, "tcp", "round_robin", servers); err != nil {
 			t.Fatalf("pass %d: EnsureService: %v", pass, err)
 		}
 	}
@@ -160,5 +160,19 @@ func TestDeleteAddressIsIdempotent(t *testing.T) {
 	}
 	if len(a.dels) != 1 {
 		t.Fatalf("ip addr del should only run for the present address: %v", a.dels)
+	}
+}
+
+// inNamespace runs commands meant for a load-balancer namespace, held by PID
+// 4242, through run as if they ran in the host.
+func inNamespace(run manager.Runner) manager.Runner {
+	return func(ctx context.Context, name string, args ...string) (string, error) {
+		if name == "systemctl" && len(args) > 0 && args[0] == "show" {
+			return "4242\n", nil
+		}
+		if name == "nsenter" && len(args) >= 3 && args[1] == "--" {
+			return run(ctx, args[2], args[3:]...)
+		}
+		return run(ctx, name, args...)
 	}
 }

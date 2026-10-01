@@ -115,7 +115,7 @@ func TestOverlayJoinsTwoNodesOnTheSameSegment(t *testing.T) {
 	}
 
 	va, vb := onlyVXLAN(t, a), onlyVXLAN(t, b)
-	if va.Name != vb.Name || va.VNI != vb.VNI || va.Bridge != vb.Bridge || va.GatewayMAC != vb.GatewayMAC {
+	if va.Name != vb.Name || va.VNI != vb.VNI || va.Bridge != vb.Bridge || va.GatewayMAC != vb.GatewayMAC || va.LBMAC != vb.LBMAC {
 		t.Fatalf("hosts disagree on the overlay: %+v vs %+v", va, vb)
 	}
 	if va.VNI == 0 || va.VNI > 0xFFFFFF {
@@ -131,6 +131,10 @@ func TestOverlayJoinsTwoNodesOnTheSameSegment(t *testing.T) {
 	macA, macB := a.macs[va.Bridge], b.macs[vb.Bridge]
 	if macA == "" || macA != macB || !strings.HasPrefix(macA, "02:") || va.GatewayMAC != macA {
 		t.Fatalf("bridge MACs: a=%q b=%q", macA, macB)
+	}
+	// The load balancers' anycast MAC is another one, also kept off the overlay.
+	if !strings.HasPrefix(va.LBMAC, "02:") || va.LBMAC == va.GatewayMAC {
+		t.Fatalf("load-balancer MAC %q, gateway MAC %q", va.LBMAC, va.GatewayMAC)
 	}
 }
 
@@ -226,7 +230,7 @@ func TestExecOverlayCreatesAndAttachesTheDevice(t *testing.T) {
 
 	k := &overlayKernel{}
 	be := manager.NewExecOverlayWithRunner(k.run)
-	v := manager.VXLAN{Name: "vx-1", VNI: 42, Local: "10.0.0.1", Bridge: "br-1", GatewayMAC: "02:aa:bb:cc:dd:ee"}
+	v := manager.VXLAN{Name: "vx-1", VNI: 42, Local: "10.0.0.1", Bridge: "br-1", GatewayMAC: "02:aa:bb:cc:dd:ee", LBMAC: "02:11:22:33:44:55"}
 	if err := be.EnsureVXLAN(context.Background(), v); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -236,6 +240,7 @@ func TestExecOverlayCreatesAndAttachesTheDevice(t *testing.T) {
 		{"ip", "link", "set", "vx-1", "master", "br-1"},
 		{"tc", "qdisc", "replace", "dev", "vx-1", "clsact"},
 		{"tc", "filter", "replace", "dev", "vx-1", "egress", "pref", "1", "handle", "1", "protocol", "all", "flower", "src_mac", "02:aa:bb:cc:dd:ee", "action", "drop"},
+		{"tc", "filter", "replace", "dev", "vx-1", "egress", "pref", "2", "handle", "2", "protocol", "all", "flower", "src_mac", "02:11:22:33:44:55", "action", "drop"},
 		{"ip", "link", "set", "vx-1", "up"},
 	} {
 		if !k.saw(want...) {

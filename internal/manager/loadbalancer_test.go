@@ -19,18 +19,30 @@ import (
 type fakeLBBackend struct {
 	vip     string
 	port    int
-	bridge  string
+	vpcID   string
 	servers []manager.LBRealServer
 	deleted bool
 }
 
-func (f *fakeLBBackend) EnsureService(_ context.Context, vip string, port int, _, _, bridge, _ string, servers []manager.LBRealServer) error {
-	f.vip, f.port, f.bridge, f.servers = vip, port, bridge, servers
+func (f *fakeLBBackend) EnsureService(_ context.Context, vpcID, _, vip string, port int, _, _ string, servers []manager.LBRealServer) error {
+	f.vip, f.port, f.vpcID, f.servers = vip, port, vpcID, servers
 	return nil
 }
 
-func (f *fakeLBBackend) DeleteService(_ context.Context, _ string, _ int, _, _ string) error {
+func (f *fakeLBBackend) DeleteService(_ context.Context, _, _, _ string, _ int, _ string) error {
 	f.deleted = true
+	return nil
+}
+
+func (f *fakeLBBackend) EnsurePublicService(_ context.Context, _, _ string, _ int, _, _ string, _ []manager.LBRealServer) error {
+	return nil
+}
+
+func (f *fakeLBBackend) DeletePublicService(_ context.Context, _, _ string, _ int, _ string) error {
+	return nil
+}
+
+func (f *fakeLBBackend) DeleteHostService(_ context.Context, _ string, _ int, _, _ string) error {
 	return nil
 }
 
@@ -122,8 +134,8 @@ func TestLBReconcileBuildsService(t *testing.T) {
 	if !got.Metadata.HasFinalizer(resource.LoadBalancerFinalizer) {
 		t.Fatal("finalizer should be attached")
 	}
-	if be.bridge != "br-vpc1" || len(be.servers) != 2 {
-		t.Fatalf("unexpected backend call: bridge=%q servers=%+v", be.bridge, be.servers)
+	if be.vpcID != "vpc-1" || len(be.servers) != 2 {
+		t.Fatalf("unexpected backend call: vpc=%q servers=%+v", be.vpcID, be.servers)
 	}
 	ips := map[string]int{}
 	for _, s := range be.servers {
@@ -246,50 +258,45 @@ func TestLBFinalize(t *testing.T) {
 	}
 }
 
-func TestExecLBEnsureAndDelete(t *testing.T) {
-	t.Parallel()
+// nsHost answers like a host whose load-balancer namespaces run under PID
+// 4242, records every command, and reports no iptables rule as present.
+type nsHost struct{ calls []string }
 
-	rec := &fwRecorder{}
-	be := manager.NewExecLBWithRunner(rec.run)
-	servers := []manager.LBRealServer{{IP: "10.0.1.10", Port: 8080, Weight: 3}}
-	if err := be.EnsureService(context.Background(), "10.0.5.5", 443, "tcp", "round_robin", "br-vpc1", "np-vpc1", servers); err != nil {
-		t.Fatalf("ensure service: %v", err)
+func (h *nsHost) run(_ context.Context, name string, args ...string) (string, error) {
+	cmd := name + " " + strings.Join(args, " ")
+	h.calls = append(h.calls, cmd)
+	switch {
+	case strings.HasPrefix(cmd, "systemctl show"):
+		return "4242\n", nil
+	case strings.Contains(cmd, "iptables -t nat -C"), strings.HasPrefix(cmd, "ip link show"):
+		return "Device does not exist", errors.New("exit status 1")
 	}
-	for _, want := range []string{"ipvsadm", "-A", "-a", "10.0.5.5/32"} {
-		if !anyCallHas(rec.calls, want) {
-			t.Fatalf("missing %q in calls: %v", want, rec.calls)
-		}
-	}
-
-	rec.calls = nil
-	if err := be.DeleteService(context.Background(), "10.0.5.5", 443, "tcp", "br-vpc1"); err != nil {
-		t.Fatalf("delete service: %v", err)
-	}
-	if !anyCallHas(rec.calls, "-D") {
-		t.Fatalf("expected service deletion: %v", rec.calls)
-	}
+	return "", nil
 }
 
-func TestExecLBMasqueradesThroughTheNodePort(t *testing.T) {
+func (h *nsHost) joined() string { return strings.Join(h.calls, "\n") }
+
+const inNS = "nsenter --net=/proc/4242/ns/net -- "
+
+func TestExecLBServesInTheNamespace(t *testing.T) {
 	t.Parallel()
 
-	var calls []string
-	run := func(_ context.Context, name string, args ...string) (string, error) {
-		cmd := name + " " + strings.Join(args, " ")
-		calls = append(calls, cmd)
-		if strings.HasPrefix(cmd, "iptables -t nat -C") {
-			return "", errors.New("rule does not exist")
-		}
-		return "", nil
+	h := &nsHost{}
+	be := manager.NewExecLBWithRunner(h.run)
+	servers := []manager.LBRealServer{{IP: "10.0.1.10", Port: 8080, Weight: 3}}
+	if err := be.EnsureService(context.Background(), "vpc1", "br-vpc1", "10.0.5.5", 443, "tcp", "round_robin", servers); err != nil {
+		t.Fatalf("ensure service: %v", err)
 	}
-	servers := []manager.LBRealServer{{IP: "10.0.1.10", Port: 80, Weight: 1}}
-	if err := manager.NewExecLBWithRunner(run).EnsureService(context.Background(), "10.0.5.5", 80, "tcp", "round_robin", "br-1", "np-1", servers); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-	joined := strings.Join(calls, "\n")
+	joined := h.joined()
 	for _, want := range []string{
-		"sysctl -w net.ipv4.vs.conntrack=1",
-		"iptables -t nat -A POSTROUTING -o np-1 -m ipvs --ipvs -j MASQUERADE",
+		"systemctl show --property=MainPID --value infra-netns@lb-vpc1.service",
+		"sysctl -w net.ipv4.conf.br-vpc1.send_redirects=0",
+		"ip route replace 10.0.5.5/32 dev br-vpc1",
+		inNS + "ip addr replace 10.0.5.5/32 dev la0",
+		inNS + "ipvsadm -A -t 10.0.5.5:443 -s rr",
+		inNS + "ipvsadm -a -t 10.0.5.5:443 -r 10.0.1.10:8080 -m -w 3",
+		inNS + "sysctl -w net.ipv4.vs.conntrack=1",
+		inNS + "iptables -t nat -A POSTROUTING -o np0 -m ipvs --ipvs -j MASQUERADE",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %q in\n%s", want, joined)
@@ -297,5 +304,64 @@ func TestExecLBMasqueradesThroughTheNodePort(t *testing.T) {
 	}
 	if strings.Index(joined, "ipvsadm -A") > strings.Index(joined, "net.ipv4.vs.conntrack") {
 		t.Fatalf("the ipvs sysctl only exists once ip_vs is loaded by the service:\n%s", joined)
+	}
+	for _, c := range h.calls {
+		if strings.HasPrefix(c, "ipvsadm") || strings.HasPrefix(c, "iptables") {
+			t.Fatalf("%q ran in the host, not the namespace", c)
+		}
+	}
+
+	h.calls = nil
+	if err := be.DeleteService(context.Background(), "vpc1", "br-vpc1", "10.0.5.5", 443, "tcp"); err != nil {
+		t.Fatalf("delete service: %v", err)
+	}
+	if !strings.Contains(h.joined(), inNS+"ipvsadm -D -t 10.0.5.5:443") || !strings.Contains(h.joined(), "ip route del 10.0.5.5/32 dev br-vpc1") {
+		t.Fatalf("expected service deletion in the namespace:\n%s", h.joined())
+	}
+}
+
+func TestExecLBRoutesThePublicAddressToTheNamespace(t *testing.T) {
+	t.Parallel()
+
+	h := &nsHost{}
+	servers := []manager.LBRealServer{{IP: "10.0.1.10", Port: 80, Weight: 1}}
+	if err := manager.NewExecLBWithRunner(h.run).EnsurePublicService(context.Background(), "vpc1", "203.0.113.10", 80, "tcp", "round_robin", servers); err != nil {
+		t.Fatalf("ensure public: %v", err)
+	}
+	joined := h.joined()
+	for _, want := range []string{
+		"ip link add lp-vpc1 mtu 1450 type veth peer name pub0 mtu 1450 netns 4242",
+		"ip addr replace 169.254.0.1/32 dev lp-vpc1",
+		"ip route replace 203.0.113.10/32 dev lp-vpc1",
+		inNS + "ip addr replace 169.254.0.2/32 dev pub0",
+		inNS + "ip route replace default via 169.254.0.1 dev pub0 onlink",
+		inNS + "ip addr replace 203.0.113.10/32 dev lo",
+		inNS + "ipvsadm -A -t 203.0.113.10:80 -s rr",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in\n%s", want, joined)
+		}
+	}
+}
+
+func TestExecLBLeavesAStoppedNamespaceAlone(t *testing.T) {
+	t.Parallel()
+
+	var calls []string
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		cmd := name + " " + strings.Join(args, " ")
+		calls = append(calls, cmd)
+		if strings.HasPrefix(cmd, "systemctl show") {
+			return "0\n", nil
+		}
+		return "", nil
+	}
+	if err := manager.NewExecLBWithRunner(run).DeleteService(context.Background(), "vpc1", "br-vpc1", "10.0.5.5", 80, "tcp"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range calls {
+		if strings.HasPrefix(c, "systemctl start") || strings.HasPrefix(c, "nsenter") {
+			t.Fatalf("deleting from a stopped namespace must not start or enter it: %v", calls)
+		}
 	}
 }
