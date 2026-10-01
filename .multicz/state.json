@@ -1,17 +1,22 @@
 {
   "version": 1,
-  "git_head": "bb5dd55db775832b196b888e12ff12c5e71788d9",
-  "git_head_short": "bb5dd55",
-  "timestamp": "2026-10-01T22:13:43Z",
+  "git_head": "37dc47eccd5c05d56ca68f8d7b631cc9f58a37db",
+  "git_head_short": "37dc47e",
+  "timestamp": "2026-10-01T22:35:36Z",
   "components": {
-    "infra-agent": {
-      "version": "0.18.0",
-      "tag": "infra-agent-v0.18.0",
+    "infra-idp": {
+      "version": "0.7.1",
+      "tag": "infra-idp-v0.7.1",
       "tag_sha": null
     },
-    "infra-www": {
-      "version": "0.6.0",
-      "tag": "infra-www-v0.6.0",
+    "infra-exporter": {
+      "version": "0.5.1",
+      "tag": "infra-exporter-v0.5.1",
+      "tag_sha": null
+    },
+    "infra-container-init": {
+      "version": "0.5.1",
+      "tag": "infra-container-init-v0.5.1",
       "tag_sha": null
     }
   }

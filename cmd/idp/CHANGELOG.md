@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.7.1] - 2026-10-01
+
+### Fixed
+
+- **idp**: check discarded listener-close errors in main_test.go (`f1d26c9`)
+
 ## [0.1.1] - 2026-09-30
 
 _No notable changes._

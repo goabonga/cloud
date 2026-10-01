@@ -2,6 +2,13 @@
 
 All notable changes to this component are documented here.
 
+## [0.5.1] - 2026-10-01
+
+### Fixed
+
+- **exporter**: stop TestRunGracefulShutdown racing srv.Shutdown (`2582ee1`)
+- **exporter**: satisfy errcheck and fix a skipped signal-stop deferral (`6fa4f35`)
+
 ## [0.1.1] - 2026-09-30
 
 _No notable changes._
