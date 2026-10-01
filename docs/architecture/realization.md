@@ -56,6 +56,7 @@ run as root.
 | Security group   | an allow-list iptables chain, jumped to on the VPC's bridge |
 | WAF policy       | an iptables chain attached inbound to the target |
 | Load balancer    | an IPVS virtual service in the VPC's load-balancer namespace, full-NAT through its node port; on the edges, also on its public address |
+| Listener         | infra-lb in the VPC's load-balancer namespace, on the load balancer's VIP and, on the edges, public address |
 | Public IP address | an address of the edges' public block, reserved in the shared store |
 | Compute          | a network namespace running an OCI image |
 
@@ -173,6 +174,31 @@ An agent that realized load balancers in the host itself, before the
 namespace, left their VIP on the bridge, their public address on the loopback,
 their virtual services and the node port in the host. The first pass of a
 newer agent removes them.
+
+## Listeners
+
+A load balancer's listeners are served by infra-lb, running as
+`infra-lb@lb-<uid>.service` in the VPC's load-balancer namespace on every host:
+the unit joins the namespace `infra-netns@lb-<uid>` holds
+(`JoinsNamespaceOf=`, `BindsTo=`), with no capability but binding ports below
+1024. The listener pass builds its configuration for each VPC:
+
+- each listener on its load balancer's VIP and, on an edge, its public
+  address, both already on the namespace's anycast port and loopback;
+- each certificate as its chain and private key, rendered from the store and
+  decrypted with the KMS key, and each target group's backend CA;
+- each target group's targets that have an address, with their port.
+
+It writes it to `/run/infra-lb/lb-<uid>/config.json` (0600, it holds private
+keys), starts the unit, or has it reload (SIGHUP) when the configuration
+changed, and stops it with the VPC's last listener. A listener waits
+(`Pending`) while its load balancer has no address or a certificate is not
+issued, and fails if it takes the load balancer's own layer-4 port. infra-lb
+reports back through `status.json`: a listener is `Ready` once it holds its
+port on every address, and each target group's status lists its targets'
+health as each host's infra-lb checks it, every host replacing its own
+entries. infra-lb keeps serving its last configuration when the agent or the
+store is down.
 
 ## Public addresses
 

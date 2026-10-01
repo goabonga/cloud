@@ -5,9 +5,10 @@ reverse proxy, a TLS passthrough router and a TCP splicer in one process,
 driven by a JSON configuration file it reloads on change, and reporting the
 state of its listeners and targets in a JSON status file.
 
-`infra-lb` is built (`make build-lb`) and tested, but nothing runs it yet: it
-is neither packaged nor started by the agent, and no resource of the API
-renders its configuration so far.
+It ships in the `infra-agent` package, which runs it as `infra-lb@<namespace>`
+in each load-balancer namespace serving listeners, and renders its
+configuration from the API's listeners, target groups and targets (see
+[realization](realization.md#listeners)). It also runs on its own:
 
 ```bash
 infra-lb -config /etc/infra/lb.json -status /run/infra/lb-status.json
