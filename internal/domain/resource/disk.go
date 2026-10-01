@@ -45,9 +45,21 @@ type Disk = Resource[DiskSpec, DiskStatus]
 type DiskFileSpec struct {
 	DiskID  string `json:"diskId"`
 	Path    string `json:"path"`
-	Content string `json:"content"`
+	Content string `json:"content,omitempty"`
 	Mode    string `json:"mode,omitempty"`
+	// SSLCertID takes the content from an ssl_cert instead, and SSLPart says
+	// which part: "certificate", "chain" (the certificate then its CA's) or
+	// "private_key".
+	SSLCertID string `json:"sslCertId,omitempty"`
+	SSLPart   string `json:"sslPart,omitempty"`
 }
+
+// The parts of a certificate a disk file can carry.
+const (
+	SSLPartCertificate = "certificate"
+	SSLPartChain       = "chain"
+	SSLPartPrivateKey  = "private_key"
+)
 
 // Validate reports whether the spec is well-formed.
 func (s DiskFileSpec) Validate() error {
@@ -56,6 +68,18 @@ func (s DiskFileSpec) Validate() error {
 	}
 	if s.Path == "" {
 		return fmt.Errorf("disk_file: path is required")
+	}
+	if s.SSLCertID != "" {
+		if s.Content != "" {
+			return fmt.Errorf("disk_file: content and sslCertId are exclusive")
+		}
+		switch s.SSLPart {
+		case SSLPartCertificate, SSLPartChain, SSLPartPrivateKey:
+		default:
+			return fmt.Errorf("disk_file: sslPart must be certificate, chain or private_key")
+		}
+	} else if s.SSLPart != "" {
+		return fmt.Errorf("disk_file: sslPart needs sslCertId")
 	}
 	return nil
 }
