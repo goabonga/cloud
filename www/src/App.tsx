@@ -6,6 +6,7 @@ import { Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
 import Acls from "./pages/Acls";
 import Device from "./pages/Device";
+import AccessTokens from "./pages/iam/AccessTokens";
 import Users from "./pages/iam/Users";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="device" element={<Device />} />
         <Route path="settings" element={<Settings />} />
         <Route path="iam" element={<Users />} />
+        <Route path="iam/tokens" element={<AccessTokens />} />
       </Route>
     </Routes>
   );
