@@ -33,7 +33,8 @@ const (
 // every request here is a GET with no body).
 func sign(key []byte, method, path string, ts time.Time) string {
 	mac := hmac.New(sha256.New, key)
-	fmt.Fprintf(mac, "%s\n%s\n%s", method, path, ts.UTC().Format(time.RFC3339))
+	// hash.Hash.Write never returns an error; nothing to check.
+	_, _ = fmt.Fprintf(mac, "%s\n%s\n%s", method, path, ts.UTC().Format(time.RFC3339))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
