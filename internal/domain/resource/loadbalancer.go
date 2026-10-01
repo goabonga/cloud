@@ -26,6 +26,9 @@ type LoadBalancerSpec struct {
 	Protocol string `json:"protocol,omitempty"`
 	// Algorithm is "round_robin", "least_conn" or "source" (default "round_robin").
 	Algorithm string `json:"algorithm,omitempty"`
+	// PublicIPID optionally names a public ip_address the load balancer is
+	// also reachable on, from outside the VPC, through the edges.
+	PublicIPID string `json:"publicIpId,omitempty"`
 }
 
 // Validate reports whether the spec is well-formed.
@@ -54,6 +57,9 @@ type LoadBalancerStatus struct {
 	StatusBase
 	Address   string `json:"address,omitempty"`
 	ServiceID string `json:"serviceId,omitempty"`
+	// PublicAddress is the public address the edges serve the load balancer
+	// on, once its public ip_address is resolved.
+	PublicAddress string `json:"publicAddress,omitempty"`
 }
 
 // LoadBalancer is a load-balancer resource.
