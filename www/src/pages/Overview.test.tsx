@@ -38,4 +38,18 @@ describe("Overview", () => {
     const vpcLink = screen.getByText("VPCs").closest("a");
     expect(vpcLink?.getAttribute("href")).toBe("/vpc");
   });
+
+  it("shows an error when a kind fails to load", async () => {
+    vi.mocked(generic.listResources).mockImplementation((kind) =>
+      kind === "vpc" ? Promise.reject(new Error("boom")) : Promise.resolve([]),
+    );
+
+    render(
+      <MemoryRouter>
+        <Overview />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => screen.getByText("Error: boom"));
+  });
 });
