@@ -184,7 +184,8 @@ func (FSDiskFileWriter) WriteFile(root, path string, content []byte, mode os.Fil
 }
 
 // openFileBeneath opens root/path with flags, creating missing directories
-// along it, and refuses a symlink on any component of the path.
+// along it when flags hold O_CREAT, and refuses a symlink on any component of
+// the path.
 func openFileBeneath(root, path string, flags int, mode os.FileMode) (*os.File, error) {
 	rel := strings.TrimPrefix(filepath.Clean("/"+path), "/")
 	if rel == "" {
@@ -198,7 +199,7 @@ func openFileBeneath(root, path string, flags int, mode os.FileMode) (*os.File, 
 
 	parts := strings.Split(rel, "/")
 	for _, dir := range parts[:len(parts)-1] {
-		next, err := openDirBeneath(dirfd, dir)
+		next, err := openDirBeneath(dirfd, dir, flags&unix.O_CREAT != 0)
 		if err != nil {
 			return nil, fmt.Errorf("manager: disk file %s: %w", path, err)
 		}
@@ -213,12 +214,12 @@ func openFileBeneath(root, path string, flags int, mode os.FileMode) (*os.File, 
 	return os.NewFile(uintptr(fd), filepath.Join(root, rel)), nil
 }
 
-// openDirBeneath opens (creating if needed, 0755) the directory name directly
-// beneath dirfd, without following a symlink.
-func openDirBeneath(dirfd int, name string) (int, error) {
+// openDirBeneath opens (creating it 0755 when create is set) the directory
+// name directly beneath dirfd, without following a symlink.
+func openDirBeneath(dirfd int, name string, create bool) (int, error) {
 	const flags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
 	fd, err := unix.Openat(dirfd, name, flags, 0)
-	if errors.Is(err, unix.ENOENT) {
+	if create && errors.Is(err, unix.ENOENT) {
 		if err := unix.Mkdirat(dirfd, name, 0o755); err != nil && !errors.Is(err, unix.EEXIST) {
 			return -1, err
 		}
