@@ -15,21 +15,22 @@ option there.
 
 ## Status
 
-Milestone 1 (single vCPU, direct kernel boot, serial console) and
-milestone 2 (multi-vCPU/SMP) are done: `cmd/hypervisor` can boot a real
-Linux kernel and initrd under KVM with any number of vCPUs and serve a
-working `ttyS0` console. Ahead: virtio-net, virtio-blk, then a combined
-parity pass and hardening — see the plan this series follows for the full
-milestone breakdown.
+Milestone 1 (single vCPU, direct kernel boot, serial console), milestone 2
+(multi-vCPU/SMP) and milestone 3 (virtio-mmio + virtio-net) are done:
+`cmd/hypervisor` can boot a real Linux kernel under KVM with any number of
+vCPUs, a working `ttyS0` console, and a real network interface backed by a
+host TAP device. Ahead: virtio-blk, then a combined parity pass and
+hardening — see the plan this series follows for the full milestone
+breakdown.
 
 Not implemented yet, each deliberately scoped to a later milestone:
 
-- Any virtio device — no network, no disk. A VM boots from its kernel and
-  initrd only; there is no way to mount a root filesystem yet.
-- Any MMIO device at all (the run loop's `KVM_EXIT_MMIO` dispatch exists
-  but nothing registers a handler for it).
-- `KVM_IRQFD`/`KVM_IOEVENTFD` (the UART's interrupt is a synchronous
-  `KVM_IRQ_LINE` pulse per byte, correct but not the fastest path).
+- virtio-blk — no disk. A VM boots from its kernel and initrd only; there
+  is no way to mount a root filesystem yet.
+- `KVM_IOEVENTFD` for `QueueNotify` and `KVM_IRQFD` for interrupt
+  injection (every device's interrupt, UART included, is a synchronous
+  `KVM_IRQ_LINE` pulse — correct but not the fastest path; both are
+  real-world performance refinements, not correctness requirements).
 
 ## Why a hand-rolled hypervisor, not cloud-hypervisor
 
@@ -61,6 +62,7 @@ internal/hypervisor/            # orchestration: Machine, guest memory, the vcpu
 internal/hypervisor/kvm/        # raw /dev/kvm ioctl wrappers and uapi structs — no policy
 internal/hypervisor/boot/       # x86-64 Linux boot protocol: bzImage parsing, zero page, E820, GDT, page tables
 internal/hypervisor/uart/       # 16550-compatible serial console device
+internal/hypervisor/virtio/     # virtio-mmio transport, split virtqueue, virtio-net, a tap-device helper
 internal/hypervisor/protocol/   # the control-socket wire format (NDJSON)
 cmd/hypervisor/                 # the binary: control-socket server wrapping internal/hypervisor
 ```
@@ -118,6 +120,42 @@ scanning when no EBDA is signaled — always the case here, since this
 package never writes a BIOS Data Area at all. Every mainstream distro and
 cloud kernel still carries `CONFIG_X86_MPPARSE`.
 
+## virtio devices
+
+Devices are virtio-mmio, not virtio-pci: no PCI bus, config space or BAR
+emulation at all, the same minimal-VMM choice Firecracker made — each
+device is just a flat, 512-byte MMIO register window
+(`internal/hypervisor/virtio.Transport` owns the whole register state
+machine: identity, status/feature negotiation, per-queue address/size/
+ready state, interrupt status) that `mmio.go` maps onto a `KVM_EXIT_MMIO`
+address range starting at `boot.MMIOBaseAddr`. The guest finds each device
+through a `virtio_mmio.device=<size>@<base>:<irq>` kernel command-line
+parameter `internal/hypervisor` appends automatically when a device is
+configured — no ACPI or device-tree description is needed for devices,
+only for CPU topology (see "Multi-vCPU" above).
+
+No `KVM_SET_GSI_ROUTING` call is needed for a device's interrupt: the
+default IOAPIC routing `KVM_CREATE_IRQCHIP` already sets up identity-maps
+every GSI 0-23 to the same-numbered pin, the same default that already
+makes COM1's GSI 4 work. Devices are assigned GSI 16 upward, capping at 8
+devices (GSI 16-23, the rest of that 24-pin IOAPIC) — a known scaling
+boundary; more devices would need MSI/virtio-pci, out of scope here.
+
+**virtio-net** (`internal/hypervisor/virtio/net.go`) is backed by an
+already-persistent TAP device — created and attached to its bridge out of
+band, the same way `ExecMicroVMBackend.EnsureMicroVM` already does for
+cloud-hypervisor — re-opened via `virtio.OpenTap`'s `TUNSETIFF` call
+(a deliberate divergence from cloud-hypervisor's by-name-only TAP
+attachment: this package needs the fd itself for frame I/O, cloud-hypervisor
+never touches it). No `VIRTIO_NET_F_*` offload feature (checksum, TSO) is
+offered, so the 10-byte `virtio_net_hdr` every frame is prefixed/stripped
+with is always all-zero. RX is driven by `Net.ReadLoop` reading the tap
+independently of any guest notification — delivery, not polling, is what
+moves a frame — and drops it if the driver has no RX buffer available yet,
+the same tradeoff a real NIC under memory pressure makes; TX is driven by
+`Net.HandleNotify`, called from `mmio.go`'s dispatcher on a `QueueNotify`
+write.
+
 ## Control-socket protocol
 
 `cmd/hypervisor` listens on a Unix domain socket (its path given via
@@ -132,10 +170,10 @@ Three request types today:
 
 - **`create`** — boots the VM (cloud-hypervisor's separate `vm.create`
   and `vm.boot` calls are deliberately combined into one, since this
-  process only ever boots once). The payload already carries
-  `disk_path`/`disk_readonly`/`tap_name`/`mac` fields for virtio-blk and
-  virtio-net to use once those milestones land; a VM today only honors
-  `vcpus`/`memory_mb`/`kernel_path`/`initrd_path`/`cmdline`.
+  process only ever boots once). `vcpus`/`memory_mb`/`kernel_path`/
+  `initrd_path`/`cmdline`/`tap_name`/`mac` are all honored; `disk_path`/
+  `disk_readonly` are part of the schema already so it doesn't need a
+  breaking change later, but are ignored until virtio-blk lands.
 - **`status`** — `{phase, pid, error}`. `pid` is the `cmd/hypervisor`
   process's own pid, serving the same role a cloud-hypervisor pidfile does
   for `infra-agent`'s liveness checks today. Works on a freshly connected
@@ -178,7 +216,16 @@ sudo GOA_ITEST_HYPERVISOR_KERNEL=/boot/vmlinuz-$(uname -r) \
 GitHub-hosted CI runners do have `/dev/kvm` (nested virtualization on the
 hosts behind them) once ci.yml's `integration` job opens it up with a udev
 rule - `TestKVMOpen` and `TestKVMCreateVMAndVCPU` run for real there.
-`TestHypervisorBoot` and `TestExecMicroVMBackendBoot` still self-skip in CI
-regardless: they gate on `GOA_ITEST_HYPERVISOR_KERNEL`, and no kernel image
-is provisioned there - the same limitation `microvm`'s own integration test
-already has, not something this effort tries to solve.
+`TestHypervisorBoot`, `TestHypervisorBootNetworking` and
+`TestExecMicroVMBackendBoot` still self-skip in CI regardless: they gate
+on `GOA_ITEST_HYPERVISOR_KERNEL`, and no kernel image is provisioned there
+- the same limitation `microvm`'s own integration test already has, not
+something this effort tries to solve.
+
+`TestHypervisorBootNetworking` is the fullest proof so far: it creates a
+real bridge and TAP device, boots a VM with `ip=`-based static networking
+(the same early, rootfs-independent configuration `internal/manager`'s
+`guestCmdline` already uses for cloud-hypervisor), and pings the guest
+from the host — a successful reply is a full round trip through both
+Net.ReadLoop (host → guest) and Net.HandleNotify (guest → host), not just
+"an interface showed up".
