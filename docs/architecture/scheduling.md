@@ -2,7 +2,10 @@
 
 Compute instances are placed onto nodes by the **scheduler**, a cluster-level
 controller in `infra-controller-manager`. It runs under leader election, so a
-single instance is active across the cluster.
+single instance is active across the cluster. Micro-VMs are placed by a
+second, separate **microvm-scheduler** controller with the identical
+algorithm below, substituting `microvm.spec.vcpus` for `compute.spec.cpu`;
+see [MicroVMs and compute share nodes, not capacity accounting](#microvms-and-compute-share-nodes-not-capacity-accounting).
 
 ## Nodes and pools
 
@@ -48,15 +51,32 @@ compute (nodePoolId?) ----> scheduler ----> status.nodeName = node-x
 node-x.status.allocated += {cpu, memory, 1 pod}
 ```
 
+## MicroVMs and compute share nodes, not capacity accounting
+
+`microvm-scheduler` runs the same placement pass as `scheduler` - same
+liveness rule, same eviction, same least-loaded/pool-selector pick - against
+the micro-VM store instead of the compute one, reusing `vcpus` as the CPU
+request. It is a separate controller, not a generalization of `scheduler`,
+because the two resources have unrelated spec/status types.
+
+Being separate means each one recomputes a node's `status.allocated` from
+only its own kind's instances: whichever controller reconciles last
+overwrites the other's contribution to that reported field, and each one's
+own placement decision only ever sees its own kind's load on a node - never
+the other's. A node pool that schedules both compute and microvm can
+therefore be oversubscribed across the two kinds. Until capacity accounting
+is made aware of both together, keep compute and microvm in disjoint node
+pools (`nodePoolId`) if they might otherwise land on the same nodes.
+
 ## Node-scoped realization
 
-The agent realizes compute only where it was placed. Set `GOA_NODE_ID` on
-`infra-agent` to the node's id and the agent both heartbeats that node and
-reconciles only the compute whose `status.nodeName` matches; everything else is
-left to the node that owns it.
+The agent realizes compute (and, identically, micro-VMs) only where it was
+placed. Set `GOA_NODE_ID` on `infra-agent` to the node's id and the agent
+both heartbeats that node and reconciles only the compute and micro-VMs whose
+`status.nodeName` matches; everything else is left to the node that owns it.
 
-With `GOA_NODE_ID` unset the agent realizes every compute, which is the
-single-host development default.
+With `GOA_NODE_ID` unset the agent realizes every compute and micro-VM, which
+is the single-host development default.
 
 ## Function instances
 
