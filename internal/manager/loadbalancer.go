@@ -158,12 +158,27 @@ type LoadBalancerReconciler struct {
 	computes *ComputeRegistry
 	vpcs     *VPCRegistry
 	backend  LoadBalancerBackend
+	// publicIPs is set on an edge: the host then also serves each load
+	// balancer's public address. servedPublic is what this host serves, per
+	// load balancer - the status is shared by every edge, so it cannot tell
+	// one edge what it still has to remove.
+	publicIPs    *IPAddressRegistry
+	servedPublic map[string]string
 }
 
 // NewLoadBalancerReconciler returns a reconciler backed by the LB and backend
 // stores, the compute and VPC stores and the IPVS backend.
 func NewLoadBalancerReconciler(reg *LoadBalancerRegistry, backends *LBBackendRegistry, computes *ComputeRegistry, vpcs *VPCRegistry, backend LoadBalancerBackend) *LoadBalancerReconciler {
 	return &LoadBalancerReconciler{reg: reg, backends: backends, computes: computes, vpcs: vpcs, backend: backend}
+}
+
+// AsEdge makes the reconciler serve each load balancer's public address too,
+// as an edge facing the public block does: the address goes on the loopback
+// and gets the same virtual service as the VIP, so traffic routed to the edge
+// for it reaches the backends, full-NAT included.
+func (r *LoadBalancerReconciler) AsEdge(publicIPs *IPAddressRegistry) *LoadBalancerReconciler {
+	r.publicIPs, r.servedPublic = publicIPs, map[string]string{}
+	return r
 }
 
 // Name identifies the reconcile pass.
@@ -251,6 +266,14 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 		return err
 	}
 
+	if r.publicIPs != nil {
+		if err := r.ensurePublic(ctx, lb, nodePortName(lb.Spec.VPCID), servers); err != nil {
+			lb.Status.SetPhase(resource.PhaseError, "PublicAddressError", err.Error())
+			_ = r.reg.Put(lb)
+			return err
+		}
+	}
+
 	lb.Status.Address = vip
 	lb.Status.ServiceID = fmt.Sprintf("%s:%d", vip, lb.Spec.Port)
 	lb.Status.MarkReconciled(lb.Metadata.Generation)
@@ -278,6 +301,16 @@ func (r *LoadBalancerReconciler) finalize(ctx context.Context, lb *resource.Load
 				_ = r.reg.Put(lb)
 				return err
 			}
+		}
+		if r.publicIPs != nil {
+			for _, pub := range []string{r.servedPublic[lb.Metadata.UID], lb.Status.PublicAddress} {
+				if pub != "" {
+					if err := r.backend.DeleteService(ctx, pub, lb.Spec.Port, lb.Spec.Protocol, "lo"); err != nil {
+						return err
+					}
+				}
+			}
+			delete(r.servedPublic, lb.Metadata.UID)
 		}
 		lb.Metadata.RemoveFinalizer(resource.LoadBalancerFinalizer)
 		lb.Status.SetPhase(resource.PhaseDeleting, "Deleting", "service removed")
@@ -393,5 +426,40 @@ func (b *ExecLB) ensureFullNAT(ctx context.Context, nodePort string) error {
 	if out, err := b.run(ctx, "iptables", append([]string{"-t", "nat", "-A"}, rule...)...); err != nil {
 		return fmt.Errorf("manager: masquerade ipvs via %s: %w: %s", nodePort, err, strings.TrimSpace(out))
 	}
+	return nil
+}
+
+// ensurePublic serves the load balancer's public address on this edge, or
+// stops serving the one it no longer names. A public ip_address that is not
+// resolved yet is not an error: the VIP keeps serving and the next pass
+// picks the address up.
+func (r *LoadBalancerReconciler) ensurePublic(ctx context.Context, lb *resource.LoadBalancer, nodePort string, servers []LBRealServer) error {
+	want := ""
+	if id := lb.Spec.PublicIPID; id != "" {
+		ip, err := r.publicIPs.Get(id)
+		if errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("public ip address %q not found", id)
+		}
+		if err != nil {
+			return fmt.Errorf("manager: load ip address %q: %w", id, err)
+		}
+		if ip.Spec.Type != "public" {
+			return fmt.Errorf("ip address %q is not public", id)
+		}
+		want = ip.Status.Address
+	}
+	if old := r.servedPublic[lb.Metadata.UID]; old != "" && old != want {
+		if err := r.backend.DeleteService(ctx, old, lb.Spec.Port, lb.Spec.Protocol, "lo"); err != nil {
+			return err
+		}
+		delete(r.servedPublic, lb.Metadata.UID)
+	}
+	if want != "" {
+		if err := r.backend.EnsureService(ctx, want, lb.Spec.Port, lb.Spec.Protocol, lb.Spec.Algorithm, "lo", nodePort, servers); err != nil {
+			return err
+		}
+		r.servedPublic[lb.Metadata.UID] = want
+	}
+	lb.Status.PublicAddress = want
 	return nil
 }

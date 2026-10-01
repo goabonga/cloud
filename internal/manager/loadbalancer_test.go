@@ -39,6 +39,7 @@ type lbEnv struct {
 	backends *manager.LBBackendRegistry
 	computes *manager.ComputeRegistry
 	vpcs     *manager.VPCRegistry
+	ips      *manager.IPAddressRegistry
 }
 
 func newLBEnv(t *testing.T) *lbEnv {
@@ -49,6 +50,7 @@ func newLBEnv(t *testing.T) *lbEnv {
 		backends: registry.New[resource.LBBackendSpec, resource.LBBackendStatus](store, resource.KindLBBackend),
 		computes: registry.New[resource.ComputeSpec, resource.ComputeStatus](store, resource.KindCompute),
 		vpcs:     registry.New[resource.VPCSpec, resource.VPCStatus](store, resource.KindVPC),
+		ips:      registry.New[resource.IPAddressSpec, resource.IPAddressStatus](store, resource.KindIPAddress),
 	}
 	v := &resource.VPC{Metadata: resource.ObjectMeta{UID: "vpc-1", Generation: 1}, Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}
 	v.Status.BridgeName = "br-vpc1"
