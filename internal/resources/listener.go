@@ -50,6 +50,7 @@ type lbTargetGroupModel struct {
 	Protocol    types.String `tfsdk:"protocol"`
 	Port        types.Int64  `tfsdk:"port"`
 	BackendCAID types.String `tfsdk:"backend_ca_id"`
+	ServerName  types.String `tfsdk:"server_name"`
 	HealthCheck types.Object `tfsdk:"health_check"`
 	Phase       types.String `tfsdk:"phase"`
 }
@@ -72,6 +73,7 @@ func NewLBTargetGroupResource() resource.Resource {
 				"protocol":      optStr("Protocol towards the targets: http (default), https or tcp."),
 				"port":          schema.Int64Attribute{Required: true, MarkdownDescription: "Targets' port, unless a target names its own."},
 				"backend_ca_id": optStr("With https, the CA verifying the targets' certificates; empty trusts the platform's global CAs."),
+				"server_name":   optStr("With https, the name the targets' certificates are verified against and asked for by SNI; empty uses the request's host."),
 				"health_check": schema.SingleNestedAttribute{
 					Optional:            true,
 					Computed:            true,
@@ -96,6 +98,7 @@ func NewLBTargetGroupResource() resource.Resource {
 				Protocol:    m.Protocol.ValueString(),
 				Port:        int(m.Port.ValueInt64()),
 				BackendCAID: m.BackendCAID.ValueString(),
+				ServerName:  m.ServerName.ValueString(),
 			}
 			if !m.HealthCheck.IsNull() && !m.HealthCheck.IsUnknown() {
 				var hc healthCheckModel
@@ -129,6 +132,7 @@ func NewLBTargetGroupResource() resource.Resource {
 				Protocol:    types.StringValue(r.Spec.Protocol),
 				Port:        types.Int64Value(int64(r.Spec.Port)),
 				BackendCAID: types.StringValue(r.Spec.BackendCAID),
+				ServerName:  types.StringValue(r.Spec.ServerName),
 				HealthCheck: obj,
 				Phase:       types.StringValue(string(r.Status.Phase)),
 			}, diags
