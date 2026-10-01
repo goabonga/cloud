@@ -13,6 +13,8 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
@@ -34,5 +36,18 @@ func run() error {
 	logger.Info("hypervisor starting", "controlSocket", *sockPath)
 
 	srv := newServer(logger)
+
+	// infra-agent's own shutdown path (chvShutdownGrace) sends SIGTERM
+	// before falling back to SIGKILL after a grace period; without a
+	// handler the Go runtime's default action for SIGTERM is an
+	// immediate exit with no deferred cleanup, skipping Machine.Close
+	// and leaving the control socket file behind.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-sigCh
+		srv.HandleSignal(sig)
+	}()
+
 	return srv.listenAndServe(*sockPath)
 }

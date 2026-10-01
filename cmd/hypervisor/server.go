@@ -25,7 +25,8 @@ import (
 // immediately, without this process needing to remember anything about
 // the previous connection.
 type server struct {
-	logger *slog.Logger
+	logger   *slog.Logger
+	sockPath string
 
 	mu        sync.Mutex
 	machine   *hypervisor.Machine
@@ -45,6 +46,7 @@ func newServer(logger *slog.Logger) *server {
 // process exits from inside handleShutdown instead, since by that point
 // there is nothing left to serve.
 func (s *server) listenAndServe(sockPath string) error {
+	s.sockPath = sockPath
 	if err := os.Remove(sockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("hypervisor: remove stale socket %q: %w", sockPath, err)
 	}
@@ -198,6 +200,33 @@ func (s *server) statusLocked() json.RawMessage {
 // the process level and needs no cooperation from this method beyond
 // exiting promptly.
 func (s *server) handleShutdown() error {
+	s.teardown()
+	s.logger.Info("vm shutdown")
+	go func() {
+		time.Sleep(50 * time.Millisecond) // let the response flush before the process exits
+		os.Exit(0)
+	}()
+	return nil
+}
+
+// HandleSignal is the SIGTERM/SIGINT path (main.go): unlike
+// handleShutdown, there is no client connection to flush a response to
+// first, so it tears down and exits immediately. Both paths funnel
+// through the same teardown, so a VM stopped by a signal gets the same
+// clean fd/resource hygiene as one stopped by the shutdown request.
+func (s *server) HandleSignal(sig os.Signal) {
+	s.logger.Info("received signal, shutting down", "signal", sig)
+	s.teardown()
+	os.Exit(0)
+}
+
+// teardown stops the vcpu run loop, closes the Machine (every KVM, tap
+// and disk fd, guest memory), and removes the control socket file — every
+// resource this process holds, in the order that lets the run loop
+// notice it's being cancelled before its fds are pulled out from under
+// it. Safe to call more than once (Machine.Close already is) and from
+// either handleShutdown or HandleSignal.
+func (s *server) teardown() {
 	s.mu.Lock()
 	m := s.machine
 	cancel := s.runCancel
@@ -216,11 +245,7 @@ func (s *server) handleShutdown() error {
 		time.Sleep(50 * time.Millisecond)
 		_ = m.Close()
 	}
-
-	s.logger.Info("vm shutdown")
-	go func() {
-		time.Sleep(50 * time.Millisecond) // let the response flush before the process exits
-		os.Exit(0)
-	}()
-	return nil
+	if s.sockPath != "" {
+		_ = os.Remove(s.sockPath)
+	}
 }
