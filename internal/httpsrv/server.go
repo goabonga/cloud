@@ -102,6 +102,13 @@ func (s *Server) routes() {
 	handler.New(functionInstances, resource.KindFunctionInstance).Register(s.mux, APIBase)
 	handler.NewFunctionInvokeHandler(function.NewService(functions, functionInstances, computes, nodes)).Register(s.mux, APIBase)
 
+	// Resource hierarchy and IAM (additive only; not yet enforced - see
+	// Phase 2 of the IAM roadmap).
+	register[resource.OrganizationSpec, resource.OrganizationStatus](s, resource.KindOrganization)
+	register[resource.FolderSpec, resource.FolderStatus](s, resource.KindFolder)
+	register[resource.ProjectSpec, resource.ProjectStatus](s, resource.KindProject)
+	register[resource.IAMBindingSpec, resource.IAMBindingStatus](s, resource.KindIAMBinding)
+
 	// Encryption-backed resources need a KEK.
 	if s.kek != nil {
 		secrets := registry.New[resource.SecretSpec, resource.SecretStatus](s.store, resource.KindSecret)
