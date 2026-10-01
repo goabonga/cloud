@@ -75,6 +75,11 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
 	res.Metadata.UID = uid
 
+	// Defaults first, so the stored spec - and what the client reads back -
+	// holds the effective values.
+	if d, ok := any(res.Spec).(resource.Defaulter[S]); ok {
+		res.Spec = d.WithDefaults()
+	}
 	if v, ok := any(res.Spec).(resource.Validator); ok {
 		if err := v.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
