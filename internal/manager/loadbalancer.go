@@ -104,21 +104,9 @@ func (b *ExecLB) EnsureService(ctx context.Context, vpcID, bridge, vip string, p
 	if err != nil {
 		return err
 	}
-	// The host resolves the VIP on the bridge, where only its own namespace's
-	// anycast port answers (see lbns.go), in the VPC's routing table (see
-	// vrf.go). It forwards back out the interface the request came in on,
-	// which must not make it redirect the instance.
-	if err := runSteps(ctx, b.run, "vip route", [][]string{
-		{"sysctl", "-w", "net.ipv4.conf." + bridge + ".send_redirects=0"},
-		{"ip", "route", "replace", vip + "/32", "dev", bridge, "table", vrfTableArg(vpcID)},
-	}); err != nil {
-		return err
-	}
 	in := ns.in(pid)
-	// replace, not add: idempotent without matching iproute2's error text
-	// (see ExecBackend.EnsureAddress).
-	if out, err := in(ctx, "ip", "addr", "replace", vip+"/32", "dev", lbAnycastIface); err != nil {
-		return fmt.Errorf("manager: add vip %s: %w: %s", vip, err, strings.TrimSpace(out))
+	if err := ensureVIP(ctx, b.run, in, vpcID, bridge, vip); err != nil {
+		return err
 	}
 	return syncService(ctx, in, vip, port, protocol, algorithm, servers)
 }
@@ -148,27 +136,16 @@ func (b *ExecLB) EnsurePublicService(ctx context.Context, vpcID, addr string, po
 		return err
 	}
 	in := ns.in(pid)
-	host := lbPublicPeerName(vpcID)
-	if err := ensureLeg(ctx, b.run, pid, host, lbPublicIface); err != nil {
+	if err := ensureHostLeg(ctx, b.run, in, pid, vpcID); err != nil {
 		return err
 	}
-	// The host answers the namespace's default gateway on the leg, and the
-	// namespace ARP for the public address it holds on its loopback.
-	if err := runSteps(ctx, b.run, "public leg", [][]string{
-		{"ip", "addr", "replace", lbPublicHost + "/32", "dev", host},
-		{"ip", "link", "set", host, "up"},
-		{"ip", "route", "replace", addr + "/32", "dev", host},
-	}); err != nil {
-		return err
+	// The host routes the public address to the leg, and the namespace
+	// answers ARP for it, held on its loopback.
+	if out, err := b.run(ctx, "ip", "route", "replace", addr+"/32", "dev", lbPublicPeerName(vpcID)); err != nil {
+		return fmt.Errorf("manager: route %s to the namespace: %w: %s", addr, err, strings.TrimSpace(out))
 	}
-	if err := runSteps(ctx, in, "public leg", [][]string{
-		{"ip", "addr", "replace", lbPublicNS + "/32", "dev", lbPublicIface},
-		{"ip", "link", "set", lbPublicIface, "up"},
-		{"sysctl", "-w", "net.ipv4.conf." + lbPublicIface + ".rp_filter=0"},
-		{"ip", "route", "replace", "default", "via", lbPublicHost, "dev", lbPublicIface, "onlink"},
-		{"ip", "addr", "replace", addr + "/32", "dev", "lo"},
-	}); err != nil {
-		return err
+	if out, err := in(ctx, "ip", "addr", "replace", addr+"/32", "dev", "lo"); err != nil {
+		return fmt.Errorf("manager: add %s in the namespace: %w: %s", addr, err, strings.TrimSpace(out))
 	}
 	return syncService(ctx, in, addr, port, protocol, algorithm, servers)
 }
