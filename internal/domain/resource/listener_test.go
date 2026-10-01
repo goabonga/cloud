@@ -73,6 +73,8 @@ func TestListenerModelValidate(t *testing.T) {
 		{"target group ok", tg(func(*resource.LBTargetGroupSpec) {}), false},
 		{"target group https with ca", tg(func(s *resource.LBTargetGroupSpec) { s.Protocol, s.BackendCAID = "https", "ca-1" }), false},
 		{"target group ca without https", tg(func(s *resource.LBTargetGroupSpec) { s.BackendCAID = "ca-1" }), true},
+		{"target group https with server name", tg(func(s *resource.LBTargetGroupSpec) { s.Protocol, s.ServerName = "https", "web.internal.demo" }), false},
+		{"target group server name without https", tg(func(s *resource.LBTargetGroupSpec) { s.ServerName = "web.internal.demo" }), true},
 		{"target group no vpc", tg(func(s *resource.LBTargetGroupSpec) { s.VPCID = "" }), true},
 		{"target group no port", tg(func(s *resource.LBTargetGroupSpec) { s.Port = 0 }), true},
 		{"target group bad protocol", tg(func(s *resource.LBTargetGroupSpec) { s.Protocol = "udp" }), true},

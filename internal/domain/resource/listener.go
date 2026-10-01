@@ -71,7 +71,10 @@ type LBTargetGroupSpec struct {
 	Port int `json:"port"`
 	// BackendCAID is the CA that verifies the targets' certificates with
 	// https; empty trusts the platform's global CAs.
-	BackendCAID string        `json:"backendCaId,omitempty"`
+	BackendCAID string `json:"backendCaId,omitempty"`
+	// ServerName is, with https, the name the targets' certificates are
+	// verified against and asked for by SNI; empty uses the request's host.
+	ServerName  string        `json:"serverName,omitempty"`
 	HealthCheck LBHealthCheck `json:"healthCheck"`
 }
 
@@ -118,6 +121,9 @@ func (s LBTargetGroupSpec) Validate() error {
 	}
 	if s.BackendCAID != "" && s.Protocol != LBProtocolHTTPS {
 		return fmt.Errorf("lb_target_group: backendCaId requires the https protocol")
+	}
+	if s.ServerName != "" && s.Protocol != LBProtocolHTTPS {
+		return fmt.Errorf("lb_target_group: serverName requires the https protocol")
 	}
 	hc := s.HealthCheck
 	switch hc.Protocol {
