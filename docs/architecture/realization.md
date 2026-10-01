@@ -45,15 +45,15 @@ run as root.
 
 | Resource         | Kernel state |
 | ---------------- | ------------ |
-| VPC              | a Linux bridge (`br-<uid>`), joined across hosts by a VXLAN device (`vx-<uid>`) |
+| VPC              | a Linux bridge (`br-<uid>`) in a VRF of its own (`vrf-<uid>`), joined across hosts by a VXLAN device (`vx-<uid>`) |
 | Subnet           | the gateway address on the VPC bridge |
-| Internet gateway | IPv4 forwarding + a MASQUERADE rule for the VPC CIDR |
-| Peering          | a veth pair joining the two VPC bridges |
+| Internet gateway | IPv4 forwarding, the host's default route in the VPC's table and a MASQUERADE rule for the VPC CIDR |
+| Peering          | a veth pair joining the two VPC bridges, and each VPC's CIDR routed from the other's table |
 | DNS zone/record  | answered by the agent: a resolver per VPC, and public zones on a public address |
 | Disk             | a backing image, optionally dm-crypt (LUKS) encrypted |
 | Disk file        | the file, written into the disk through the mounts of this host's instances |
 | SSL CA           | the CA certificate, in the trust bundle of the instances that trust it |
-| Security group   | an allow-list iptables chain |
+| Security group   | an allow-list iptables chain, jumped to on the VPC's bridge |
 | WAF policy       | an iptables chain attached inbound to the target |
 | Load balancer    | an IPVS virtual service in the VPC's load-balancer namespace, full-NAT through its node port; on the edges, also on its public address |
 | Public IP address | an address of the edges' public block, reserved in the shared store |
@@ -84,6 +84,44 @@ from that MAC off the overlay: the gateway is an anycast gateway, and an
 instance always routes through the host it runs on. The host answers only its
 own instances - their gateway, their resolver - so the subnets' connected
 routes sit on the bridge.
+
+## VRF per VPC
+
+Every VPC routes in a VRF of its own. Its bridge is enslaved to `vrf-<uid>`,
+whose routing table - `0x01000000` plus the VPC's VNI, the same on every host -
+holds the subnets' connected routes, the resolver address, the VIPs and, with
+an internet gateway, the host's default route. The table ends with an
+unreachable default, so a lookup that finds nothing there never falls through
+to the main table. Two VPCs therefore never see each other's routes, their
+CIDRs may overlap, and the host's main table reaches into no VPC: from a host,
+`ip vrf exec vrf-<uid> ...` runs a command inside one.
+
+What crosses between a VPC and the main table is steered by marks, at policy
+priority 900, ahead of the kernel's l3mdev rule:
+
+```
+mangle PREROUTING
+  -i br-<uid>, NEW, no mark   CONNMARK <table>   an instance opens a connection
+  connmark <table>, REPLY     MARK <table>       its replies: the VPC's table
+  connmark <table>|0x40000000, REPLY
+                              MARK <same>        replies to a port map: main
+rules  fwmark <table> lookup <table>; fwmark <table>|0x40000000 lookup main
+```
+
+A packet from the VPC goes through PREROUTING twice, on the bridge then on
+the VRF device, and what the host sends goes through OUTPUT first on the VRF
+device, untracked, then on the bridge. So packet marks are only set on replies,
+told apart by the connection's direction - a packet for the host's own
+listeners must reach them through the VRF - and every iptables rule naming an
+instance matches it on its VPC's bridge (`-o br-<uid>`) as well as its address,
+which two VPCs may share.
+
+The `vrf` module ships in the kernel's extra modules
+(`linux-modules-extra-<kernel>` on Ubuntu), which cloud images leave out.
+
+Connection tracking has no zone per VPC: two connections whose original
+5-tuples are identical - same instance address, same source port, same
+destination - in two VPCs on one host at once would be taken for one.
 
 ## Load-balancer namespaces
 
@@ -123,8 +161,8 @@ A load balancer is an IPVS virtual service in its VPC's load-balancer
 namespace, on a VIP held by the anycast port of every host's namespace, so an
 instance reaches it through its own host. An instance in the VIP's subnet
 resolves it on the bridge directly; one outside sends it to its gateway, and
-the host routes the VIP onto the bridge (`send_redirects=0` there, since it
-forwards back out the interface the request came in on). IPVS forwards in NAT
+the host routes the VIP onto the bridge in the VPC's table (`send_redirects=0`
+there, since it forwards back out the interface the request came in on). IPVS forwards in NAT
 mode, and the connections it forwards leave through the node port masqueraded
 to this host's address there (`net.ipv4.vs.conntrack=1` exposes them to
 netfilter). Every backend therefore replies to the namespace that took the
@@ -161,9 +199,11 @@ The agent serves DNS itself; no resolver process runs on the host.
 
 - **VPC resolver.** Each VPC's first address - the nameserver its instances
   are handed - is assigned as a /32 on the VPC bridge on every host, like the
-  subnet gateways, so an instance always queries its own host. It answers the
-  private zones attached to the VPC and every public zone authoritatively, and
-  forwards any other name to the host's own resolvers.
+  subnet gateways, so an instance always queries its own host. Its listener is
+  bound to the VPC's VRF device (`SO_BINDTODEVICE`), where the address lives,
+  so two VPCs may use the same one. It answers the private zones attached to
+  the VPC and every public zone authoritatively, and forwards any other name to
+  the host's own resolvers.
 - **Public DNS.** With `GOA_DNS_PUBLIC_ADDR` set (on the edges, an address of
   the public block), the agent assigns it as a /32 on the loopback and answers
   every public zone there, authoritatively and nothing else: private zones and
@@ -233,7 +273,8 @@ veth pair: vh-<hash> (host) <-> vp-<hash> (namespace)
   vp-<hash> carries the allocated address + default route via the subnet gateway
 cgroup v2: /sys/fs/cgroup/infra/<uid>  (cpu.max, memory.max, pids.max)
 rootfs:    OCI image pulled and flattened, run under pivot_root
-firewall:  FORWARD/OUTPUT -d <ip> -j <security-group chain>; DNAT for port maps
+firewall:  FORWARD/OUTPUT -o <bridge> -d <ip> -j <security-group chain>;
+           DNAT for port maps, marked into the VPC's table and back
 disks:     attached devices mounted into the rootfs
 ```
 
@@ -243,7 +284,8 @@ with a create-if-absent compare-and-swap, so agents allocating at once on
 different hosts never take the same one; a reservation is released when the
 instance is deleted), the security-group chain and each disk's device path,
 then asks the backend to bring the namespace up. Creation happens once; later
-ticks are a no-op while the namespace exists. The finalizer kills the cgroup,
+ticks only keep the firewall rules in place while the namespace exists, so an
+instance an older agent created gets the rules this one writes. The finalizer kills the cgroup,
 removes the veth, deletes the namespace and the firewall rules, and unmounts the
 disks.
 
@@ -252,7 +294,7 @@ disks.
 A declared topology converges in dependency order across ticks:
 
 ```
-VPC (bridge, VXLAN to the other hosts)
+VPC (bridge in its VRF, VXLAN to the other hosts)
   -> subnet (gateway on the bridge)
        -> internet gateway (NAT for egress)
        -> security group (allow-list chain)  +  disk (encrypted)
