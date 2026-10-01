@@ -73,6 +73,7 @@ func (s *Server) routes() {
 	register[resource.DiskSpec, resource.DiskStatus](s, resource.KindDisk)
 	register[resource.DiskFileSpec, resource.DiskFileStatus](s, resource.KindDiskFile)
 	register[resource.ComputeSpec, resource.ComputeStatus](s, resource.KindCompute)
+	register[resource.MicroVMSpec, resource.MicroVMStatus](s, resource.KindMicroVM)
 	register[resource.ACLPolicySpec, resource.ACLPolicyStatus](s, resource.KindACLPolicy)
 	register[resource.DNSZoneSpec, resource.DNSZoneStatus](s, resource.KindDNSZone)
 	register[resource.DNSRecordSpec, resource.DNSRecordStatus](s, resource.KindDNSRecord)
