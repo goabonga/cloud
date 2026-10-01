@@ -6,8 +6,10 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,5 +64,47 @@ func TestHypervisorBootReachesExit(t *testing.T) {
 	}
 	if events == 0 {
 		t.Fatal("no vcpu exit observed within the timeout — the vcpu likely never started executing guest code")
+	}
+}
+
+// TestHypervisorBootSerialOutput boots the same way, but lets the vcpu run
+// for several seconds against the emulated COM1 UART and asserts the
+// captured output contains the kernel's own boot banner — the first real,
+// content-level proof this hypervisor can get a guest far enough to talk
+// back, not just reach a non-fatal exit. No initrd is given, so the kernel
+// is expected to eventually panic looking for a root filesystem; that's
+// fine, it happens well after the banner and this test does not wait for
+// it (and panic=-1 avoids an endless reboot loop holding the VM up for no
+// reason past the timeout).
+func TestHypervisorBootSerialOutput(t *testing.T) {
+	if _, err := os.Stat(kvm.DevicePath); err != nil {
+		t.Skipf("%s not available: %v", kvm.DevicePath, err)
+	}
+	kernel := os.Getenv("GOA_ITEST_HYPERVISOR_KERNEL")
+	if kernel == "" {
+		t.Skip("GOA_ITEST_HYPERVISOR_KERNEL not set")
+	}
+
+	var console bytes.Buffer
+	m, err := hypervisor.New(hypervisor.Config{
+		VCPUs:      1,
+		MemoryMB:   256,
+		KernelPath: kernel,
+		CmdLine:    "console=ttyS0 panic=-1",
+		Console:    &console,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer m.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := m.Run(ctx, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !strings.Contains(console.String(), "Linux version") {
+		t.Fatalf("console output does not contain the kernel boot banner; got %d bytes:\n%s", console.Len(), console.String())
 	}
 }

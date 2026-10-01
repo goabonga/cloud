@@ -35,12 +35,14 @@ type ExitEvent struct {
 // the former case and a descriptive error in the latter.
 //
 // kvm.ExitHLT is treated as idle and resumed without surfacing an event.
-// Every other exit reason (today, only kvm.ExitIO and kvm.ExitMMIO) is
-// reported via onExit — which may be nil — and then resumed without this
-// package acting on it: there is no device model yet (added in later
-// milestones), so an unhandled port or MMIO read gets whatever was already
-// in its (zeroed) data buffer and a write is silently dropped. onExit may
-// mutate IOData/MMIOData in place to answer a read before Run resumes.
+// A kvm.ExitIO on COM1's port range is answered by the emulated UART
+// (console.go) and never reaches onExit. Every other exit reason (today,
+// any other kvm.ExitIO port, and all of kvm.ExitMMIO — no MMIO device
+// exists yet, added in a later milestone) is reported via onExit — which
+// may be nil — and then resumed without this package acting on it: an
+// unhandled port or MMIO read gets whatever was already in its (zeroed)
+// data buffer and a write is silently dropped. onExit may mutate
+// IOData/MMIOData in place to answer a read before Run resumes.
 //
 // Run must be called from a goroutine the caller does not otherwise use
 // for KVM ioctls: it locks the calling goroutine to its OS thread for as
@@ -69,8 +71,8 @@ func (m *Machine) Run(ctx context.Context, onExit func(*ExitEvent)) error {
 			// involvement).
 
 		case kvm.ExitIO:
-			if onExit != nil {
-				dir, size, port, data := v.run.IO()
+			dir, size, port, data := v.run.IO()
+			if !m.serveIO(port, dir, data) && onExit != nil {
 				onExit(&ExitEvent{Reason: reason, IODirection: dir, IOSize: size, IOPort: port, IOData: data})
 			}
 
