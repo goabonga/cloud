@@ -80,3 +80,32 @@ func TestEgressProxyRoundTrips(t *testing.T) {
 		t.Fatal("no proxy must read back as null")
 	}
 }
+
+func TestVPCModelRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	def := NewVPCResource().(*genericResource[vpcModel, infra.VPCSpec, infra.VPCStatus]).def
+	spec := infra.VPCSpec{CIDR: "10.0.0.0/16"}
+	r := &infra.VPC{Metadata: infra.ObjectMeta{UID: "vpc-1"}, Spec: spec}
+	r.Status.BridgeName = "br-vpc0"
+	r.Status.Phase = infra.PhaseReady
+
+	m, diags := def.toModel(context.Background(), r)
+	if diags.HasError() {
+		t.Fatalf("toModel: %v", diags)
+	}
+	if m.ID.ValueString() != "vpc-1" || m.BridgeName.ValueString() != "br-vpc0" || m.Phase.ValueString() != "Ready" {
+		t.Fatalf("toModel() = %+v", m)
+	}
+
+	got, diags := def.toSpec(context.Background(), m)
+	if diags.HasError() {
+		t.Fatalf("toSpec: %v", diags)
+	}
+	if got != spec {
+		t.Fatalf("toSpec() = %+v, want %+v", got, spec)
+	}
+	if def.id(m) != "vpc-1" {
+		t.Fatalf("id() = %q, want vpc-1", def.id(m))
+	}
+}

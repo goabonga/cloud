@@ -106,4 +106,9 @@ func TestMicroVMToSpecAndBack(t *testing.T) {
 	if got.SubnetID.ValueString() != model.SubnetID.ValueString() || got.VCPUs.ValueInt64() != model.VCPUs.ValueInt64() {
 		t.Fatalf("toModel() did not round-trip the spec: %+v", got)
 	}
+
+	id := NewMicroVMResource().(*genericResource[microvmModel, infra.MicroVMSpec, infra.MicroVMStatus]).def.id
+	if id(got) != "vm-1" {
+		t.Fatalf("id() = %q, want vm-1", id(got))
+	}
 }
