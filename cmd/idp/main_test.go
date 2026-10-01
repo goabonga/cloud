@@ -322,7 +322,7 @@ func TestServeListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -359,7 +359,7 @@ func TestServeSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -386,7 +386,7 @@ func TestServeAddressInUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 
 	if err := serve(srv, held.Addr().String()); err == nil {
 		t.Fatal("expected serve to fail binding an address already in use")
@@ -474,7 +474,7 @@ func TestRunBindFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 
 	t.Setenv("GOA_IDP_KEY", string(pemBytes))
 	t.Setenv("GOA_IDP_CLIENTS", "")
