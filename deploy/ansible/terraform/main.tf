@@ -108,15 +108,24 @@ resource "infra_compute" "web" {
   }]
 }
 
+# A public address for the load balancer, from the block routed to the edges:
+# they serve the load balancer on it, so it is reachable from outside the VPC.
+# Pinned, like the VIP, so the public DNS record can name it.
+resource "infra_ip_address" "web_public" {
+  type    = "public"
+  address = "203.0.113.10"
+}
+
 resource "infra_load_balancer" "web" {
   name   = "web"
   vpc_id = infra_vpc.demo.id
   # Pinned rather than left to the agent, so the DNS record below can name it:
   # an address the agent assigns is only known after the apply.
-  address   = "10.20.0.10"
-  port      = 80
-  protocol  = "tcp"
-  algorithm = "round_robin"
+  address      = "10.20.0.10"
+  public_ip_id = infra_ip_address.web_public.id
+  port         = 80
+  protocol     = "tcp"
+  algorithm    = "round_robin"
 }
 
 resource "infra_lb_backend" "web" {
@@ -165,13 +174,20 @@ resource "infra_dns_record" "ns" {
   records = ["203.0.113.53"]
 }
 
-# Reserved for the load balancer's public address: it resolves today, but the
-# edges do not realise public addresses yet, so nothing answers it.
+# The zone apex is the load balancer's public address, served by the edges,
+# and www an alias of it.
+resource "infra_dns_record" "apex" {
+  zone_id = infra_dns_zone.public.id
+  name    = "@"
+  type    = "A"
+  records = [infra_ip_address.web_public.address]
+}
+
 resource "infra_dns_record" "www_public" {
   zone_id = infra_dns_zone.public.id
   name    = "www"
-  type    = "A"
-  records = ["203.0.113.10"]
+  type    = "CNAME"
+  records = ["demo.test."]
 }
 
 resource "infra_dns_record" "txt" {
@@ -205,6 +221,11 @@ output "dns_names" {
   description = "Names the demo publishes, private and public."
   value = {
     private = ["web.internal.demo", "www.internal.demo"]
-    public  = ["ns.demo.test", "www.demo.test"]
+    public  = ["demo.test", "www.demo.test", "ns.demo.test"]
   }
+}
+
+output "lb_public_address" {
+  description = "Public address the edges serve the load balancer on."
+  value       = infra_ip_address.web_public.address
 }
