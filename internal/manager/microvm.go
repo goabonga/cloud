@@ -35,7 +35,7 @@ type MicroVMRequest struct {
 	KernelPath string
 	InitrdPath string
 	CmdLine    string
-	BootImage  string
+	Image      string
 	Bridge     string
 	IP         string
 	Prefix     int
@@ -150,7 +150,7 @@ func (b *ExecMicroVMBackend) EnsureMicroVM(ctx context.Context, req MicroVMReque
 		CPUs:    chCPUsConfig{BootVCPUs: req.VCPUs, MaxVCPUs: req.VCPUs},
 		Memory:  chMemoryConfig{SizeBytes: int64(req.MemoryMB) * 1024 * 1024},
 		Payload: chPayloadConfig{Kernel: req.KernelPath, Initramfs: req.InitrdPath, Cmdline: guestCmdline(req)},
-		Disks:   []chDiskConfig{{Path: req.BootImage}},
+		Disks:   []chDiskConfig{{Path: req.Image}},
 		Net:     []chNetConfig{{Tap: tap}},
 		Serial:  chConsoleConfig{Mode: "Tty"},
 		Console: chConsoleConfig{Mode: "Off"},
@@ -457,7 +457,7 @@ func (r *MicroVMReconciler) resolve(v *resource.MicroVM) (MicroVMRequest, bool, 
 		KernelPath: v.Spec.KernelPath,
 		InitrdPath: v.Spec.InitrdPath,
 		CmdLine:    v.Spec.CmdLine,
-		BootImage:  v.Spec.BootImagePath,
+		Image:      v.Spec.Image,
 		Bridge:     vpc.Status.BridgeName,
 		IP:         ip,
 		Prefix:     prefixLen(subnet.Spec.CIDR),
