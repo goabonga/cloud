@@ -57,3 +57,10 @@ left to the node that owns it.
 
 With `GOA_NODE_ID` unset the agent realizes every compute, which is the
 single-host development default.
+
+## Function instances
+
+A [function](faas.md)'s warm-pool slots are realized as ordinary compute
+instances, created by the function controller rather than a client. They carry
+no special treatment here: the scheduler places them, and the agent reconciles
+them, exactly like any user-created compute.
