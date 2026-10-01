@@ -58,7 +58,7 @@ func TestHypervisorBoot(t *testing.T) {
 	waitForSocket(t, sockPath, 5*time.Second)
 
 	conn := dialControlSocket(t, sockPath)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	enc := protocol.NewEncoder(conn)
 	dec := protocol.NewDecoder(conn)
 

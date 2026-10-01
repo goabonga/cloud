@@ -67,7 +67,9 @@ func TestServeMMIODispatchesToCorrectDevice(t *testing.T) {
 
 func TestServeMMIOFallsThroughForUnknownAddress(t *testing.T) {
 	m := &Machine{}
-	m.registerMMIODevice(virtio.NewTransport(1, 0, 1, 1, nil), nil)
+	if _, _, err := m.registerMMIODevice(virtio.NewTransport(1, 0, 1, 1, nil), nil); err != nil {
+		t.Fatalf("registerMMIODevice: %v", err)
+	}
 
 	data := make([]byte, 4)
 	if m.serveMMIO(boot.MMIOBaseAddr+10*boot.MMIODeviceSize, data, false) {

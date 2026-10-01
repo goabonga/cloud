@@ -62,7 +62,7 @@ func TestHypervisorBootDisk(t *testing.T) {
 		skipIfKVMUnusable(t, err)
 		t.Fatalf("New: %v", err)
 	}
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

@@ -30,13 +30,13 @@ func TestKVMCreateVMAndVCPU(t *testing.T) {
 		}
 		t.Fatalf("open: %v", err)
 	}
-	defer dev.Close()
+	defer func() { _ = dev.Close() }()
 
 	vm, err := dev.CreateVM()
 	if err != nil {
 		t.Fatalf("CreateVM: %v", err)
 	}
-	defer vm.Close()
+	defer func() { _ = vm.Close() }()
 
 	if err := vm.SetTSSAddr(0xfffbd000); err != nil {
 		t.Fatalf("SetTSSAddr: %v", err)
@@ -71,7 +71,7 @@ func TestKVMCreateVMAndVCPU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateVCPU: %v", err)
 	}
-	defer vcpu.Close()
+	defer func() { _ = vcpu.Close() }()
 
 	if vcpu.ID() != 0 {
 		t.Fatalf("vcpu.ID() = %d, want 0", vcpu.ID())
