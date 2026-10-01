@@ -49,6 +49,12 @@ type ObjectMeta struct {
 	// project is the primary unit of isolation, IAM, quotas and billing.
 	ProjectID string `json:"projectId,omitempty"`
 
+	// OwnerUID is the subject that created the resource. The API stamps it at
+	// creation time and never honors a client-supplied value; it is the fast
+	// path an owner uses to reach their own resources without needing an
+	// iam_binding.
+	OwnerUID string `json:"ownerUid,omitempty"`
+
 	// Labels are arbitrary key-value pairs for filtering and grouping.
 	Labels map[string]string `json:"labels,omitempty"`
 
