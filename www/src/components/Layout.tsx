@@ -5,6 +5,7 @@ import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "../auth-context";
 import { getToken, setToken } from "../auth";
+import Sidebar from "./Sidebar";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
   DropdownMenu,
@@ -48,19 +49,11 @@ function LayoutShell() {
     <div className="flex h-screen">
       <aside className="flex w-56 flex-col bg-slate-900 p-4">
         <h1 className="mb-6 px-3 text-lg font-semibold text-white">infra</h1>
-        <nav className="space-y-1">
+        <nav className="flex-1 space-y-1 overflow-y-auto">
           <NavLink to="/" end className={navClass}>
             Overview
           </NavLink>
-          <NavLink to="/vpcs" className={navClass}>
-            VPCs
-          </NavLink>
-          <NavLink to="/resources" className={navClass}>
-            Resources
-          </NavLink>
-          <NavLink to="/acls" className={navClass}>
-            ACL policies
-          </NavLink>
+          <Sidebar />
           <NavLink to="/settings" className={navClass}>
             Settings
           </NavLink>
