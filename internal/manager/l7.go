@@ -61,6 +61,12 @@ type DataPlane interface {
 	Serving() []string
 }
 
+// ListenerSource adds listeners and target groups of its own to a VPC's
+// infra-lb, such as those serving an egress proxy's address (see egress.go).
+type ListenerSource interface {
+	ExtraConfig(vpcID string) ([]lbproxy.Listener, []lbproxy.TargetGroup)
+}
+
 // ListenerReconciler is the listener pass.
 type ListenerReconciler struct {
 	listeners *LBListenerRegistry
@@ -73,6 +79,7 @@ type ListenerReconciler struct {
 	tls       TLSSource
 	nodeName  string
 	edge      bool
+	sources   []ListenerSource
 }
 
 // NewListenerReconciler returns the listener pass for the node named
@@ -88,6 +95,13 @@ func NewListenerReconciler(listeners *LBListenerRegistry, groups *LBTargetGroupR
 // the load-balancer pass does on an edge.
 func (r *ListenerReconciler) AsEdge() *ListenerReconciler {
 	r.edge = true
+	return r
+}
+
+// WithSources adds the listeners and target groups of sources to each VPC's
+// configuration. They run before this pass.
+func (r *ListenerReconciler) WithSources(sources ...ListenerSource) *ListenerReconciler {
+	r.sources = append(r.sources, sources...)
 	return r
 }
 
@@ -121,6 +135,11 @@ func (r *ListenerReconciler) ReconcileAll(ctx context.Context) error {
 			continue
 		}
 		cfg, problems := r.config(st, v.Metadata.UID)
+		for _, src := range r.sources {
+			ls, gs := src.ExtraConfig(v.Metadata.UID)
+			cfg.Listeners = append(cfg.Listeners, ls...)
+			cfg.TargetGroups = append(cfg.TargetGroups, gs...)
+		}
 		if len(cfg.Listeners) == 0 {
 			continue
 		}
@@ -444,20 +463,31 @@ func (r *ListenerReconciler) report(st *l7Store, vpcID string, cfg *lbproxy.Conf
 // ExecDataPlane is the DataPlane running infra-lb@<namespace> with systemd,
 // its configuration and status under dir/<namespace>.
 type ExecDataPlane struct {
-	run Runner
-	dir string
+	run  Runner
+	dir  string
+	unit string // the systemd template, e.g. "infra-lb@"
 }
 
 // NewExecDataPlane returns a data plane keeping its files under /run/infra-lb,
 // where infra-lb@.service reads and writes them.
-func NewExecDataPlane() *ExecDataPlane { return &ExecDataPlane{run: defaultRun, dir: "/run/infra-lb"} }
-
-// NewExecDataPlaneWith returns a data plane driven by run under dir, for tests.
-func NewExecDataPlaneWith(run Runner, dir string) *ExecDataPlane {
-	return &ExecDataPlane{run: run, dir: dir}
+func NewExecDataPlane() *ExecDataPlane {
+	return &ExecDataPlane{run: defaultRun, dir: "/run/infra-lb", unit: "infra-lb@"}
 }
 
-func lbUnit(namespace string) string { return "infra-lb@" + namespace + ".service" }
+// NewEgressDataPlane returns the data plane of the egress proxies, keeping
+// its files under /run/infra-egress, where infra-egress@.service reads and
+// writes them.
+func NewEgressDataPlane() *ExecDataPlane {
+	return &ExecDataPlane{run: defaultRun, dir: "/run/infra-egress", unit: "infra-egress@"}
+}
+
+// NewExecDataPlaneWith returns a data plane driven by run under dir, for
+// tests, running unit (a template such as "infra-lb@").
+func NewExecDataPlaneWith(run Runner, dir, unit string) *ExecDataPlane {
+	return &ExecDataPlane{run: run, dir: dir, unit: unit}
+}
+
+func (p *ExecDataPlane) unitOf(namespace string) string { return p.unit + namespace + ".service" }
 
 // Apply implements DataPlane.
 func (p *ExecDataPlane) Apply(ctx context.Context, namespace string, cfg *lbproxy.Config) error {
@@ -482,7 +512,7 @@ func (p *ExecDataPlane) Apply(ctx context.Context, namespace string, cfg *lbprox
 			return fmt.Errorf("manager: write infra-lb config: %w", err)
 		}
 	}
-	unit := lbUnit(namespace)
+	unit := p.unitOf(namespace)
 	if _, err := p.run(ctx, "systemctl", "is-active", "--quiet", unit); err != nil {
 		if out, err := p.run(ctx, "systemctl", "start", unit); err != nil {
 			return fmt.Errorf("manager: start %s: %w: %s", unit, err, strings.TrimSpace(out))
@@ -499,7 +529,7 @@ func (p *ExecDataPlane) Apply(ctx context.Context, namespace string, cfg *lbprox
 
 // Stop implements DataPlane.
 func (p *ExecDataPlane) Stop(ctx context.Context, namespace string) error {
-	unit := lbUnit(namespace)
+	unit := p.unitOf(namespace)
 	if out, err := p.run(ctx, "systemctl", "stop", unit); err != nil && !strings.Contains(out, "not loaded") {
 		return fmt.Errorf("manager: stop %s: %w: %s", unit, err, strings.TrimSpace(out))
 	}

@@ -99,11 +99,15 @@ func run() error {
 		diskFileReconciler.WithCertificates(certs)
 		tls = certs
 	}
+	// An internet gateway's egress proxy: its address is served by the
+	// listener pass, which this one feeds and runs before.
+	egressReconciler := manager.NewEgressReconciler(igws, vpcs, subnets, nodes, manager.NewExecEgress(), manager.NewEgressDataPlane(), nodeID)
 	listenerReconciler := manager.NewListenerReconciler(
 		registry.New[resource.LBListenerSpec, resource.LBListenerStatus](store, resource.KindLBListener),
 		registry.New[resource.LBTargetGroupSpec, resource.LBTargetGroupStatus](store, resource.KindLBTargetGroup),
 		registry.New[resource.LBTargetSpec, resource.LBTargetStatus](store, resource.KindLBTarget),
 		lbs, computes, vpcs, manager.NewExecDataPlane(), tls, nodeID)
+	listenerReconciler.WithSources(egressReconciler)
 	if os.Getenv("GOA_PUBLIC_CIDR") != "" {
 		// An edge serves the listeners on the public addresses too.
 		listenerReconciler.AsEdge()
@@ -152,6 +156,7 @@ func run() error {
 		// The public DNS address is taken: never hand it to an ip_address.
 		manager.NewPublicIPReconciler(ipAddresses, store, os.Getenv("GOA_PUBLIC_CIDR"), os.Getenv("GOA_DNS_PUBLIC_ADDR")),
 		lbReconciler,
+		egressReconciler,
 		listenerReconciler,
 	}
 	// GOA_BGP_ASN (set on the edges) announces what they serve to the
