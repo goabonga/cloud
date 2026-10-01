@@ -129,9 +129,13 @@ isolated libvirt network standing in for the transit link:
   the provider: `ssh ubuntu@192.168.122.30 sudo ip netns exec inet ...`.
 - **NAT**: upstream-sim masquerades towards the real LAN, but never the public
   block, so those addresses stay the lab's public ones.
-- **Edges**: the agents do not realise public addresses yet. Until they do,
-  they answer the block with ICMP unreachable rather than sending it out their
-  default route to the real LAN.
+- **Edges**: each edge answers public DNS on `203.0.113.53` and serves the
+  public addresses reserved from the block (`GOA_PUBLIC_CIDR`), such as a load
+  balancer's. The rest of the block is answered with ICMP unreachable rather
+  than sent out their default route to the real LAN.
+- **Lab machines**: every VM resolves the public zones (`public_dns_domains`)
+  through the public DNS and nothing else, and reaches the block through
+  upstream-sim.
 
 `create-vms.yml` defines `wan-sim`, creates upstream-sim and plugs each VM
 listed with a `wan_ip` into it, first pinning every VM's primary interface to
