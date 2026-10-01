@@ -78,6 +78,13 @@
       delay: 3
       until: api_health.status == 200
 
+# The API creates the public root at its first start, so it is up by now.
+- name: Trust the platform's public root
+  hosts: infra:upstream
+  become: true
+  roles:
+    - public_trust
+
 - name: Agents
   hosts: agents
   become: true
