@@ -17,13 +17,61 @@ import (
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/registry"
+	"github.com/goabonga/infrastructure/internal/ssl"
+	"github.com/goabonga/infrastructure/internal/state"
 )
 
 // DiskFileRegistry is the typed store the disk file reconciler reads and writes.
 type DiskFileRegistry = registry.Registry[resource.DiskFileSpec, resource.DiskFileStatus]
 
-// defaultDiskFileMode is the mode of a disk file whose spec names none.
-const defaultDiskFileMode os.FileMode = 0o644
+// defaultDiskFileMode is the mode of a disk file whose spec names none, and
+// defaultKeyFileMode that of a private key.
+const (
+	defaultDiskFileMode os.FileMode = 0o644
+	defaultKeyFileMode  os.FileMode = 0o600
+)
+
+// ErrCertificatePending reports a certificate not issued yet.
+var ErrCertificatePending = errors.New("manager: certificate not issued yet")
+
+// CertificateSource renders one part of a certificate, as named by
+// resource.SSLPart*: the certificate, the chain or the private key.
+type CertificateSource interface {
+	CertificatePart(certID, part string) ([]byte, error)
+}
+
+// SSLCertificates is the CertificateSource reading the platform's
+// certificates, decrypting private keys with the KMS key.
+type SSLCertificates struct{ svc *ssl.Service }
+
+// NewSSLCertificates returns a source backed by svc.
+func NewSSLCertificates(svc *ssl.Service) SSLCertificates { return SSLCertificates{svc: svc} }
+
+// CertificatePart implements CertificateSource. The chain is the certificate
+// followed by its CA's, as servers such as nginx expect.
+func (s SSLCertificates) CertificatePart(certID, part string) ([]byte, error) {
+	cert, err := s.svc.GetCert(certID)
+	if errors.Is(err, state.ErrNotFound) || (err == nil && len(cert.Status.CertPEM) == 0) {
+		return nil, ErrCertificatePending
+	}
+	if err != nil {
+		return nil, err
+	}
+	switch part {
+	case resource.SSLPartCertificate:
+		return cert.Status.CertPEM, nil
+	case resource.SSLPartChain:
+		ca, err := s.svc.Get(cert.Spec.CAID)
+		if err != nil {
+			return nil, fmt.Errorf("manager: ca %s of certificate %s: %w", cert.Spec.CAID, certID, err)
+		}
+		return append(append([]byte{}, cert.Status.CertPEM...), ca.Status.CertPEM...), nil
+	case resource.SSLPartPrivateKey:
+		_, key, err := s.svc.RevealCert(certID)
+		return key, err
+	}
+	return nil, fmt.Errorf("manager: unknown certificate part %q", part)
+}
 
 // DiskFileWriter writes content at path beneath root.
 type DiskFileWriter interface {
@@ -44,12 +92,20 @@ type DiskFileReconciler struct {
 	computes *ComputeRegistry
 	w        DiskFileWriter
 	nodeName string
+	certs    CertificateSource
 }
 
 // NewDiskFileReconciler returns a disk file pass for the node named nodeName;
 // an empty nodeName takes every instance as local, as on a single host.
 func NewDiskFileReconciler(reg *DiskFileRegistry, computes *ComputeRegistry, w DiskFileWriter, nodeName string) *DiskFileReconciler {
 	return &DiskFileReconciler{reg: reg, computes: computes, w: w, nodeName: nodeName}
+}
+
+// WithCertificates lets disk files hold parts of the platform's
+// certificates. Without it, such a file is in error.
+func (r *DiskFileReconciler) WithCertificates(certs CertificateSource) *DiskFileReconciler {
+	r.certs = certs
+	return r
 }
 
 // Name identifies the reconcile pass.
@@ -103,15 +159,28 @@ func (r *DiskFileReconciler) mountsOf(computes []resource.Compute, diskID string
 }
 
 func (r *DiskFileReconciler) write(f *resource.DiskFile, mounts []string) error {
-	mode, err := diskFileMode(f.Spec.Mode)
+	mode, err := diskFileMode(f.Spec.Mode, f.Spec.SSLPart == resource.SSLPartPrivateKey)
 	if err != nil {
 		f.Status.SetPhase(resource.PhaseError, "BadMode", err.Error())
 		_ = r.reg.Put(f)
 		return err
 	}
+	content, err := r.content(f)
+	if errors.Is(err, ErrCertificatePending) {
+		if f.Status.Phase != resource.PhasePending {
+			f.Status.SetPhase(resource.PhasePending, "WaitingForCertificate", err.Error())
+			_ = r.reg.Put(f)
+		}
+		return nil
+	}
+	if err != nil {
+		f.Status.SetPhase(resource.PhaseError, "CertificateError", err.Error())
+		_ = r.reg.Put(f)
+		return err
+	}
 	changed := false
 	for _, root := range mounts {
-		c, err := r.w.WriteFile(root, f.Spec.Path, []byte(f.Spec.Content), mode)
+		c, err := r.w.WriteFile(root, f.Spec.Path, content, mode)
 		if err != nil {
 			f.Status.SetPhase(resource.PhaseError, "WriteError", err.Error())
 			_ = r.reg.Put(f)
@@ -131,8 +200,23 @@ func (r *DiskFileReconciler) write(f *resource.DiskFile, mounts []string) error 
 	return nil
 }
 
-// diskFileMode parses an octal permission string such as "0644".
-func diskFileMode(s string) (os.FileMode, error) {
+// content is what f holds: its literal content, or a part of a certificate.
+func (r *DiskFileReconciler) content(f *resource.DiskFile) ([]byte, error) {
+	if f.Spec.SSLCertID == "" {
+		return []byte(f.Spec.Content), nil
+	}
+	if r.certs == nil {
+		return nil, errors.New("manager: no KMS key on this agent to render certificates")
+	}
+	return r.certs.CertificatePart(f.Spec.SSLCertID, f.Spec.SSLPart)
+}
+
+// diskFileMode parses an octal permission string such as "0644"; an empty
+// one is the default mode, narrower for a private key.
+func diskFileMode(s string, privateKey bool) (os.FileMode, error) {
+	if s == "" && privateKey {
+		return defaultKeyFileMode, nil
+	}
 	if s == "" {
 		return defaultDiskFileMode, nil
 	}
