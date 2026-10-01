@@ -159,9 +159,33 @@ if [ "$PKG" = "infra-agent" ]; then
   lbpid=$(systemctl show --property=MainPID --value infra-lb@validate.service)
   [ "$(readlink "/proc/$lbpid/ns/net")" = "$(readlink "/proc/$pid/ns/net")" ] ||
     fail "infra-lb@ runs outside infra-netns@'s namespace"
-  systemctl stop infra-lb@validate.service infra-netns@validate.service
+  systemctl stop infra-lb@validate.service
   rm -rf /run/infra-lb/validate
   ok "infra-lb@ serves inside the holder's namespace"
+
+  # infra-egress@ is the same binary under a unit with no capability at all.
+  EGRESS_PATH=/usr/lib/systemd/system/infra-egress@.service
+  [ -f "$EGRESS_PATH" ] || fail "unit $EGRESS_PATH not installed"
+  systemd-analyze verify "$EGRESS_PATH" || fail "infra-egress@ does not parse"
+  install -d -m 0700 /run/infra-egress/validate
+  printf '{"listeners":[],"targetGroups":[]}\n' > /run/infra-egress/validate/config.json
+  chmod 0600 /run/infra-egress/validate/config.json
+  systemctl start infra-egress@validate.service || {
+    journalctl -u infra-egress@validate.service --no-pager -n 50 || true
+    fail "infra-egress@ did not start"
+  }
+  deadline=$((SECONDS + 10))
+  until [ -s /run/infra-egress/validate/status.json ]; do
+    systemctl is-active --quiet infra-egress@validate.service || {
+      journalctl -u infra-egress@validate.service --no-pager -n 50 || true
+      fail "infra-egress@ started then exited"
+    }
+    [ "$SECONDS" -lt "$deadline" ] || fail "infra-egress@ wrote no status within 10s"
+    sleep 1
+  done
+  systemctl stop infra-egress@validate.service infra-netns@validate.service
+  rm -rf /run/infra-egress/validate
+  ok "infra-egress@ serves inside the holder's namespace"
   echo "validate($PKG): unit verified; not started (mutates host kernel state)"
   exit 0
 fi

@@ -56,9 +56,10 @@ starts: reaps zombies and forwards signals to the workload."
 
 # Further units a package ships next to its service, from deploy/systemd.
 # infra-agent starts infra-netns@ instances itself, one per namespace it holds,
-# and an infra-lb@ instance in each that has listeners.
+# an infra-lb@ instance in each that has listeners, and an infra-egress@
+# instance in each whose internet gateway filters egress.
 declare -A EXTRA_UNITS=(
-  [infra-agent]="infra-netns@.service infra-lb@.service"
+  [infra-agent]="infra-netns@.service infra-lb@.service infra-egress@.service"
 )
 
 # Further binaries a package ships, as "cmd-dir:binary". infra-agent runs
