@@ -22,6 +22,7 @@ nav = [
         { "Overview" = "architecture/overview.md" },
         { "Resource model" = "architecture/resource-model.md" },
         { "Realization" = "architecture/realization.md" },
+        { "Go hypervisor" = "architecture/go-hypervisor.md" },
         { "Load balancer data plane" = "architecture/load-balancer-data-plane.md" },
         { "Scheduling" = "architecture/scheduling.md" },
         { "FaaS functions" = "architecture/faas.md" },
