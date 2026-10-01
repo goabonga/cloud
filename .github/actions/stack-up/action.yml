@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: stack up
+description: |
+  Build infra-api, infra-controller-manager, infra-idp, infra-exporter and
+  infra-www from source and start them as plain background processes against
+  the `postgres` service the caller's job defines, then wait for each
+  listener's /healthz.
+
+  No container, no Kubernetes: `deploy/ansible` is the only install path
+  anything in this repo actually exercises, and it ships these same five
+  binaries as a .deb plus a systemd unit. Running them directly here is
+  closer to that than a cluster would be, and a lot cheaper to bring up.
+
+  infra-controller-manager has no listener (it reconciles outward), so it is
+  started but never waited on.
+
+inputs:
+  postgres-dsn:
+    required: true
+    description: DSN the state-backed components connect to.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: www/package-lock.json
+    - name: Build the control plane
+      shell: bash
+      run: make build-api build-controller-manager build-idp build-exporter build-www
+    - name: Start infra-api
+      shell: bash
+      env:
+        GOA_STATE_DSN: ${{ inputs.postgres-dsn }}
+      # infra-api, infra-controller-manager and infra-exporter all open the
+      # same Postgres-backed store, whose `CREATE TABLE IF NOT EXISTS` races
+      # against itself when two of them hit a brand-new database at the same
+      # moment (Postgres has no atomic check-then-create for this). Starting
+      # infra-api alone first and waiting for it serialises that one DDL
+      # statement; the others then find the table already there.
+      run: |
+        set -euo pipefail
+        mkdir -p /tmp/stack-logs
+        build/infra-api > /tmp/stack-logs/api.log 2>&1 &
+        disown -a
+        deadline=$((SECONDS + 60))
+        until curl -fsS --max-time 2 http://127.0.0.1:8080/healthz > /dev/null 2>&1; do
+          if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "::error::api did not answer /healthz on 8080 within 60s"
+            cat /tmp/stack-logs/api.log
+            exit 1
+          fi
+          sleep 1
+        done
+        echo "api is up"
+    - name: Start the rest of the control plane
+      shell: bash
+      env:
+        GOA_STATE_DSN: ${{ inputs.postgres-dsn }}
+        # One throwaway client so infra-idp has something to issue tokens to.
+        # Nothing in the e2e or DAST suite authenticates against infra-api, so
+        # no matching GOA_API_JWT_* is set on infra-api itself.
+        GOA_IDP_CLIENTS: e2e-token:e2e-subject
+        GOA_API_URL: http://127.0.0.1:8080
+      run: |
+        set -euo pipefail
+        build/infra-idp                > /tmp/stack-logs/idp.log 2>&1 &
+        build/infra-controller-manager > /tmp/stack-logs/controller-manager.log 2>&1 &
+        build/infra-exporter           > /tmp/stack-logs/exporter.log 2>&1 &
+        build/infra-www                > /tmp/stack-logs/www.log 2>&1 &
+        disown -a
+    - name: Wait for every listener
+      shell: bash
+      run: |
+        set -euo pipefail
+        declare -A ports=( [idp]=8081 [exporter]=9100 [www]=8088 )
+        for name in "${!ports[@]}"; do
+          port="${ports[$name]}"
+          deadline=$((SECONDS + 60))
+          until curl -fsS --max-time 2 "http://127.0.0.1:$port/healthz" > /dev/null 2>&1; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::$name did not answer /healthz on $port within 60s"
+              cat /tmp/stack-logs/*.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "$name is up"
+        done
