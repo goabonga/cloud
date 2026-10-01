@@ -1,0 +1,134 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: publish component
+description: |
+  Cross-compile linux/amd64 + linux/arm64, package the .deb(s) and cut the
+  GitHub Release for one bumped component. Reuses the amd64 .deb the
+  deb-validate chain already installed, started and scored instead of
+  rebuilding it, then deletes the now-redundant CI artifact.
+
+inputs:
+  component:
+    required: true
+    description: Component name, e.g. infra-api.
+
+outputs:
+  has_deb:
+    value: ${{ steps.has_deb.outputs.value }}
+
+runs:
+  using: composite
+  steps:
+    # No build cache on the publish path. The Go and npm caches are written
+    # by pull-request runs, so restoring one here would let a pull request
+    # place bytes into a job that signs and pushes release artifacts. Publish
+    # compiles from a clean checkout; the minutes are the price of that.
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: false
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 22
+    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        enable-cache: false
+        python-version: "3.12"
+    - name: Install multicz
+      shell: bash
+      run: uv tool install multicz
+    # Reuse the amd64 .deb the deb-validate chain already installed, started
+    # and scored, instead of rebuilding it here. Rebuilding would publish a
+    # package nothing had validated - identical in intent, unverified in
+    # fact. A component bumped purely by cascade has no artifact (its own
+    # paths did not change), so probe rather than assume.
+    - id: has_deb
+      name: Check for a validated .deb from this run
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        COMPONENT: ${{ inputs.component }}
+      run: |
+        set -euo pipefail
+        if gh api --paginate \
+             "/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
+             --jq '.artifacts[].name' | grep -qx "${COMPONENT}-deb"; then
+          echo "value=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "value=false" >> "$GITHUB_OUTPUT"
+          echo "no validated .deb for ${COMPONENT}; will build one"
+        fi
+    - uses: actions/download-artifact@v8
+      if: steps.has_deb.outputs.value == 'true'
+      with:
+        name: ${{ inputs.component }}-deb
+        path: dist
+    - name: Build release binaries
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        HAS_VALIDATED_DEB: ${{ steps.has_deb.outputs.value }}
+        COMPONENT: ${{ inputs.component }}
+      run: |
+        set -euo pipefail
+        component="$COMPONENT"
+        case "$component" in
+          infra)                     dir=cli ;;
+          terraform-provider-infra)  dir=provider ;;
+          infra-*)                   dir="${component#infra-}" ;;
+          *)                         echo "unknown component $component" >&2; exit 1 ;;
+        esac
+        # The web dashboard embeds the built SPA, so build the frontend first.
+        if [ "$dir" = "www" ]; then
+          ( cd www && npm ci && npm run build )
+          find cmd/www/dist -mindepth 1 ! -name .gitkeep -delete
+          cp -r www/dist/. cmd/www/dist/
+        fi
+        version=$(multicz get "$component")
+        tag="${component}-v${version}"
+        mkdir -p dist
+        # infra-spa is the standalone SPA bundle (no Go binary): build it and
+        # ship www/dist as a tarball release asset.
+        if [ "$component" = "infra-spa" ]; then
+          ( cd www && npm ci && npm run build )
+          tar -czf "dist/infra-spa_${version}_dist.tar.gz" -C www/dist .
+          ( cd dist && sha256sum infra-spa_${version}_* > "infra-spa_${version}_checksums.txt" )
+          notes=$(multicz release-notes --tag "$tag" || echo "Release $tag")
+          gh release create "$tag" --title "$tag" --notes "$notes" dist/infra-spa_${version}_*
+          exit 0
+        fi
+        for platform in linux/amd64 linux/arm64; do
+          os="${platform%/*}"; arch="${platform#*/}"
+          out="dist/${component}_${version}_${os}_${arch}"
+          CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+            go build -ldflags='-s -w' -o "$out" "./cmd/${dir}/"
+        done
+        # arm64 is always built here: deb-validate installs and starts the
+        # package on an amd64 runner, so an arm64 .deb cannot go through
+        # those gates and is published on the strength of the shared build
+        # script alone. amd64 is only rebuilt when the validated artifact is
+        # missing.
+        ARCH=arm64 ./packaging/build-debs.sh "$version" "$component"
+        if [ "$HAS_VALIDATED_DEB" = "true" ]; then
+          echo "publishing the validated amd64 .deb from deb-validate"
+          ls -l "dist/${component}_${version}_amd64.deb"
+        else
+          ARCH=amd64 ./packaging/build-debs.sh "$version" "$component"
+        fi
+        ( cd dist && sha256sum ${component}_${version}_* > "${component}_${version}_checksums.txt" )
+        ls -l dist
+        notes=$(multicz release-notes --tag "$tag" || echo "Release $tag")
+        gh release create "$tag" \
+          --title "$tag" \
+          --notes "$notes" \
+          dist/${component}_${version}_*
+    # The .deb is published and attested by deb-validate; keeping the run
+    # artifact would leave a second, unreleased copy of it around for anyone
+    # reading the run page to pick up by mistake.
+    - name: Delete the consumed CI artifacts
+      if: steps.has_deb.outputs.value == 'true'
+      uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
+      with:
+        name: ${{ inputs.component }}-deb
+        failOnError: false
