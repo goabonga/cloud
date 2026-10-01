@@ -21,9 +21,32 @@ export interface ListColumn {
   label: string;
 }
 
+// FieldType picks which control FieldInput renders and how ResourceForm
+// assembles its value into the spec.
+export type FieldType = "string" | "number" | "boolean" | "enum" | "stringList" | "keyValue" | "reference" | "group";
+
+// FieldSchema is one create/edit form field. key is a dot-path assembled
+// into the spec on submit (e.g. "capacity.cpus" -> { capacity: { cpus } });
+// a "group" field instead holds an array of rows, each assembled from its
+// own `fields`.
+export interface FieldSchema {
+  key: string;
+  label: string;
+  type: FieldType;
+  required?: boolean;
+  // enumValues lists the options for "enum".
+  enumValues?: string[];
+  // referenceKind names the kind a "reference" field's <select> is
+  // populated from (via listResources(referenceKind)).
+  referenceKind?: string;
+  // fields lists a "group" field's per-row sub-fields.
+  fields?: FieldSchema[];
+  helpText?: string;
+}
+
 // ResourceDef is the single source of truth for how one resource kind shows
-// up in the console: which category it lives under, its sidebar icon, and
-// how its list table renders and searches.
+// up in the console: which category it lives under, its sidebar icon, how
+// its list table renders and searches, and its create/edit form fields.
 export interface ResourceDef {
   kind: string;
   label: string;
@@ -34,4 +57,5 @@ export interface ResourceDef {
   // searchableFields are dot-paths checked by the list search box, in
   // addition to metadata.uid which is always searchable.
   searchableFields: string[];
+  fields: FieldSchema[];
 }

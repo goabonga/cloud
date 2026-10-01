@@ -22,6 +22,7 @@ const vpcDef: ResourceDef = {
   icon: Network,
   listColumns: [{ key: "spec.cidr", label: "CIDR" }],
   searchableFields: ["spec.cidr"],
+  fields: [{ key: "cidr", label: "CIDR", type: "string", required: true }],
 };
 
 function resource(uid: string, cidr: string, phase = "Ready"): generic.GenericResource {
