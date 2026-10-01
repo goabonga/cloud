@@ -64,6 +64,11 @@ jobs:
     name: detect changed components
     needs: validate
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # Only this job's own duplicate-push check reads run history; nothing
+      # else here needs more than the default contents:read.
+      actions: read
     outputs:
       packages: ${{ steps.bypass.outputs.packages || steps.changed.outputs.packages }}
       has_package_changes: ${{ steps.bypass.outputs.has_package_changes || steps.changed.outputs.has_package_changes }}
@@ -71,11 +76,49 @@ jobs:
       integration_changed: ${{ steps.bypass.outputs.integration_changed || steps.changed.outputs.integration_changed }}
       www_changed: ${{ steps.bypass.outputs.www_changed || steps.changed.outputs.www_changed }}
       chart_changed: ${{ steps.bypass.outputs.chart_changed || steps.changed.outputs.chart_changed }}
-      release_commit: ${{ steps.bypass.outputs.active || 'false' }}
+      # True for multicz's own chore(release) commit *or* a duplicate push
+      # delivery (see `bypass` below) - both mean "nothing here needs acting
+      # on", which is all chart-lint's own use of this output cares about.
+      bypassed: ${{ steps.bypass.outputs.active || 'false' }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # GitHub occasionally delivers the push webhook twice for one `git
+      # push`, firing two independent runs of this workflow for the same
+      # commit (seen on 647b8cd: two push-triggered runs, 17s apart, same
+      # sha). The concurrency group below serializes them at the whole-
+      # workflow level - a queued run's jobs, including this one, don't
+      # start until the earlier run in the group finishes - so by the time
+      # a duplicate's `detect` job runs, the earlier run's real conclusion
+      # is already known. Only treat it as covering this commit when that
+      # conclusion is success/neutral/skipped (or still null, for the
+      # narrow window before serialization kicks in): a failed earlier
+      # duplicate must not suppress the only real attempt at this commit.
+      # Whichever eligible run has the lowest id is canonical; this only
+      # ever adds a bypass (duplicate=false, the default, changes nothing)
+      # - a failed or empty API read fails open rather than risk skipping a
+      # real push's CI.
+      - id: dedupe
+        name: Detect a duplicate push-event delivery
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ids=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?event=push&head_sha=${{ github.sha }}&per_page=20" \
+            --jq '[.workflow_runs[] | select(.conclusion == null or .conclusion == "success" or .conclusion == "neutral" or .conclusion == "skipped") | .id] | sort' 2>/dev/null || echo '[]')
+          mine=${{ github.run_id }}
+          first=$(echo "$ids" | jq -r '.[0] // empty')
+          contains_mine=$(echo "$ids" | jq --argjson mine "$mine" 'any(. == $mine)')
+          if [ "$contains_mine" = "true" ] && [ -n "$first" ] && [ "$first" != "$mine" ]; then
+            echo "duplicate=true" >> "$GITHUB_OUTPUT"
+            echo "## detect - duplicate push delivery" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Run \`$first\` already covers \`${{ github.sha }}\`; bypassing this one." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "duplicate=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: false
@@ -89,12 +132,17 @@ jobs:
       # replaying the graph would rebuild byte-identical outputs and race the
       # release it descends from. Report an empty change set instead; every
       # gated job downstream skips, and detect itself still runs as a smoke
-      # check.
+      # check. A duplicate push delivery (see `dedupe` above) short-circuits
+      # exactly the same way - it is the same "this commit is already being
+      # or has already been handled" situation, just with a different cause.
       - id: bypass
-        name: Short-circuit multicz release commits
-        if: startsWith(github.event.head_commit.message, 'chore(release):')
+        name: Short-circuit multicz release commits and duplicate deliveries
+        if: >-
+          startsWith(github.event.head_commit.message, 'chore(release):')
+          || steps.dedupe.outputs.duplicate == 'true'
         env:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          IS_RELEASE_COMMIT: ${{ startsWith(github.event.head_commit.message, 'chore(release):') }}
         run: |
           set -euo pipefail
           {
@@ -106,6 +154,7 @@ jobs:
             echo "www_changed=false"
             echo "chart_changed=false"
           } >> "$GITHUB_OUTPUT"
+          [ "$IS_RELEASE_COMMIT" = "true" ] || exit 0
           # multicz shapes the subject as
           # `chore(release): bump infra-api 0.1.1 -> 0.1.2, infra-cli ...`.
           # Split on the commas to render one bullet per component.
@@ -125,7 +174,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - id: changed
         name: Compute changed components
-        if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+        if: >-
+          !startsWith(github.event.head_commit.message, 'chore(release):')
+          && steps.dedupe.outputs.duplicate != 'true'
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -823,7 +874,7 @@ jobs:
     name: chart-lint
     needs: detect
     if: >-
-      needs.detect.outputs.release_commit != 'true'
+      needs.detect.outputs.bypassed != 'true'
       && needs.detect.outputs.chart_changed == 'true'
     runs-on: ubuntu-24.04
     steps:
