@@ -15,15 +15,15 @@ option there.
 
 ## Status
 
-Milestone 1 (single vCPU, direct kernel boot, serial console) is done:
-`cmd/hypervisor` can boot a real Linux kernel and initrd under KVM and
-serve a working `ttyS0` console. Ahead: multi-vCPU (SMP), virtio-net,
-virtio-blk, then a combined parity pass and hardening — see the plan this
-series follows for the full milestone breakdown.
+Milestone 1 (single vCPU, direct kernel boot, serial console) and
+milestone 2 (multi-vCPU/SMP) are done: `cmd/hypervisor` can boot a real
+Linux kernel and initrd under KVM with any number of vCPUs and serve a
+working `ttyS0` console. Ahead: virtio-net, virtio-blk, then a combined
+parity pass and hardening — see the plan this series follows for the full
+milestone breakdown.
 
 Not implemented yet, each deliberately scoped to a later milestone:
 
-- More than one vCPU (`Config.VCPUs` other than `1` is rejected).
 - Any virtio device — no network, no disk. A VM boots from its kernel and
   initrd only; there is no way to mount a root filesystem yet.
 - Any MMIO device at all (the run loop's `KVM_EXIT_MMIO` dispatch exists
@@ -87,9 +87,36 @@ already requires of its `KernelPath`/`InitrdPath` today (see
 Guest low memory holds (see `internal/hypervisor/boot/layout.go` for the
 exact addresses): a flat 3-entry GDT, 3-level identity-mapped page tables
 (2 MiB pages, one page-directory page per GiB of guest memory), the kernel
-command line, and the "zero page" (`struct boot_params`) tying it together
-with an E820 memory map. The kernel and an optional initrd are loaded at
-their own fixed/high addresses.
+command line, an Intel MP Specification table (not ACPI — see "Multi-vCPU"
+below), and the "zero page" (`struct boot_params`) tying it together with
+an E820 memory map. The kernel and an optional initrd are loaded at their
+own fixed/high addresses.
+
+### Multi-vCPU
+
+Every vCPU — including vCPU 0 — gets the identical boot-protocol register
+setup, matching how Firecracker's own x86_64 loader configures every vCPU
+uniformly. This is safe for vCPUs other than 0 specifically *because* this
+package creates the in-kernel irqchip (`KVM_CREATE_IRQCHIP`): KVM then
+holds every non-boot vCPU in `KVM_MP_STATE_UNINITIALIZED` and does not
+execute guest code on them until the booted kernel's own SMP bring-up
+code sends a real INIT-SIPI-SIPI sequence over the in-kernel LAPIC, which
+resets the target vCPU's state (including `%rip`/`%rsp`) to whatever the
+SIPI vector specifies — discarding whatever was configured at creation.
+Without an in-kernel irqchip, per the KVM API documentation, "the
+multiprocessing state must be maintained by userspace"; this package never
+does, by design.
+
+CPU topology (so the kernel knows more than one CPU exists at all) comes
+from a legacy Intel MP Specification table, not ACPI/MADT — the same
+choice Firecracker makes for x86_64, confirmed against its source before
+implementing this. It needs no RSDP/XSDT/FADT scaffolding, just the one
+self-contained, 16-byte-aligned floating-pointer structure
+(`internal/hypervisor/boot/mptable.go`) placed at the fixed low-memory
+address (`MPTableAddr`, `0x9fc00`) the kernel's `mpparse.c` falls back to
+scanning when no EBDA is signaled — always the case here, since this
+package never writes a BIOS Data Area at all. Every mainstream distro and
+cloud kernel still carries `CONFIG_X86_MPPARSE`.
 
 ## Control-socket protocol
 
