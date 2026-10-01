@@ -43,7 +43,7 @@ func TestWarmPoolPolicyValidate(t *testing.T) {
 func TestFunctionSpecValidate(t *testing.T) {
 	t.Parallel()
 
-	base := resource.FunctionSpec{SubnetID: "sn-1", Image: "example/fn:latest"}
+	base := resource.FunctionSpec{SubnetID: "sn-1", Image: "example/fn:latest", Port: 8080}
 
 	tests := []struct {
 		name    string
@@ -55,6 +55,8 @@ func TestFunctionSpecValidate(t *testing.T) {
 		{"missing image", func(s resource.FunctionSpec) resource.FunctionSpec { s.Image = ""; return s }, true},
 		{"negative cpu", func(s resource.FunctionSpec) resource.FunctionSpec { s.CPU = -1; return s }, true},
 		{"negative memory", func(s resource.FunctionSpec) resource.FunctionSpec { s.MemoryMB = -1; return s }, true},
+		{"missing port", func(s resource.FunctionSpec) resource.FunctionSpec { s.Port = 0; return s }, true},
+		{"port out of range", func(s resource.FunctionSpec) resource.FunctionSpec { s.Port = 70000; return s }, true},
 		{"invalid warm pool", func(s resource.FunctionSpec) resource.FunctionSpec {
 			s.WarmPool = resource.WarmPoolPolicy{MinWarm: 3, MaxWarm: 1}
 			return s

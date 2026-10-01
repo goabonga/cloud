@@ -55,8 +55,8 @@ func (p WarmPoolPolicy) Validate() error {
 // FunctionSpec is the desired state of a FaaS function: the compute shape run
 // for each invocation, plus the warm-pool policy. It mirrors ComputeSpec's
 // runtime fields (image, command, env, sizing, network attachment) without
-// Ports or Disks, which belong to the invoke path (added once it exists) and
-// to compute instances directly, not to the function shape.
+// Disks, which belong to compute instances directly, not to the function
+// shape.
 type FunctionSpec struct {
 	Name string `json:"name,omitempty"`
 	// SubnetID attaches the function's instances to a subnet, same as a
@@ -72,7 +72,10 @@ type FunctionSpec struct {
 	Image      string            `json:"image"`
 	Command    string            `json:"command,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
-	WarmPool   WarmPoolPolicy    `json:"warmPool,omitempty"`
+	// Port is the port the runtime listens on inside the instance; invoke
+	// requests are forwarded to it.
+	Port     int            `json:"port"`
+	WarmPool WarmPoolPolicy `json:"warmPool,omitempty"`
 }
 
 // Validate reports whether the spec is well-formed.
@@ -88,6 +91,9 @@ func (s FunctionSpec) Validate() error {
 	}
 	if s.MemoryMB < 0 {
 		return fmt.Errorf("function: memoryMb must not be negative")
+	}
+	if s.Port < 1 || s.Port > 65535 {
+		return fmt.Errorf("function: port out of range")
 	}
 	return s.WarmPool.Validate()
 }
