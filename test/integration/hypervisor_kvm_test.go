@@ -6,7 +6,8 @@
 package integration
 
 import (
-	"os"
+	"errors"
+	"io/fs"
 	"testing"
 
 	"github.com/goabonga/infrastructure/internal/hypervisor/kvm"
@@ -22,12 +23,11 @@ const kvmCapUserMemory = 3
 // support for user-memory-backed guest RAM. It needs root (or kvm-group
 // membership) and a KVM-capable host; see docs/architecture/go-hypervisor.md.
 func TestKVMOpen(t *testing.T) {
-	if _, err := os.Stat(kvm.DevicePath); err != nil {
-		t.Skipf("%s not available: %v", kvm.DevicePath, err)
-	}
-
 	dev, err := kvm.Open()
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+			t.Skipf("%s not usable: %v", kvm.DevicePath, err)
+		}
 		t.Fatalf("open: %v", err)
 	}
 	defer dev.Close()
