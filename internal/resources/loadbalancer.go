@@ -24,6 +24,9 @@ type loadBalancerModel struct {
 	Algorithm types.String `tfsdk:"algorithm"`
 	ServiceID types.String `tfsdk:"service_id"`
 	Phase     types.String `tfsdk:"phase"`
+	// Public reachability through the edges.
+	PublicIPID    types.String `tfsdk:"public_ip_id"`
+	PublicAddress types.String `tfsdk:"public_address"`
 }
 
 // NewLoadBalancerResource is the infra_load_balancer resource factory.
@@ -33,25 +36,28 @@ func NewLoadBalancerResource() resource.Resource {
 		schema: schema.Schema{
 			MarkdownDescription: "A layer-4 load balancer fronting compute backends.",
 			Attributes: map[string]schema.Attribute{
-				"id":         idAttribute(),
-				"name":       schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Display name."},
-				"vpc_id":     schema.StringAttribute{Required: true, MarkdownDescription: "Parent VPC id."},
-				"address":    schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Virtual address; assigned when omitted."},
-				"port":       schema.Int64Attribute{Required: true, MarkdownDescription: "Listening port."},
-				"protocol":   schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "tcp or udp."},
-				"algorithm":  schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "round_robin, least_conn or source."},
-				"service_id": schema.StringAttribute{Computed: true, MarkdownDescription: "Backend service identifier."},
-				"phase":      phaseAttribute(),
+				"id":             idAttribute(),
+				"name":           schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Display name."},
+				"vpc_id":         schema.StringAttribute{Required: true, MarkdownDescription: "Parent VPC id."},
+				"address":        schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Virtual address; assigned when omitted."},
+				"port":           schema.Int64Attribute{Required: true, MarkdownDescription: "Listening port."},
+				"protocol":       schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "tcp or udp."},
+				"algorithm":      schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "round_robin, least_conn or source."},
+				"service_id":     schema.StringAttribute{Computed: true, MarkdownDescription: "Backend service identifier."},
+				"public_ip_id":   schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "A public `infra_ip_address` the load balancer is also reachable on from outside the VPC, through the edges."},
+				"public_address": schema.StringAttribute{Computed: true, MarkdownDescription: "The public address the edges serve the load balancer on."},
+				"phase":          phaseAttribute(),
 			},
 		},
 		toSpec: func(_ context.Context, m loadBalancerModel) (infra.LoadBalancerSpec, diag.Diagnostics) {
 			return infra.LoadBalancerSpec{
-				Name:      m.Name.ValueString(),
-				VPCID:     m.VPCID.ValueString(),
-				Address:   m.Address.ValueString(),
-				Port:      int(m.Port.ValueInt64()),
-				Protocol:  m.Protocol.ValueString(),
-				Algorithm: m.Algorithm.ValueString(),
+				Name:       m.Name.ValueString(),
+				VPCID:      m.VPCID.ValueString(),
+				Address:    m.Address.ValueString(),
+				Port:       int(m.Port.ValueInt64()),
+				Protocol:   m.Protocol.ValueString(),
+				Algorithm:  m.Algorithm.ValueString(),
+				PublicIPID: m.PublicIPID.ValueString(),
 			}, nil
 		},
 		toModel: func(_ context.Context, r *infra.LoadBalancer) (loadBalancerModel, diag.Diagnostics) {
@@ -60,15 +66,17 @@ func NewLoadBalancerResource() resource.Resource {
 				address = r.Status.Address
 			}
 			return loadBalancerModel{
-				ID:        types.StringValue(r.Metadata.UID),
-				Name:      types.StringValue(r.Spec.Name),
-				VPCID:     types.StringValue(r.Spec.VPCID),
-				Address:   types.StringValue(address),
-				Port:      types.Int64Value(int64(r.Spec.Port)),
-				Protocol:  types.StringValue(r.Spec.Protocol),
-				Algorithm: types.StringValue(r.Spec.Algorithm),
-				ServiceID: types.StringValue(r.Status.ServiceID),
-				Phase:     types.StringValue(string(r.Status.Phase)),
+				ID:            types.StringValue(r.Metadata.UID),
+				Name:          types.StringValue(r.Spec.Name),
+				VPCID:         types.StringValue(r.Spec.VPCID),
+				Address:       types.StringValue(address),
+				Port:          types.Int64Value(int64(r.Spec.Port)),
+				Protocol:      types.StringValue(r.Spec.Protocol),
+				Algorithm:     types.StringValue(r.Spec.Algorithm),
+				ServiceID:     types.StringValue(r.Status.ServiceID),
+				Phase:         types.StringValue(string(r.Status.Phase)),
+				PublicIPID:    types.StringValue(r.Spec.PublicIPID),
+				PublicAddress: types.StringValue(r.Status.PublicAddress),
 			}, nil
 		},
 		id: func(m loadBalancerModel) string { return m.ID.ValueString() },
