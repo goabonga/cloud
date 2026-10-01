@@ -47,6 +47,7 @@ func run() error {
 	vpcs := registry.New[resource.VPCSpec, resource.VPCStatus](store, resource.KindVPC)
 	computes := registry.New[resource.ComputeSpec, resource.ComputeStatus](store, resource.KindCompute)
 	microvms := registry.New[resource.MicroVMSpec, resource.MicroVMStatus](store, resource.KindMicroVM)
+	disks := registry.New[resource.DiskSpec, resource.DiskStatus](store, resource.KindDisk)
 	nodes := registry.New[resource.NodeSpec, resource.NodeStatus](store, resource.KindNode)
 	nodePools := registry.New[resource.NodePoolSpec, resource.NodePoolStatus](store, resource.KindNodePool)
 
@@ -55,6 +56,7 @@ func run() error {
 	mgr.Add(controllers.NewVPCSummaryController(vpcs, logger))
 	mgr.Add(controllers.NewSchedulerController(computes, nodes, nodePools, 4*(*interval), logger))
 	mgr.Add(controllers.NewMicroVMSchedulerController(microvms, nodes, nodePools, 4*(*interval), logger))
+	mgr.Add(controllers.NewDiskSchedulerController(disks, nodes, 4*(*interval), logger))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
