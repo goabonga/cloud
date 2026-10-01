@@ -28,12 +28,27 @@ export const KINDS = [
   "waf_rule",
   "node",
   "node_pool",
+  "organization",
+  "folder",
+  "project",
+  "iam_binding",
 ] as const;
 
 export interface GenericResource {
-  metadata: { uid: string; name?: string; generation: number; createdAt: string };
+  metadata: {
+    uid: string;
+    name?: string;
+    generation: number;
+    createdAt: string;
+    projectId?: string;
+    ownerUid?: string;
+  };
   spec: Record<string, unknown>;
   status: { phase?: string } & Record<string, unknown>;
+}
+
+export interface ResourceMetadataInput {
+  projectId?: string;
 }
 
 interface List {
