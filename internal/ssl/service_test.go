@@ -242,3 +242,23 @@ func TestCreateCertKeepsItsKeyAcrossAnUnchangedPut(t *testing.T) {
 		t.Fatal("new SANs must get a new certificate")
 	}
 }
+
+func TestEnsureGlobalRootCreatesItOnce(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newService(t)
+	first, err := svc.EnsureGlobalRoot("infra public root", "lab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Spec.Global || first.Metadata.UID != ssl.GlobalRootUID || len(first.Status.CertPEM) == 0 {
+		t.Fatalf("root: %+v", first)
+	}
+	again, err := svc.EnsureGlobalRoot("another name", "lab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again.Status.CertPEM) != string(first.Status.CertPEM) {
+		t.Fatal("a restart must not replace the global root")
+	}
+}

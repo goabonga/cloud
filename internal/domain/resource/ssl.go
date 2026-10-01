@@ -14,6 +14,11 @@ type SSLCASpec struct {
 	Organization string `json:"organization,omitempty"`
 	// ValidDays is the CA lifetime; zero means the server default.
 	ValidDays int `json:"validDays,omitempty"`
+	// VPCIDs are the VPCs whose instances trust the CA.
+	VPCIDs []string `json:"vpcIds,omitempty"`
+	// Global marks the platform's public root, trusted by every machine and
+	// every instance. Only the platform creates it.
+	Global bool `json:"global,omitempty"`
 }
 
 // Validate reports whether the spec is well-formed for a write.

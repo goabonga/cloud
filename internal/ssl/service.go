@@ -290,6 +290,19 @@ func redactCert(res *resource.SSLCert) *resource.SSLCert {
 	return &out
 }
 
+// GlobalRootUID is the uid of the platform's public root CA.
+const GlobalRootUID = "public-root"
+
+// EnsureGlobalRoot creates the platform's public root CA unless it exists.
+// It signs the certificates of public names, and every machine and instance
+// trusts it.
+func (s *Service) EnsureGlobalRoot(commonName, organization string) (*resource.SSLCA, error) {
+	if existing, err := s.reg.Get(GlobalRootUID); err == nil && len(existing.Status.CertPEM) > 0 {
+		return redact(existing), nil
+	}
+	return s.CreateCA(GlobalRootUID, GlobalRootUID, resource.SSLCASpec{CommonName: commonName, Organization: organization, Global: true})
+}
+
 // sameCAIdentity reports whether two CA specs describe the same certificate:
 // same subject and lifetime. Other fields can change without a new key.
 func sameCAIdentity(a, b resource.SSLCASpec) bool {
