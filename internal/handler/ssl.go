@@ -79,6 +79,12 @@ func (h *SSLHandler) put(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The global root belongs to the platform: no client creates, replaces or
+	// widens it, nor marks its own CA trusted everywhere.
+	if in.Spec.Global || r.PathValue("uid") == ssl.GlobalRootUID {
+		writeError(w, http.StatusForbidden, "the global root CA is managed by the platform")
+		return
+	}
 	out, err := h.svc.CreateCA(r.PathValue("uid"), in.Metadata.Name, in.Spec)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -88,6 +94,10 @@ func (h *SSLHandler) put(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SSLHandler) delete(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("uid") == ssl.GlobalRootUID {
+		writeError(w, http.StatusForbidden, "the global root CA is managed by the platform")
+		return
+	}
 	if err := h.svc.Delete(r.PathValue("uid")); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
