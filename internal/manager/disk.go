@@ -145,12 +145,17 @@ type DiskReconciler struct {
 	reg     *DiskRegistry
 	backend DiskBackend
 	master  []byte
+	// nodeName scopes realization to disks scheduled to this node. When empty
+	// the reconciler realizes every disk (single-host mode).
+	nodeName string
 }
 
 // NewDiskReconciler returns a reconciler. master is the raw KMS master key used
 // to derive per-disk encryption keys; a nil master disables disk encryption.
-func NewDiskReconciler(reg *DiskRegistry, backend DiskBackend, master []byte) *DiskReconciler {
-	return &DiskReconciler{reg: reg, backend: backend, master: master}
+// nodeName scopes realization to disks scheduled to this node; an empty
+// nodeName realizes every disk.
+func NewDiskReconciler(reg *DiskRegistry, backend DiskBackend, master []byte, nodeName string) *DiskReconciler {
+	return &DiskReconciler{reg: reg, backend: backend, master: master, nodeName: nodeName}
 }
 
 // Name identifies the reconcile pass.
@@ -180,6 +185,10 @@ func (r *DiskReconciler) Reconcile(ctx context.Context, uid string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("manager: load disk %q: %w", uid, err)
+	}
+	if r.nodeName != "" && disk.Status.NodeName != r.nodeName {
+		// Scheduled to another node (or not yet scheduled); leave it alone.
+		return nil
 	}
 	if disk.Metadata.IsDeleting() {
 		return r.finalize(ctx, disk)
