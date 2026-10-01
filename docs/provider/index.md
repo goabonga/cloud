@@ -38,8 +38,10 @@ The provider manages the full network and compute topology:
 | `infra_kms_keyring` | KMS keyring. |
 | `infra_kms_key` | KMS key (used to encrypt disks). |
 | `infra_disk` | Persistent disk; `kms_key_id` encrypts it. |
-| `infra_disk_file` | File injected into a disk. |
+| `infra_disk_file` | File injected into a disk: literal content, or a part of an `infra_ssl_cert`. |
 | `infra_compute` | Compute instance with attached disks. |
+| `infra_ssl_ca` | Certificate authority, trusted by the instances of its `vpc_ids`. |
+| `infra_ssl_cert` | Certificate signed by a CA, `public-root` included. |
 | `infra_dns_zone` | DNS zone. |
 | `infra_dns_record` | DNS record within a zone. |
 | `infra_peering` | Peering between two VPCs. |
