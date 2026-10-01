@@ -146,6 +146,46 @@ func TestDiskFinalize(t *testing.T) {
 	}
 }
 
+func TestDiskNodeScoping(t *testing.T) {
+	t.Parallel()
+
+	reg := newDiskRegistry(t)
+	mine := &resource.Disk{Metadata: resource.ObjectMeta{UID: "disk-mine", Generation: 1}, Spec: resource.DiskSpec{SizeMB: 1024}}
+	mine.Status.NodeName = "node-a"
+	if err := reg.Put(mine); err != nil {
+		t.Fatalf("seed mine: %v", err)
+	}
+	other := &resource.Disk{Metadata: resource.ObjectMeta{UID: "disk-other", Generation: 1}, Spec: resource.DiskSpec{SizeMB: 1024}}
+	other.Status.NodeName = "node-b"
+	if err := reg.Put(other); err != nil {
+		t.Fatalf("seed other: %v", err)
+	}
+	unscheduled := &resource.Disk{Metadata: resource.ObjectMeta{UID: "disk-unscheduled", Generation: 1}, Spec: resource.DiskSpec{SizeMB: 1024}}
+	if err := reg.Put(unscheduled); err != nil {
+		t.Fatalf("seed unscheduled: %v", err)
+	}
+
+	be := newFakeDiskBackend()
+	rec := manager.NewDiskReconciler(reg, be, nil, "node-a")
+	for _, uid := range []string{"disk-mine", "disk-other", "disk-unscheduled"} {
+		if err := rec.Reconcile(context.Background(), uid); err != nil {
+			t.Fatalf("reconcile %s: %v", uid, err)
+		}
+	}
+	if !be.disks["disk-mine"] {
+		t.Fatal("disk scheduled to node-a should be realized")
+	}
+	if be.disks["disk-other"] || be.disks["disk-unscheduled"] {
+		t.Fatalf("only the disk scheduled to node-a should be realized: %+v", be.disks)
+	}
+	if got, _ := reg.Get("disk-other"); got.Status.IsReady() {
+		t.Fatal("disk on another node should be left alone")
+	}
+	if got, _ := reg.Get("disk-unscheduled"); got.Status.IsReady() {
+		t.Fatal("unscheduled disk should be left alone")
+	}
+}
+
 func TestExecDiskBackendCommands(t *testing.T) {
 	t.Parallel()
 
