@@ -121,18 +121,27 @@ isolated libvirt network standing in for the transit link:
 
 - **Public block**: `203.0.113.0/24` (TEST-NET-3, RFC 5737), never routed on
   the Internet, so it cannot shadow a real address. `upstream.route_mode` in
-  `group_vars/all.yml` picks how upstream-sim routes it: `ecmp` (default)
-  spreads flows over both edges with an L4 hash; `floating` sends them to
-  `upstream.floating_next_hop`, which the active edge has to hold - nothing in
-  the lab holds it yet.
+  `group_vars/all.yml` picks how upstream-sim routes it:
+  - `bgp` (default): BIRD on upstream-sim (AS `upstream.asn`) peers with each
+    edge (AS `edge_asn`) over BGP with BFD, and installs every public address
+    an edge announces as a /32, with all the edges announcing it as equal next
+    hops and flows spread over them by an L4 hash. The rest of the block is
+    unreachable. An edge's routes leave with it: within a second of its going
+    silent, at once when its agent stops. `sudo birdc show protocols` and
+    `ip route show 203.0.113.0/24 root 203.0.113.0/24` on upstream-sim show
+    the sessions and routes.
+  - `ecmp`: the whole block statically over both edges, L4 hash.
+  - `floating`: the block to `upstream.floating_next_hop`, which the active
+    edge has to hold - nothing in the lab holds it yet.
 - **Internet client**: the `inet` namespace on upstream-sim, on the far side of
   the provider: `ssh ubuntu@192.168.122.30 sudo ip netns exec inet ...`.
 - **NAT**: upstream-sim masquerades towards the real LAN, but never the public
   block, so those addresses stay the lab's public ones.
 - **Edges**: each edge answers public DNS on `203.0.113.53` and serves the
   public addresses reserved from the block (`GOA_PUBLIC_CIDR`), such as a load
-  balancer's. The rest of the block is answered with ICMP unreachable rather
-  than sent out their default route to the real LAN.
+  balancer's, announcing them over BGP in `bgp` mode (`GOA_BGP_*`). The rest of
+  the block is answered with ICMP unreachable rather than sent out their
+  default route to the real LAN.
 - **Lab machines**: every VM resolves the public zones (`public_dns_domains`)
   through the public DNS and nothing else, and reaches the block through
   upstream-sim.
@@ -147,9 +156,11 @@ up upstream-sim. Then:
 ansible-playbook verify-upstream.yml
 ```
 
-checks, from the `inet` client: its gateway and both edges are reachable; the
-block is routed to every edge, 64 TCP flows spread over both; a packet for the
-block is answered by an edge; the public DNS refuses recursion; the NAT exempts
+checks, from the `inet` client: its gateway and both edges are reachable; in
+`bgp` mode, every edge's session is up; the block - in `bgp` mode, the public
+DNS address every edge announces - is routed to every edge, 64 TCP flows
+spread over both; a packet for an address nothing serves is answered as
+unreachable; the public DNS refuses recursion; the NAT exempts
 the block while `inet` still reaches the LAN; and, once the Terraform demo is
 applied, `https://www.demo.test/` answers with a certificate `inet` verifies.
 
