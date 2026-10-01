@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: govulncheck
+description: |
+  Run govulncheck against the Go vulnerability database, less the entries
+  osv-scanner.toml accepts.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    - name: Install govulncheck
+      shell: bash
+      run: go install golang.org/x/vuln/cmd/govulncheck@latest
+    # Fails on every reachable vulnerability but those osv-scanner.toml
+    # accepts, with a reason and an expiry date.
+    - name: Run govulncheck
+      shell: bash
+      run: scripts/govulncheck.sh ./...

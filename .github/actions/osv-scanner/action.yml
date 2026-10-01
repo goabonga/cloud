@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: osv-scanner
+description: Run osv-scanner on the go.mod dependency closure.
+
+runs:
+  using: composite
+  steps:
+    # Pinned, not `releases/latest`: a fixed URL whose bytes change is the
+    # same class of problem as an unpinned action, and it also makes a
+    # scanner behaviour change arrive unannounced in an unrelated pull
+    # request.
+    - name: Install OSV-Scanner
+      shell: bash
+      env:
+        OSV_VERSION: "2.4.0"
+        OSV_SHA256: 15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.local/bin"
+        curl -sSfL \
+          "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64" \
+          -o "$HOME/.local/bin/osv-scanner"
+        actual=$(sha256sum "$HOME/.local/bin/osv-scanner" | cut -d' ' -f1)
+        if [ "$actual" != "$OSV_SHA256" ]; then
+          echo "::error::osv-scanner checksum mismatch: expected $OSV_SHA256, got $actual"
+          exit 1
+        fi
+        chmod +x "$HOME/.local/bin/osv-scanner"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+    # osv-scanner.toml, at the root, lists the accepted entries.
+    - name: Run OSV-Scanner
+      shell: bash
+      run: osv-scanner scan source --config=osv-scanner.toml --lockfile=go.mod
