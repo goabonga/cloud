@@ -5,10 +5,13 @@ package resources
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+
+	infra "github.com/goabonga/infrastructure/internal/domain/resource"
 )
 
 func TestNewID(t *testing.T) {
@@ -53,5 +56,27 @@ func TestVPCResourceSchema(t *testing.T) {
 		if !attrs[computed].IsComputed() {
 			t.Fatalf("%s should be computed", computed)
 		}
+	}
+}
+
+func TestEgressProxyRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	spec := &infra.EgressProxySpec{
+		Enabled:          true,
+		AllowedDomains:   []string{"example.com", "*.ubuntu.com"},
+		AllowedAddresses: []infra.EgressAddress{{CIDR: "203.0.113.7"}, {CIDR: "198.51.100.0/24", Protocol: "udp", Port: 123}},
+	}
+	obj, diags := egressProxyToModel(ctx, spec)
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	back, diags := egressProxyToSpec(ctx, obj)
+	if diags.HasError() || !reflect.DeepEqual(back, spec) {
+		t.Fatalf("round trip %+v, %v", back, diags)
+	}
+	if obj, _ := egressProxyToModel(ctx, nil); !obj.IsNull() {
+		t.Fatal("no proxy must read back as null")
 	}
 }
