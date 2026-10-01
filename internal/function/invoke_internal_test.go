@@ -141,7 +141,7 @@ func TestInvoke_WarmPathForwardsAndReleases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "echo:hello" {
 		t.Fatalf("body = %q, want echo:hello", body)
@@ -164,7 +164,10 @@ func TestInvoke_NotReadyFunction(t *testing.T) {
 	env := newInvokeEnv(t)
 	env.putFunction(t, "fn-1", false, false)
 
-	_, err := env.svc.Invoke(context.Background(), "fn-1", strings.NewReader(""), "")
+	resp, err := env.svc.Invoke(context.Background(), "fn-1", strings.NewReader(""), "")
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if !errors.Is(err, ErrNotReady) {
 		t.Fatalf("err = %v, want ErrNotReady", err)
 	}
@@ -174,7 +177,10 @@ func TestInvoke_MissingFunction(t *testing.T) {
 	t.Parallel()
 	env := newInvokeEnv(t)
 
-	_, err := env.svc.Invoke(context.Background(), "fn-missing", strings.NewReader(""), "")
+	resp, err := env.svc.Invoke(context.Background(), "fn-missing", strings.NewReader(""), "")
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("err = %v, want state.ErrNotFound", err)
 	}
@@ -185,7 +191,10 @@ func TestInvoke_NoWarmInstanceAndColdStartDisallowed(t *testing.T) {
 	env := newInvokeEnv(t)
 	env.putFunction(t, "fn-1", true, false)
 
-	_, err := env.svc.Invoke(context.Background(), "fn-1", strings.NewReader(""), "")
+	resp, err := env.svc.Invoke(context.Background(), "fn-1", strings.NewReader(""), "")
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if !errors.Is(err, ErrNoWarmInstance) {
 		t.Fatalf("err = %v, want ErrNoWarmInstance", err)
 	}
@@ -218,7 +227,10 @@ func TestInvoke_ColdStartCreatesInstanceAndReleasesAfter(t *testing.T) {
 		}
 	}()
 
-	_, invokeErr := env.svc.Invoke(context.Background(), "fn-1", strings.NewReader("hi"), "")
+	resp, invokeErr := env.svc.Invoke(context.Background(), "fn-1", strings.NewReader("hi"), "")
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	<-done
 	if invokeErr == nil {
 		t.Fatal("want an error forwarding to a port nothing listens on")
@@ -246,7 +258,10 @@ func TestInvoke_ColdStartTimesOutWhenComputeNeverReady(t *testing.T) {
 	env.svc.coldStartTimeout = 20 * time.Millisecond
 	env.putFunction(t, "fn-1", true, true)
 
-	_, err := env.svc.Invoke(context.Background(), "fn-1", strings.NewReader(""), "")
+	resp, err := env.svc.Invoke(context.Background(), "fn-1", strings.NewReader(""), "")
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err == nil {
 		t.Fatal("want a timeout error when the compute never becomes ready")
 	}
