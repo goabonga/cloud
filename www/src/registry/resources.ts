@@ -223,7 +223,7 @@ export const RESOURCES: Record<string, ResourceDef> = {
     fields: [
       { key: "diskId", label: "Disk", type: "reference", referenceKind: "disk", required: true },
       { key: "path", label: "Path", type: "string", required: true },
-      { key: "content", label: "Content", type: "string" },
+      { key: "content", label: "Content", type: "text" },
       { key: "mode", label: "Mode", type: "string", helpText: "e.g. 0644" },
     ],
   },

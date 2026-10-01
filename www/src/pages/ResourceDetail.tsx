@@ -27,6 +27,8 @@ function renderFieldValue(field: FieldSchema, value: unknown): ReactNode {
       );
     case "boolean":
       return value ? "true" : "false";
+    case "text":
+      return <pre className="font-mono text-xs whitespace-pre-wrap">{String(value)}</pre>;
     case "stringList": {
       const items = value as string[];
       return items.length > 0 ? items.join(", ") : <span className="muted">—</span>;

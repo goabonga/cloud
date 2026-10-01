@@ -20,6 +20,15 @@ describe("FieldInput", () => {
     expect(onChange).toHaveBeenCalledWith("world");
   });
 
+  it("renders a text field as a multi-line textarea", () => {
+    const onChange = vi.fn();
+    render(<FieldInput id="f" field={field({ type: "text" })} value={"line 1\nline 2"} onChange={onChange} />);
+    const textarea = screen.getByRole("textbox");
+    expect(textarea.tagName).toBe("TEXTAREA");
+    fireEvent.change(textarea, { target: { value: "#cloud-config\n" } });
+    expect(onChange).toHaveBeenCalledWith("#cloud-config\n");
+  });
+
   it("renders a number field as a number input and parses numeric changes", () => {
     const onChange = vi.fn();
     render(<FieldInput id="f" field={field({ type: "number" })} value={4} onChange={onChange} />);
