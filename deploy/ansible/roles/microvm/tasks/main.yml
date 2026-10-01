@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Chris <goabonga@pm.me>
 ---
-# cloud-hypervisor itself: a single static binary, no package for Ubuntu
-# 24.04. infra-agent shells out to it like iproute2 or cryptsetup - not a Go
-# dependency.
-- name: Download cloud-hypervisor
-  ansible.builtin.get_url:
-    url: "https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/{{ cloud_hypervisor_version }}/cloud-hypervisor-static"
-    dest: /usr/local/bin/cloud-hypervisor
-    mode: "0755"
+# The micro-VM hypervisor itself (infra-hypervisor) needs no install step
+# here: it ships inside the infra-agent package this role's host already
+# has (see packaging/build-debs.sh), at /usr/bin/infra-hypervisor, the way
+# infra-lb already does - unlike cloud-hypervisor before it, which this
+# role used to fetch as a separate static binary from GitHub Releases.
+# What this host does still need is /dev/kvm (provisioned by the kernel
+# itself, nothing to install) and the image/kernel staging below.
 
 # qemu-img only, to turn the lab's qcow2 base image into a raw one
-# cloud-hypervisor can boot - no QEMU/KVM involved on this host.
+# infra-hypervisor can boot - no QEMU emulation involved, just the file
+# format conversion.
 - name: Install qemu-utils
   ansible.builtin.apt:
     name: qemu-utils
@@ -56,12 +56,12 @@
     path: "{{ microvm_images_dir }}/{{ microvm_base_image_name }}"
     mode: "0644"
 
-# cloud-hypervisor boots the guest's own kernel directly rather than through
-# a bootloader, so it needs a kernel and initramfs it can read; the agent's
-# already-running one is the exact match for the rootfs cloned from the same
-# image. A fixed path survives a kernel upgrade (the symlink moves, no
-# Terraform resource needs editing); microvm.cmdLine still has to carry
-# `root=/dev/vda1` since there's no bootloader to default it.
+# infra-hypervisor boots the guest's own kernel directly rather than
+# through a bootloader, so it needs a kernel and initramfs it can read; the
+# agent's already-running one is the exact match for the rootfs cloned from
+# the same image. A fixed path survives a kernel upgrade (the symlink
+# moves, no Terraform resource needs editing); microvm.cmdLine still has to
+# carry `root=/dev/vda1` since there's no bootloader to default it.
 - name: Point a stable path at the running kernel
   ansible.builtin.file:
     src: "/boot/vmlinuz-{{ ansible_facts['kernel'] }}"
