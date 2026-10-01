@@ -334,6 +334,11 @@ cloud-hypervisor: one process per instance, its API on a unix socket under
 kernel cmdline: the allocated address is passed as a static `ip=` directive,
             so the guest configures eth0 at boot - there is no cloud-init
             integration yet
+boot disk:  `image` (a URL or a local path) is fetched/copied once into a
+            node-local cache keyed by its hash, then cloned - copy-on-write
+            (FICLONE) where the filesystem supports it, a plain copy
+            otherwise - into the instance's own disk, so instances never
+            share writable state and the cache is never mutated
 firewall:   FORWARD/OUTPUT -d <ip> -j <security-group chain>, the same rule
             shape as compute
 ```
@@ -345,10 +350,10 @@ pass that finds the process still alive is a no-op. The finalizer asks
 cloud-hypervisor to shut down (killing it if it doesn't respond within a
 second), removes the TAP device and the firewall rules.
 
-The kernel, initramfs and disk image are host-prepared absolute paths given
-in the spec (`kernelPath`, `initrdPath`, `bootImagePath`) - there is no image
-fetch/cache yet, and no CLI or Terraform support; only the control-plane API
-and the agent realize this resource so far. There is also no scheduler
+The kernel and initramfs are host-prepared absolute paths given in the spec
+(`kernelPath`, `initrdPath`) - there is no kernel fetch/cache. There is no
+CLI or Terraform support yet; only the control-plane API and the agent
+realize this resource so far. There is also no scheduler
 support: like compute before a scheduler assigns it, a micro-VM with no
 `status.nodeName` is realized by every agent (the single-host default); with
 `GOA_NODE_ID` set on a multi-host cluster it stays `Pending` until scheduling

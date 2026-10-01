@@ -31,8 +31,11 @@ type MicroVMSpec struct {
 	// static "ip=" directive derived from the allocated address so the guest
 	// configures eth0 at boot without cloud-init.
 	CmdLine string `json:"cmdLine,omitempty"`
-	// Image is the boot disk's source. For now this must be an absolute path
-	// on the agent's host, used in place: there is no fetch/cache yet.
+	// Image is the boot disk's source: an http(s) URL fetched once into a
+	// node-local cache, or an absolute path on the agent's host copied into
+	// it. Each instance gets its own copy-on-write clone of the cached image,
+	// so instances never share writable state and the cache is never
+	// mutated.
 	Image string `json:"image"`
 }
 
