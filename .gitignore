@@ -15,6 +15,7 @@ coverage.xml
 # Frontend
 www/node_modules/
 www/dist/
+www/coverage/
 
 # Embedded SPA output; keep the placeholder so go:embed compiles
 cmd/www/dist/*
