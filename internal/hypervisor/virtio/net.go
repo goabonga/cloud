@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"sync"
 )
 
@@ -175,8 +176,16 @@ func (n *Net) ReadLoop(ctx context.Context) error {
 		}
 		nRead, err := n.tap.Read(frame)
 		if err != nil {
-			if ctx.Err() != nil || errors.Is(err, io.EOF) {
-				return nil // the tap fd was closed to unblock this read on shutdown
+			if ctx.Err() != nil || errors.Is(err, io.EOF) || errors.Is(err, fs.ErrClosed) {
+				// The tap fd was closed to unblock this read, either
+				// as part of an orderly shutdown (ctx already
+				// cancelled by the time Close reaches here, in
+				// cmd/hypervisor's handleShutdown) or by a caller
+				// calling Machine.Close directly without cancelling
+				// ctx first (fs.ErrClosed, not io.EOF, is what a read
+				// on an already-closed *os.File actually returns) —
+				// neither is this device's error to report.
+				return nil
 			}
 			return fmt.Errorf("virtio: read tap: %w", err)
 		}

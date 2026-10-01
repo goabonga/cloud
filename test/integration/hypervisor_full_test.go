@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,8 @@ func TestHypervisorBootFull(t *testing.T) {
 		t.Fatalf("write disk image: %v", err)
 	}
 
+	baselineGoroutines := runtime.NumGoroutine()
+
 	var console bytes.Buffer
 	m, err := hypervisor.New(hypervisor.Config{
 		VCPUs:      2,
@@ -91,7 +94,11 @@ func TestHypervisorBootFull(t *testing.T) {
 
 	runCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	go func() { _ = m.Run(runCtx, nil) }()
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		_ = m.Run(runCtx, nil)
+	}()
 
 	var pingErr error
 	deadline := time.Now().Add(25 * time.Second)
@@ -121,5 +128,35 @@ func TestHypervisorBootFull(t *testing.T) {
 	}
 	if !strings.Contains(out, "vda") || !strings.Contains(out, "Unable to mount root fs") {
 		t.Errorf("console output does not show the expected virtio-blk probe/mount-failure; got %d bytes:\n%s", len(out), out)
+	}
+
+	// Goroutine-hygiene check: wait for every vcpu goroutine and
+	// Net.ReadLoop (Run's errgroup-style group) to actually return
+	// after cancellation, then Close, then confirm the goroutine count
+	// settles back near its pre-boot baseline rather than leaking one
+	// per vcpu/device. No goleak dependency in this repo (see
+	// docs/architecture/go-hypervisor.md) - runtime.NumGoroutine()
+	// deltas, polled with a little slack for the Go runtime's own
+	// background goroutines to settle, is what the plan this effort
+	// follows calls for instead.
+	select {
+	case <-runDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return within 5s of ctx being cancelled")
+	}
+	if err := m.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+
+	var after int
+	for i := 0; i < 20; i++ {
+		after = runtime.NumGoroutine()
+		if after <= baselineGoroutines+1 { // +1: generous slack, not an exact budget
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if after > baselineGoroutines+1 {
+		t.Errorf("goroutine count after Close = %d, want close to the pre-boot baseline of %d (possible leak)", after, baselineGoroutines)
 	}
 }

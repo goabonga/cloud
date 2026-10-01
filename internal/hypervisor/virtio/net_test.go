@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
+	"io/fs"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,9 +23,10 @@ import (
 // channel (closing it simulates the fd being closed to unblock a pending
 // Read, the same way OpenTap's non-blocking/pollable fd does for real).
 type fakeTap struct {
-	mu     sync.Mutex
-	writes [][]byte
-	rx     chan []byte
+	mu      sync.Mutex
+	writes  [][]byte
+	rx      chan []byte
+	readErr error // returned instead of io.EOF once rx is closed, if set
 }
 
 func newFakeTap() *fakeTap {
@@ -40,6 +43,9 @@ func (t *fakeTap) Write(p []byte) (int, error) {
 func (t *fakeTap) Read(p []byte) (int, error) {
 	frame, ok := <-t.rx
 	if !ok {
+		if t.readErr != nil {
+			return 0, t.readErr
+		}
 		return 0, io.EOF
 	}
 	return copy(p, frame), nil
@@ -267,5 +273,30 @@ func TestNetReadLoopDropsWithoutRXBuffer(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("ReadLoop did not return after cancellation")
+	}
+}
+
+// TestNetReadLoopStopsCleanlyOnClosedFd exercises Close() being called
+// (closing the tap fd) without ctx being cancelled first — the case a
+// caller using Machine.Close directly, rather than cmd/hypervisor's
+// handleShutdown (which always cancels ctx first), hits. A real *os.File
+// read after Close returns an fs.ErrClosed-wrapping error, not io.EOF.
+func TestNetReadLoopStopsCleanlyOnClosedFd(t *testing.T) {
+	n, _, tap, _, _ := setupNet(t)
+	tap.readErr = fmt.Errorf("read tap0: %w", fs.ErrClosed)
+
+	ctx := context.Background() // deliberately never cancelled
+	done := make(chan error, 1)
+	go func() { done <- n.ReadLoop(ctx) }()
+
+	close(tap.rx)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("ReadLoop returned %v after a closed-fd read error, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReadLoop did not return after the tap's read failed with fs.ErrClosed")
 	}
 }
