@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.18.0] - 2026-10-01
+
+### Added
+
+- **core**: drive microvm's vm process via infra-hypervisor (`323d8ce`)
+
 ## [0.17.0] - 2026-10-01
 
 ### Added

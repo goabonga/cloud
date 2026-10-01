@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.6.0] - 2026-10-01
+
+### Added
+
+- **www**: ship infra-www as a hardened .deb like the other daemons (`c9b8da3`)
+
 ## [0.5.2] - 2026-10-01
 
 ### Dependencies

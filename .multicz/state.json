@@ -1,12 +1,17 @@
 {
   "version": 1,
-  "git_head": "a78ffcd68593293e8e256455e40a14f8728cab0c",
-  "git_head_short": "a78ffcd",
-  "timestamp": "2026-10-01T13:20:08Z",
+  "git_head": "bb5dd55db775832b196b888e12ff12c5e71788d9",
+  "git_head_short": "bb5dd55",
+  "timestamp": "2026-10-01T22:13:43Z",
   "components": {
     "infra-agent": {
-      "version": "0.17.0",
-      "tag": "infra-agent-v0.17.0",
+      "version": "0.18.0",
+      "tag": "infra-agent-v0.18.0",
+      "tag_sha": null
+    },
+    "infra-www": {
+      "version": "0.6.0",
+      "tag": "infra-www-v0.6.0",
       "tag_sha": null
     }
   }
