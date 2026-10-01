@@ -40,7 +40,7 @@ func (h *FunctionInvokeHandler) invoke(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeError(w, http.StatusBadGateway, err.Error())
 	default:
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		for k, vv := range resp.Header {
 			for _, v := range vv {
 				w.Header().Add(k, v)
