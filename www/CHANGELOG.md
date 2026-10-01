@@ -2,6 +2,14 @@
 
 All notable changes to this component are documented here.
 
+## [0.7.0] - 2026-10-01
+
+### Added
+
+- **www**: add form field schemas to the resource registry (`385bc92`)
+- **www**: add schema-driven field input components (`1bde852`)
+- **www**: wire schema-driven create/edit forms into the resource console (`94e2001`)
+
 ## [0.1.1] - 2026-09-30
 
 ### Fixed

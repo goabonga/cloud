@@ -1,22 +1,22 @@
 {
   "version": 1,
-  "git_head": "1594d2f11ae254a80d0e845728b4c16b02a78c80",
-  "git_head_short": "1594d2f",
-  "timestamp": "2026-09-30T10:41:28Z",
+  "git_head": "94e2001e905af29ec87a6310bd941e42875f276b",
+  "git_head_short": "94e2001",
+  "timestamp": "2026-10-01T10:53:28Z",
   "components": {
     "infra-spa": {
-      "version": "0.1.1",
-      "tag": "infra-spa-v0.1.1",
+      "version": "0.7.0",
+      "tag": "infra-spa-v0.7.0",
       "tag_sha": null
     },
     "infra-www": {
-      "version": "0.1.3",
-      "tag": "infra-www-v0.1.3",
+      "version": "0.5.2",
+      "tag": "infra-www-v0.5.2",
       "tag_sha": null
     },
     "infra-chart": {
-      "version": "0.0.4",
-      "tag": "infra-chart-v0.0.4",
+      "version": "0.0.21",
+      "tag": "infra-chart-v0.0.21",
       "tag_sha": null
     }
   }
