@@ -10,6 +10,7 @@ import Users from "./pages/iam/Users";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Profile from "./pages/Profile";
+import ResourceForm from "./pages/ResourceForm";
 import ResourceList from "./pages/ResourceList";
 import Settings from "./pages/Settings";
 
@@ -25,6 +26,8 @@ export default function App() {
         <Route path="iam" element={<Users />} />
         <Route path="iam/tokens" element={<AccessTokens />} />
         <Route path=":kind" element={<ResourceList />} />
+        <Route path=":kind/new" element={<ResourceForm />} />
+        <Route path=":kind/:uid/edit" element={<ResourceForm />} />
       </Route>
     </Routes>
   );

@@ -358,8 +358,19 @@ cloud-hypervisor: one process per instance, its API on a unix socket under
             the agent's state directory; vm.create then vm.boot configure
             and start it
 kernel cmdline: the allocated address is passed as a static `ip=` directive,
-            so the guest configures eth0 at boot - there is no cloud-init
-            integration yet
+            so the guest configures eth0 at boot, and a `ds=nocloud-net`
+            directive points cloud-init at the agent's seed server
+cloud-init: one HTTP listener for every micro-VM on the host (port 8912,
+            every interface, so each VPC's instances reach it at their own
+            subnet gateway) answers the NoCloud datasource:
+            `<uid>/meta-data` and `<uid>/user-data` - `userData` verbatim
+            when set, otherwise a minimal cloud-config from `hostname` and
+            `sshAuthorizedKey` - keyed by instance UID, forgotten on delete
+boot disk:  `image` (a URL or a local path) is fetched/copied once into a
+            node-local cache keyed by its hash, then cloned - copy-on-write
+            (FICLONE) where the filesystem supports it, a plain copy
+            otherwise - into the instance's own disk, so instances never
+            share writable state and the cache is never mutated
 firewall:   FORWARD/OUTPUT -d <ip> -j <security-group chain>, the same rule
             shape as compute
 ```
@@ -371,14 +382,14 @@ pass that finds the process still alive is a no-op. The finalizer asks
 cloud-hypervisor to shut down (killing it if it doesn't respond within a
 second), removes the TAP device and the firewall rules.
 
-The kernel, initramfs and disk image are host-prepared absolute paths given
-in the spec (`kernelPath`, `initrdPath`, `bootImagePath`) - there is no image
-fetch/cache yet, and no CLI or Terraform support; only the control-plane API
-and the agent realize this resource so far. There is also no scheduler
-support: like compute before a scheduler assigns it, a micro-VM with no
-`status.nodeName` is realized by every agent (the single-host default); with
-`GOA_NODE_ID` set on a multi-host cluster it stays `Pending` until scheduling
-support lands.
+The kernel and initramfs are host-prepared absolute paths given in the spec
+(`kernelPath`, `initrdPath`) - there is no kernel fetch/cache. There is no
+CLI support (the CLI itself only covers `vpc` today, nothing resource-generic
+yet); the control-plane API, the agent and the Terraform provider
+(`infra_microvm`) realize and expose this resource. Placement is scheduled
+by a separate `microvm-scheduler` controller, with a caveat on capacity
+accounting shared with compute - see
+[scheduling](scheduling.md#microvms-and-compute-share-nodes-not-capacity-accounting).
 
 ## The end-to-end chain
 

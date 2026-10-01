@@ -48,6 +48,7 @@ func run() error {
 	subnets := registry.New[resource.SubnetSpec, resource.SubnetStatus](store, resource.KindSubnet)
 	sgs := registry.New[resource.SecurityGroupSpec, resource.SecurityGroupStatus](store, resource.KindSecurityGroup)
 	computes := registry.New[resource.ComputeSpec, resource.ComputeStatus](store, resource.KindCompute)
+	microvms := registry.New[resource.MicroVMSpec, resource.MicroVMStatus](store, resource.KindMicroVM)
 	nodes := registry.New[resource.NodeSpec, resource.NodeStatus](store, resource.KindNode)
 	nodePools := registry.New[resource.NodePoolSpec, resource.NodePoolStatus](store, resource.KindNodePool)
 	functions := registry.New[resource.FunctionSpec, resource.FunctionStatus](store, resource.KindFunction)
@@ -57,6 +58,7 @@ func run() error {
 	mgr := controllers.NewManager(lease, *interval, logger)
 	mgr.Add(controllers.NewVPCSummaryController(vpcs, logger))
 	mgr.Add(controllers.NewSchedulerController(computes, nodes, nodePools, 4*(*interval), logger))
+	mgr.Add(controllers.NewMicroVMSchedulerController(microvms, nodes, nodePools, 4*(*interval), logger))
 	mgr.Add(controllers.NewFunctionController(functions, functionInstances, computes, subnets, vpcs, sgs, nil, logger))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

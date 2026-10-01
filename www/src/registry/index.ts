@@ -6,7 +6,7 @@ import type { CategoryKey, ResourceDef } from "./types";
 
 export { CATEGORIES } from "./categories";
 export { RESOURCES } from "./resources";
-export type { CategoryDef, CategoryKey, ListColumn, ResourceDef } from "./types";
+export type { CategoryDef, CategoryKey, FieldSchema, FieldType, ListColumn, ResourceDef } from "./types";
 
 // resourcesByCategory returns a category's resource kinds, in the order
 // they're declared in RESOURCES.
