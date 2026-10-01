@@ -1,8 +1,10 @@
 # A demo topology provisioned against the deployed control plane:
 #   vpc -> subnet -> internet gateway + route -> security group + rules
 #   -> two nginx instances, scheduled onto the agent node pool, each serving a
-#   page from its own KMS-encrypted disk -> a layer-4 load balancer in front
-#   -> a private DNS zone naming it inside the VPC, and a public zone.
+#   page from its own KMS-encrypted disk over HTTPS -> a layer-4 load balancer
+#   in front -> a private DNS zone naming it inside the VPC, and a public zone
+#   -> certificates for both: public names signed by the platform's public
+#   root, internal ones by a CA only the VPC trusts.
 
 # The agent hosts are registered as nodes by Ansible with the label role=agent;
 # this pool selects them so the scheduler can place compute.
@@ -54,6 +56,14 @@ resource "infra_security_group_rule" "http" {
   cidr              = "0.0.0.0/0"
 }
 
+resource "infra_security_group_rule" "https" {
+  security_group_id = infra_security_group.web.id
+  direction         = "ingress"
+  protocol          = "tcp"
+  port              = 443
+  cidr              = "0.0.0.0/0"
+}
+
 resource "infra_kms_keyring" "demo" {
   name = "demo"
 }
@@ -91,6 +101,89 @@ resource "infra_disk_file" "index" {
   HTML
 }
 
+# TLS. The public names are signed by the platform's public root, which the
+# API creates at its first start and every lab machine and instance trusts.
+# The internal names are signed by a CA of the demo's own, trusted only by the
+# instances of the VPC it names.
+resource "infra_ssl_ca" "internal" {
+  common_name  = "demo internal CA"
+  organization = "demo"
+  vpc_ids      = [infra_vpc.demo.id]
+}
+
+resource "infra_ssl_cert" "public" {
+  ca_id       = "public-root"
+  common_name = "demo.test"
+  dns_names   = ["demo.test", "www.demo.test"]
+}
+
+resource "infra_ssl_cert" "internal" {
+  ca_id       = infra_ssl_ca.internal.id
+  common_name = "web.internal.demo"
+  dns_names   = ["web.internal.demo", "www.internal.demo"]
+}
+
+# nginx's configuration lives on a disk of its own, mounted over conf.d: the
+# server blocks, and each certificate's chain and private key, which the agent
+# renders from the store so the keys never pass through Terraform.
+resource "infra_disk" "conf" {
+  for_each   = local.web
+  name       = "${each.key}-conf"
+  size_mb    = 16
+  kms_key_id = infra_kms_key.disks.id
+}
+
+resource "infra_disk_file" "nginx_conf" {
+  for_each = local.web
+  disk_id  = infra_disk.conf[each.key].id
+  path     = "default.conf"
+  mode     = "0644"
+  content  = <<-NGINX
+    server {
+      listen 80 default_server;
+      listen 443 ssl default_server;
+      server_name demo.test www.demo.test;
+      ssl_certificate     /etc/nginx/conf.d/tls/public.crt;
+      ssl_certificate_key /etc/nginx/conf.d/tls/public.key;
+      root /usr/share/nginx/html;
+    }
+
+    server {
+      listen 443 ssl;
+      server_name web.internal.demo www.internal.demo;
+      ssl_certificate     /etc/nginx/conf.d/tls/internal.crt;
+      ssl_certificate_key /etc/nginx/conf.d/tls/internal.key;
+      root /usr/share/nginx/html;
+    }
+  NGINX
+}
+
+locals {
+  # Every (instance, file) pair: each instance gets both certificates.
+  tls_files = merge([
+    for w in local.web : {
+      for f in [
+        { name = "public.crt", cert = "public", part = "chain" },
+        { name = "public.key", cert = "public", part = "private_key" },
+        { name = "internal.crt", cert = "internal", part = "chain" },
+        { name = "internal.key", cert = "internal", part = "private_key" },
+      ] : "${w}/${f.name}" => merge(f, { web = w })
+    }
+  ]...)
+  ssl_certs = {
+    public   = infra_ssl_cert.public.id
+    internal = infra_ssl_cert.internal.id
+  }
+}
+
+resource "infra_disk_file" "tls" {
+  for_each    = local.tls_files
+  disk_id     = infra_disk.conf[each.value.web].id
+  path        = "tls/${each.value.name}"
+  ssl_cert_id = local.ssl_certs[each.value.cert]
+  ssl_part    = each.value.part
+}
+
 resource "infra_compute" "web" {
   for_each          = local.web
   name              = each.key
@@ -101,11 +194,20 @@ resource "infra_compute" "web" {
   image             = "docker.io/library/nginx:latest"
   cpu               = 0.5
   memory_mb         = 128
+  # The agent writes the disk files once the disks are mounted, after the
+  # instance starts: nginx waits for its keys rather than failing on them.
+  command = "until [ -s /etc/nginx/conf.d/tls/public.key ] && [ -s /etc/nginx/conf.d/tls/internal.key ]; do sleep 1; done; exec nginx -g 'daemon off;'"
 
-  disks = [{
-    disk_id    = infra_disk.site[each.key].id
-    mount_path = "/usr/share/nginx/html"
-  }]
+  disks = [
+    {
+      disk_id    = infra_disk.site[each.key].id
+      mount_path = "/usr/share/nginx/html"
+    },
+    {
+      disk_id    = infra_disk.conf[each.key].id
+      mount_path = "/etc/nginx/conf.d"
+    },
+  ]
 }
 
 # A public address for the load balancer, from the block routed to the edges:
@@ -123,16 +225,17 @@ resource "infra_load_balancer" "web" {
   # an address the agent assigns is only known after the apply.
   address      = "10.20.0.10"
   public_ip_id = infra_ip_address.web_public.id
-  port         = 80
-  protocol     = "tcp"
-  algorithm    = "round_robin"
+  # TLS passes through to nginx, which holds the certificates.
+  port      = 443
+  protocol  = "tcp"
+  algorithm = "round_robin"
 }
 
 resource "infra_lb_backend" "web" {
   for_each   = local.web
   lb_id      = infra_load_balancer.web.id
   compute_id = infra_compute.web[each.key].id
-  port       = 80
+  port       = 443
 }
 
 # DNS, served by the agents themselves. A private zone attached to the VPC,
@@ -228,4 +331,9 @@ output "dns_names" {
 output "lb_public_address" {
   description = "Public address the edges serve the load balancer on."
   value       = infra_ip_address.web_public.address
+}
+
+output "internal_ca_pem" {
+  description = "Certificate of the demo's internal CA, trusted by the VPC's instances only."
+  value       = infra_ssl_ca.internal.cert_pem
 }

@@ -114,14 +114,16 @@
       register: verify_www
       changed_when: false
 
-    - name: Reach the demo's load balancer by its public name
-      ansible.builtin.command: "ip netns exec inet curl -fsS -m 5 http://www.{{ public_dns_domains | first }}/"
-      register: verify_www_http
+    # Without -k: the certificate is signed by the platform's public root,
+    # which upstream-sim trusts like any Internet host trusts a public CA.
+    - name: Reach the demo's load balancer by its public name over HTTPS
+      ansible.builtin.command: "ip netns exec inet curl -fsS -m 5 https://www.{{ public_dns_domains | first }}/"
+      register: verify_www_https
       changed_when: false
       when: verify_www.stdout | length > 0
 
-    - name: The load balancer answers on its public address
+    - name: The load balancer answers on its public address with a trusted certificate
       ansible.builtin.assert:
-        that: verify_www_http.stdout is search('Served by')
-        fail_msg: "{{ verify_www_http.stdout }}"
+        that: verify_www_https.stdout is search('Served by')
+        fail_msg: "{{ verify_www_https.stdout }}"
       when: verify_www.stdout | length > 0
