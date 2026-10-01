@@ -372,7 +372,7 @@ export const RESOURCES: Record<string, ResourceDef> = {
       { key: "name", label: "Name", type: "string" },
       { key: "vpcId", label: "VPC", type: "reference", referenceKind: "vpc", required: true },
       { key: "address", label: "Address", type: "string" },
-      { key: "port", label: "Port", type: "number", required: true },
+      { key: "port", label: "Port", type: "number", helpText: "Layer-4 port; leave empty to serve through lb_listeners only" },
       { key: "protocol", label: "Protocol", type: "enum", enumValues: ["tcp", "udp"], helpText: "Default tcp" },
       {
         key: "algorithm",
