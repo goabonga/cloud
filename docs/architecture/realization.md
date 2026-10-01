@@ -155,6 +155,32 @@ replies leave through its default route, back through the leg. Each edge tracks 
 address it serves per load balancer and removes it when the load balancer
 moves to another one or is deleted.
 
+## BGP on the edges
+
+An edge with `GOA_BGP_ASN` announces the public addresses it serves to its
+upstream routers over BGP, from a GoBGP speaker embedded in the agent:
+
+```
+GOA_BGP_ASN        the edge's AS, the same on every edge
+GOA_BGP_ROUTER_ID  an IPv4 address of the edge, e.g. its transit address
+GOA_BGP_PEERS      upstream routers, "addr@asn[,addr@asn...]"
+GOA_BGP_BFD        "true" (default) runs BFD on UDP 3784, 300 ms x 3
+```
+
+Each address is a /32 with the edge as next hop: the public DNS address while
+the DNS pass serves it, and each load balancer's public address while the
+load-balancer pass serves it without error. The BGP pass runs last in the
+loop, so it announces what that very pass served, and withdraws an address the
+moment it stops being served. A store that cannot be read leaves the last
+announcements in place, as the data plane keeps serving. The speaker opens the
+sessions itself and never listens; it redials within a second after a reset.
+
+The upstream thus spreads an address's traffic over the edges announcing it,
+and an edge's routes leave with the edge: within a second of its going silent
+(BFD), within the 3 s hold time without BFD, and at once when the agent stops,
+since it closes its sessions on the way out - which also keeps the upstream
+from sending DNS queries to an edge whose listener restarts with the agent.
+
 ## DNS
 
 The agent serves DNS itself; no resolver process runs on the host.
