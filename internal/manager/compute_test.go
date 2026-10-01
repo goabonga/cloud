@@ -428,3 +428,35 @@ func TestComputeKeepsItsReservationAcrossAFailureAndReleasesItOnDelete(t *testin
 		t.Fatalf("reservation of %s kept after delete: %v", second.Status.IP, err)
 	}
 }
+
+func TestExecComputeBackendUndoesAFailedCreation(t *testing.T) {
+	t.Parallel()
+
+	rec := &fwRecorder{}
+	// The disk's device is missing, as when its LUKS container failed to open.
+	run := func(ctx context.Context, name string, args ...string) (string, error) {
+		if name == "mount" {
+			rec.calls = append(rec.calls, append([]string{name}, args...))
+			return "special device does not exist", errors.New("exit status 32")
+		}
+		return rec.run(ctx, name, args...)
+	}
+	dir := t.TempDir()
+	be := manager.NewExecComputeBackendWithRunner(dir, filepath.Join(dir, "netns"), filepath.Join(dir, "cgroup"), run)
+	req := manager.ComputeRequest{
+		UID: "i-1", Bridge: "br-vpc1", IP: "10.0.1.10", Prefix: 24, Gateway: "10.0.1.1",
+		Disks: []manager.ComputeMount{{Source: "/dev/mapper/infra-d1", Target: filepath.Join(dir, "data")}},
+	}
+	if _, err := be.EnsureCompute(context.Background(), req); err == nil {
+		t.Fatal("a disk that cannot be mounted must fail the creation")
+	}
+	// What the creation made is gone, so the next pass starts again rather
+	// than finding the namespace and taking the instance as running.
+	var deleted bool
+	for _, c := range rec.calls {
+		deleted = deleted || strings.HasPrefix(strings.Join(c, " "), "ip netns del ")
+	}
+	if !deleted {
+		t.Fatalf("the namespace was left behind: %v", rec.calls)
+	}
+}
