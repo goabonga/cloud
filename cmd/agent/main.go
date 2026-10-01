@@ -17,10 +17,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/goabonga/infrastructure/internal/crypto"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/manager"
 	"github.com/goabonga/infrastructure/internal/meta"
 	"github.com/goabonga/infrastructure/internal/registry"
+	"github.com/goabonga/infrastructure/internal/ssl"
 	"github.com/goabonga/infrastructure/internal/state"
 )
 
@@ -78,6 +80,16 @@ func run() error {
 		// An edge: also serve each load balancer's public address.
 		lbReconciler.AsEdge(ipAddresses)
 	}
+	diskFileReconciler := manager.NewDiskFileReconciler(diskFiles, computes, manager.FSDiskFileWriter{}, nodeID)
+	if master != nil {
+		// Certificate keys are sealed with the KMS key: rendering them takes it.
+		kek, err := crypto.NewKEK(master)
+		if err != nil {
+			return err
+		}
+		sslCerts := registry.New[resource.SSLCertSpec, resource.SSLCertStatus](store, resource.KindSSLCert)
+		diskFileReconciler.WithCertificates(manager.NewSSLCertificates(ssl.NewService(sslCAs, sslCerts, kek)))
+	}
 	agent := manager.NewAgent(*interval, logger,
 		manager.NewNodeHeartbeat(nodes, nodeID),
 		manager.NewVPCReconciler(vpcs, net),
@@ -92,7 +104,7 @@ func run() error {
 		manager.NewACLReconciler(acls, manager.NewExecFirewall()),
 		manager.NewComputeReconciler(computes, subnets, vpcs, disks, sgs, manager.NewExecComputeBackend(*stateDir), nodeID).WithAddressStore(store),
 		manager.NewTrustReconciler(sslCAs, computes, subnets, manager.FSTrustWriter{}, nodeID),
-		manager.NewDiskFileReconciler(diskFiles, computes, manager.FSDiskFileWriter{}, nodeID),
+		diskFileReconciler,
 		manager.NewWAFReconciler(wafPolicies, wafRules, computes, subnets, igws, vpcs, manager.NewExecWAF()),
 		// GOA_PUBLIC_CIDR (set on the edges) is the public block routed to them.
 		// The public DNS address is taken: never hand it to an ip_address.

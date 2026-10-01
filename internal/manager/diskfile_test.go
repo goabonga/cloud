@@ -10,9 +10,11 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/goabonga/infrastructure/internal/crypto"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/manager"
 	"github.com/goabonga/infrastructure/internal/registry"
+	"github.com/goabonga/infrastructure/internal/ssl"
 	"github.com/goabonga/infrastructure/internal/state"
 )
 
@@ -144,6 +146,123 @@ func TestDiskFileReconcilerRejectsABadMode(t *testing.T) {
 	}
 	got, _ := files.Get("f")
 	if got.Status.Phase != resource.PhaseError {
+		t.Fatalf("phase %q, want Error", got.Status.Phase)
+	}
+}
+
+// contentWriter records what each path is written with.
+type contentWriter map[string]struct {
+	content string
+	mode    os.FileMode
+}
+
+func (w contentWriter) WriteFile(_, path string, content []byte, mode os.FileMode) (bool, error) {
+	w[path] = struct {
+		content string
+		mode    os.FileMode
+	}{string(content), mode}
+	return true, nil
+}
+
+func TestDiskFileReconcilerRendersCertificateParts(t *testing.T) {
+	t.Parallel()
+
+	store := state.NewFileStore(t.TempDir())
+	files := registry.New[resource.DiskFileSpec, resource.DiskFileStatus](store, resource.KindDiskFile)
+	computes := registry.New[resource.ComputeSpec, resource.ComputeStatus](store, resource.KindCompute)
+	cas := registry.New[resource.SSLCASpec, resource.SSLCAStatus](store, resource.KindSSLCA)
+	certs := registry.New[resource.SSLCertSpec, resource.SSLCertStatus](store, resource.KindSSLCert)
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	kek, err := crypto.NewKEK(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := ssl.NewService(cas, certs, kek)
+	ca, err := svc.CreateCA("ca", "ca", resource.SSLCASpec{CommonName: "test ca"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateCert("web", "web", resource.SSLCertSpec{CAID: "ca", CommonName: "web.internal.demo"}); err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, err := svc.RevealCert("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := &resource.Compute{Metadata: resource.ObjectMeta{UID: "web-1", Generation: 1}, Spec: resource.ComputeSpec{
+		SubnetID: "sn-1", Image: "nginx", Disks: []resource.ComputeDiskRef{{DiskID: "disk-1", MountPath: "/etc/nginx/tls"}},
+	}}
+	c.Status.Rootfs = "/rootfs/web-1"
+	if err := computes.Put(c); err != nil {
+		t.Fatal(err)
+	}
+	for path, part := range map[string]string{
+		"cert.pem":  resource.SSLPartCertificate,
+		"chain.pem": resource.SSLPartChain,
+		"key.pem":   resource.SSLPartPrivateKey,
+	} {
+		if err := files.Put(&resource.DiskFile{
+			Metadata: resource.ObjectMeta{UID: path, Generation: 1},
+			Spec:     resource.DiskFileSpec{DiskID: "disk-1", Path: path, SSLCertID: "web", SSLPart: part},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := files.Put(&resource.DiskFile{
+		Metadata: resource.ObjectMeta{UID: "pending", Generation: 1},
+		Spec:     resource.DiskFileSpec{DiskID: "disk-1", Path: "pending.pem", SSLCertID: "not-yet", SSLPart: resource.SSLPartCertificate},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := contentWriter{}
+	r := manager.NewDiskFileReconciler(files, computes, w, "").WithCertificates(manager.NewSSLCertificates(svc))
+	if err := r.ReconcileAll(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	for path, want := range map[string]struct {
+		content string
+		mode    os.FileMode
+	}{
+		"cert.pem":  {string(certPEM), 0o644},
+		"chain.pem": {string(certPEM) + string(ca.Status.CertPEM), 0o644},
+		"key.pem":   {string(keyPEM), 0o600},
+	} {
+		if got := w[path]; got != want {
+			t.Fatalf("%s written %q mode %o, want %q mode %o", path, got.content, got.mode, want.content, want.mode)
+		}
+	}
+	if _, ok := w["pending.pem"]; ok {
+		t.Fatal("a file of a certificate not issued yet must not be written")
+	}
+	if got, _ := files.Get("pending"); got.Status.Phase != resource.PhasePending {
+		t.Fatalf("pending file phase %q, want Pending", got.Status.Phase)
+	}
+}
+
+func TestDiskFileReconcilerNeedsTheKMSKeyForCertificates(t *testing.T) {
+	t.Parallel()
+
+	store := state.NewFileStore(t.TempDir())
+	files := registry.New[resource.DiskFileSpec, resource.DiskFileStatus](store, resource.KindDiskFile)
+	computes := registry.New[resource.ComputeSpec, resource.ComputeStatus](store, resource.KindCompute)
+	c := &resource.Compute{Metadata: resource.ObjectMeta{UID: "web-1", Generation: 1}, Spec: resource.ComputeSpec{
+		SubnetID: "sn-1", Image: "nginx", Disks: []resource.ComputeDiskRef{{DiskID: "disk-1", MountPath: "/tls"}},
+	}}
+	c.Status.Rootfs = "/rootfs/web-1"
+	_ = computes.Put(c)
+	_ = files.Put(&resource.DiskFile{
+		Metadata: resource.ObjectMeta{UID: "key", Generation: 1},
+		Spec:     resource.DiskFileSpec{DiskID: "disk-1", Path: "key.pem", SSLCertID: "web", SSLPart: resource.SSLPartPrivateKey},
+	})
+	if err := manager.NewDiskFileReconciler(files, computes, contentWriter{}, "").ReconcileAll(context.Background()); err == nil {
+		t.Fatal("a certificate file on an agent without KMS key must fail")
+	}
+	if got, _ := files.Get("key"); got.Status.Phase != resource.PhaseError {
 		t.Fatalf("phase %q, want Error", got.Status.Phase)
 	}
 }
