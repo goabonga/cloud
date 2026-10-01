@@ -25,8 +25,21 @@ resource "infra_subnet" "app" {
   type   = "private"
 }
 
+# The instances' egress is filtered: their HTTP and HTTPS go through the
+# gateway's egress proxy - redirected, or explicitly on its address, port
+# 3128 - which lets out only the domains below, and anything else leaving
+# through the gateway is refused unless its destination is allowed.
 resource "infra_igw" "demo" {
   vpc_id = infra_vpc.demo.id
+  egress_proxy = {
+    enabled = true
+    allowed_domains = [
+      "example.com",
+      # The demo's own public names, served by its load balancer.
+      "demo.test",
+      "*.demo.test",
+    ]
+  }
 }
 
 resource "infra_route" "default" {
@@ -385,4 +398,9 @@ output "listener_phases" {
     https = infra_lb_listener.https.phase
     http  = infra_lb_listener.http.phase
   }
+}
+
+output "egress_proxy_address" {
+  description = "Where the instances reach the egress proxy explicitly, on port 3128."
+  value       = infra_igw.demo.egress_proxy_address
 }
