@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.1] - 2026-10-01
+
+### Fixed
+
+- **agent**: skip disks not owned by the local node (`9c28d77`)
+
 ## [0.1.1] - 2026-09-30
 
 _No notable changes._

@@ -72,7 +72,7 @@ components:
     enabled: true
     image:
       repository: infra-controller-manager
-      tag: 0.1.1
+      tag: 0.7.0
     # Leader election means extra replicas are standby, not throughput, so two
     # buys failover and nothing else. Left at one for the same reason as the
     # API server: a default install should not require a database.

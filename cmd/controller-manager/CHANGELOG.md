@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.7.0] - 2026-10-01
+
+### Added
+
+- **controller**: schedule disks onto nodes (`4ae036d`)
+
 ## [0.1.1] - 2026-09-30
 
 _No notable changes._

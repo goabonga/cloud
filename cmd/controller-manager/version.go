@@ -5,4 +5,4 @@ package main
 
 // Version is the released version of the infra-controller-manager component. It is patched by
 // multicz on release (see multicz.toml); do not edit it by hand.
-const Version = "0.1.1"
+const Version = "0.7.0"

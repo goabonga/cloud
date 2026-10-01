@@ -10,7 +10,7 @@ type: application
 # Chart version. Bumped by multicz as the `infra-chart` component, including
 # the patch it cascades whenever a component image version is mirrored into
 # values.yaml.
-version: 0.0.21
+version: 0.0.23
 # appVersion tracks the API server, which is the component that defines the
 # resource API the rest of the chart deploys against.
 appVersion: "0.1.1"
