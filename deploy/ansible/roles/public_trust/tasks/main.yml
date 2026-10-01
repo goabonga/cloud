@@ -13,7 +13,7 @@
     body:
       grant_type: client_credentials
       client_id: "{{ idp_client_id }}"
-      client_secret: "{{ lookup('file', idp_client_secret_file) }}"
+      client_secret: "{{ lookup('file', idp_client_secret_file) | trim }}"
     return_content: true
   register: public_trust_token
   delegate_to: localhost
