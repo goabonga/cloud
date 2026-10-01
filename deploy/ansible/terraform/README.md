@@ -83,12 +83,14 @@ ssh ubuntu@<agent-ip> 'for i in 1 2 3 4; do curl -s https://www.demo.test/ | gre
 ```
 
 The lab machines do not trust the internal CA; check it against the demo's
-output instead:
+output instead. The VPC routes in a VRF of its own, which an agent host only
+reaches from inside, with `ip vrf exec`:
 
 ```bash
 terraform output -raw internal_ca_pem > internal-ca.pem
 scp internal-ca.pem ubuntu@<agent-ip>:
-ssh ubuntu@<agent-ip> 'curl -s --cacert internal-ca.pem --resolve web.internal.demo:443:<lb_address> https://web.internal.demo/'
+ssh ubuntu@<agent-ip> 'sudo ip vrf exec "$(ip -br link show type vrf | cut -d" " -f1)" \
+  curl -s --cacert internal-ca.pem --resolve web.internal.demo:443:<lb_address> https://web.internal.demo/'
 ```
 
 The demo also publishes DNS, served by the agents:
