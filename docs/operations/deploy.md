@@ -34,8 +34,9 @@ sudo systemctl enable --now infra-api
 
 The long-running components ship systemd units under `deploy/systemd/`
 (`infra-api`, `infra-controller-manager`, `infra-agent`, `infra-exporter`,
-`infra-idp`). State lives in `/var/lib/infra` (provisioned via `StateDirectory`);
-`infra-agent` runs with `CAP_NET_ADMIN` to manage bridges and iptables.
+`infra-idp`, `infra-www`). State lives in `/var/lib/infra` (provisioned via
+`StateDirectory`); `infra-agent` runs with `CAP_NET_ADMIN` to manage bridges
+and iptables.
 
 ## Observability
 
@@ -51,7 +52,7 @@ Grafana and Terraform with the local provider; two agent hosts run the agent
 and a leader-elected controller-manager; every host runs an etcd member.
 
 ```bash
-make deb VERSION=0.1.0 && make build-www && make build-provider
+make deb VERSION=0.1.0 && make build-provider
 cd deploy/ansible
 ansible-playbook -K create-vms.yml             # provision the VMs
 ansible-playbook -K site.yml                   # install packages and start services

@@ -33,6 +33,7 @@ declare -A SUMMARY=(
   [infra-exporter]="Prometheus exporter for infra cluster state"
   [infra-idp]="infra identity provider and JWT issuer"
   [infra-container-init]="PID 1 for infra-managed OCI containers"
+  [infra-www]="infra web dashboard (embedded SPA + API reverse proxy)"
 )
 declare -A DESCRIPTION=(
   [infra]="Declarative CLI for applying and inspecting infra resources: VPCs,
@@ -52,6 +53,8 @@ as Prometheus metrics on /metrics."
 for the control-plane API to verify."
   [infra-container-init]="Minimal init process for containers the agent
 starts: reaps zombies and forwards signals to the workload."
+  [infra-www]="Serves the Vite dashboard embedded in the binary and proxies
+its API calls to infra-api."
 )
 
 # Further units a package ships next to its service, from deploy/systemd.
@@ -78,6 +81,7 @@ declare -A COMPONENTS=(
   [infra-exporter]="exporter:infra-exporter:infra-exporter"
   [infra-idp]="idp:infra-idp:infra-idp"
   [infra-container-init]="container-init:infra-container-init:"
+  [infra-www]="www:infra-www:infra-www"
 )
 
 build_deb() {
@@ -92,6 +96,14 @@ build_deb() {
   local stage
   stage="$(mktemp -d)"
   trap 'rm -rf "$stage"' RETURN
+
+  # infra-www embeds the SPA via go:embed, so it is stale the moment the
+  # frontend changes underneath it: stage a fresh build before compiling.
+  if [ "$pkg" = "infra-www" ]; then
+    ( cd "$ROOT/www" && npm ci && npm run build )
+    find "$ROOT/cmd/www/dist" -mindepth 1 ! -name .gitkeep -delete
+    cp -r "$ROOT/www/dist/." "$ROOT/cmd/www/dist/"
+  fi
 
   # /usr/bin, not /usr/local/bin: the latter is reserved for what the local
   # administrator installs by hand, and lintian rejects a package that writes

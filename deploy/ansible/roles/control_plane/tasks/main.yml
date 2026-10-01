@@ -20,6 +20,7 @@
     - Restart infra-api
     - Restart infra-exporter
     - Restart infra-idp
+    - Restart infra-www
 
 - name: Ensure the control-plane drop-in directories exist
   ansible.builtin.file:

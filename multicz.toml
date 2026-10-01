@@ -184,7 +184,7 @@ changelog = "www/CHANGELOG.md"
 # The web dashboard server embeds the SPA, so it depends on infra-spa: a SPA
 # change bumps infra-spa and cascades a bump here, rebuilding the embedded binary.
 [components.infra-www]
-paths = ["cmd/www/**", "internal/web/**", "internal/httpsec/**", "packaging/docker/www.Dockerfile", "go.mod", "go.sum"]
+paths = ["cmd/www/**", "internal/web/**", "internal/httpsec/**", "packaging/docker/www.Dockerfile", "deploy/systemd/infra-www.service", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/www/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
