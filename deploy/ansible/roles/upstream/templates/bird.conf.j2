@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+#
+# Managed by Ansible. upstream-sim learns from each edge the public addresses
+# it serves, as /32s, and installs them with every edge announcing an address
+# as an equal next hop. BFD takes an edge's routes away within a second of it
+# going silent; a stopping agent closes its session and takes them at once.
+{% set wan = (vms | selectattr('name', 'equalto', inventory_hostname) | first).wan_ip %}
+log syslog all;
+router id {{ wan }};
+
+protocol device {}
+
+protocol bfd {}
+
+protocol kernel {
+  ipv4 {
+    import none;
+    export where source = RTS_BGP;
+  };
+  # One route per address, with every edge announcing it as a next hop.
+  merge paths on;
+}
+
+template bgp edge {
+  local {{ wan }} as {{ upstream.asn }};
+  hold time 3;
+  keepalive time 1;
+  connect retry time 1;
+  # Back to Established within seconds of an edge's return, not the default
+  # minute BIRD waits after a session error.
+  error wait time 1, 5;
+  bfd on;
+  ipv4 {
+    # Only addresses of the public block, one at a time.
+    import where net ~ [ {{ eip_block }}{32,32} ];
+    export none;
+  };
+}
+
+{% for h in groups['edges'] %}
+protocol bgp {{ h | replace('-', '_') }} from edge {
+  neighbor {{ (vms | selectattr('name', 'equalto', h) | first).wan_ip }} as {{ edge_asn }};
+}
+{% endfor %}

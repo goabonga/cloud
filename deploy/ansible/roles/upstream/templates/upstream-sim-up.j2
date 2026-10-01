@@ -6,7 +6,11 @@
 set -eu
 
 # The public block, towards the edges.
-{% if upstream.route_mode == 'ecmp' %}
+{% if upstream.route_mode == 'bgp' %}
+# BIRD installs a /32 for each address an edge announces; the rest of the
+# block goes nowhere, rather than out the default route to the real LAN.
+ip route replace unreachable {{ eip_block }}
+{% elif upstream.route_mode == 'ecmp' %}
 ip route replace {{ eip_block }}{% for h in groups['edges'] %} nexthop via {{ (vms | selectattr('name', 'equalto', h) | first).wan_ip }}{% endfor %}
 
 {% else %}

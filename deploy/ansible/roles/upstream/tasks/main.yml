@@ -60,3 +60,26 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Install BIRD
+  ansible.builtin.apt:
+    name: bird2
+  when: upstream.route_mode == 'bgp'
+
+- name: Configure BIRD to peer with the edges
+  ansible.builtin.template:
+    src: bird.conf.j2
+    dest: /etc/bird/bird.conf
+    owner: bird
+    group: bird
+    mode: "0640"
+    validate: bird -p -c %s
+  when: upstream.route_mode == 'bgp'
+  notify: Reload BIRD
+
+- name: Enable and start BIRD
+  ansible.builtin.systemd_service:
+    name: bird
+    enabled: "{{ upstream.route_mode == 'bgp' }}"
+    state: "{{ 'started' if upstream.route_mode == 'bgp' else 'stopped' }}"
+  failed_when: false
