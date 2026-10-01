@@ -404,3 +404,138 @@ output "egress_proxy_address" {
   description = "Where the instances reach the egress proxy explicitly, on port 3128."
   value       = infra_igw.demo.egress_proxy_address
 }
+
+# --- Micro-VM demo: a 3-node k3s cluster -----------------------------------
+# A real VM per node under cloud-hypervisor (infra_microvm), not a namespaced
+# container like infra_compute above: one control plane and two workers,
+# seeded entirely by cloud-init - no image baked for either role. k3s, a
+# lightweight CNCF-conformant Kubernetes distribution, rather than stock
+# kubeadm: each micro-VM only gets a few hundred MB of RAM in this lab.
+#
+# Bootstrap order matters once, at creation: the workers' user-data embeds
+# the control plane's address, which the agent only assigns once it
+# reconciles the resource - asynchronously, not within this apply. Create the
+# control plane on its own first:
+#   terraform apply -target=infra_microvm.k8s_control_plane
+# wait for it to reach Ready and for k3s to come up (dashboard, or poll
+# `terraform show`), then apply the rest:
+#   terraform apply
+# A single `terraform apply` from scratch also works for everything *except*
+# the workers, whose K3S_URL would be baked in empty.
+
+variable "k8s_ssh_public_key" {
+  description = "SSH public key installed on every k8s micro-VM, for debugging."
+  type        = string
+}
+
+locals {
+  # Not a secret: the k8s subnet is private to this VPC, reachable only from
+  # inside it or through infra's own firewalling.
+  k8s_token   = "lab-k3s-demo-token"
+  k8s_vmlinuz = "/var/lib/infra-microvm-images/vmlinuz"
+  k8s_initrd  = "/var/lib/infra-microvm-images/initrd.img"
+  k8s_image   = "/var/lib/infra-microvm-images/noble-base.raw"
+  # No bootloader under direct kernel boot, so the root partition has to be
+  # named explicitly; vda1 matches the base image's layout (see
+  # ansible/roles/microvm).
+  k8s_cmdline = "console=ttyS0 root=/dev/vda1 rw"
+}
+
+resource "infra_subnet" "k8s" {
+  vpc_id = infra_vpc.demo.id
+  cidr   = "10.20.2.0/24"
+  type   = "private"
+}
+
+resource "infra_security_group" "k8s" {
+  vpc_id = infra_vpc.demo.id
+  name   = "k8s"
+}
+
+# Lab simplification: one rule opens the whole k8s subnet to itself rather
+# than enumerating k3s's exact ports (6443, 10250, flannel's VXLAN 8472/udp,
+# ...), plus SSH for debugging.
+resource "infra_security_group_rule" "k8s_internal" {
+  security_group_id = infra_security_group.k8s.id
+  direction          = "ingress"
+  protocol           = "all"
+  cidr               = infra_subnet.k8s.cidr
+}
+
+resource "infra_security_group_rule" "k8s_ssh" {
+  security_group_id = infra_security_group.k8s.id
+  direction          = "ingress"
+  protocol           = "tcp"
+  port               = 22
+  cidr               = "0.0.0.0/0"
+}
+
+resource "infra_microvm" "k8s_control_plane" {
+  name              = "k8s-cp"
+  hostname          = "k8s-cp"
+  subnet_id         = infra_subnet.k8s.id
+  security_group_id = infra_security_group.k8s.id
+  vcpus             = 1
+  memory_mb         = 768
+  kernel_path       = local.k8s_vmlinuz
+  initrd_path       = local.k8s_initrd
+  cmd_line          = local.k8s_cmdline
+  image             = local.k8s_image
+
+  user_data = <<-YAML
+    #cloud-config
+    hostname: k8s-cp
+    ssh_authorized_keys:
+      - ${var.k8s_ssh_public_key}
+    runcmd:
+      - curl -sfL https://get.k3s.io | K3S_TOKEN=${local.k8s_token} sh -s - server --disable traefik --disable servicelb --write-kubeconfig-mode 644
+  YAML
+}
+
+resource "infra_microvm" "k8s_worker" {
+  for_each = toset(["node-1", "node-2"])
+
+  name              = "k8s-${each.key}"
+  hostname          = "k8s-${each.key}"
+  subnet_id         = infra_subnet.k8s.id
+  security_group_id = infra_security_group.k8s.id
+  vcpus             = 1
+  memory_mb         = 512
+  kernel_path       = local.k8s_vmlinuz
+  initrd_path       = local.k8s_initrd
+  cmd_line          = local.k8s_cmdline
+  image             = local.k8s_image
+
+  # Ordering only: the control plane must be created (and reconciled by the
+  # agent, which assigns its address) before a worker's user-data can embed
+  # K3S_URL. See the bootstrap note above - this does not by itself make a
+  # single `terraform apply` safe for the workers.
+  depends_on = [infra_microvm.k8s_control_plane]
+
+  user_data = <<-YAML
+    #cloud-config
+    hostname: k8s-${each.key}
+    ssh_authorized_keys:
+      - ${var.k8s_ssh_public_key}
+    runcmd:
+      - curl -sfL https://get.k3s.io | K3S_URL=https://${infra_microvm.k8s_control_plane.ip}:6443 K3S_TOKEN=${local.k8s_token} sh -
+  YAML
+}
+
+output "k8s_control_plane_ip" {
+  description = "Address of the k3s control-plane micro-VM."
+  value       = infra_microvm.k8s_control_plane.ip
+}
+
+output "k8s_worker_ips" {
+  description = "Addresses of the k3s worker micro-VMs."
+  value       = { for k, v in infra_microvm.k8s_worker : k => v.ip }
+}
+
+output "k8s_phases" {
+  description = "Lifecycle phase of every k8s micro-VM: Ready once cloud-hypervisor has booted it."
+  value = merge(
+    { "k8s-cp" = infra_microvm.k8s_control_plane.phase },
+    { for k, v in infra_microvm.k8s_worker : "k8s-${k}" => v.phase }
+  )
+}
