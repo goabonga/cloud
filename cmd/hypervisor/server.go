@@ -54,7 +54,7 @@ func (s *server) listenAndServe(sockPath string) error {
 	if err != nil {
 		return fmt.Errorf("hypervisor: listen on %q: %w", sockPath, err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	for {
 		conn, err := ln.Accept()
@@ -71,7 +71,7 @@ func (s *server) listenAndServe(sockPath string) error {
 // the connection can no longer be trusted to frame further requests
 // correctly.
 func (s *server) serveConn(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	dec := protocol.NewDecoder(conn)
 	enc := protocol.NewEncoder(conn)
 
