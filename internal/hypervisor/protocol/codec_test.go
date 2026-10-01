@@ -6,12 +6,22 @@ package protocol_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/goabonga/infrastructure/internal/hypervisor/protocol"
 )
+
+// errWriter always fails, simulating a transport write failure (a closed
+// socket, a broken pipe, ...).
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, errors.New("errWriter: simulated write failure")
+}
 
 func TestRequestResponseRoundTrip(t *testing.T) {
 	client, server := net.Pipe()
@@ -103,6 +113,89 @@ func TestDecodeServerMessageDistinguishesEventFromResponse(t *testing.T) {
 
 	if err := <-done; err != nil {
 		t.Fatalf("server goroutine: %v", err)
+	}
+}
+
+func TestEncodeMarshalError(t *testing.T) {
+	enc := protocol.NewEncoder(&bytes.Buffer{})
+	// Channels can't be marshaled to JSON.
+	if err := enc.Encode(make(chan int)); err == nil {
+		t.Fatal("Encode: want error for an unmarshalable value, got nil")
+	}
+}
+
+func TestEncodeWriteError(t *testing.T) {
+	enc := protocol.NewEncoder(errWriter{})
+	// A payload bigger than bufio's default 4096-byte buffer forces an
+	// immediate pass-through write to the underlying writer, so the
+	// failure surfaces from e.w.Write itself rather than from Flush.
+	big := strings.Repeat("a", 5000)
+	if err := enc.Encode(big); err == nil {
+		t.Fatal("Encode: want error when the underlying writer fails, got nil")
+	}
+}
+
+func TestEncodeWriteByteError(t *testing.T) {
+	enc := protocol.NewEncoder(errWriter{})
+	// A marshaled value exactly as big as bufio's default 4096-byte buffer
+	// fills it without overflowing, so Write succeeds by buffering; the
+	// trailing WriteByte('\n') is then the one that must flush the full
+	// buffer, and that's where the underlying writer's failure surfaces.
+	exact := strings.Repeat("a", 4094) // + 2 quote bytes from json.Marshal == 4096
+	if err := enc.Encode(exact); err == nil {
+		t.Fatal("Encode: want error from the trailing WriteByte when flush fails, got nil")
+	}
+}
+
+func TestDecodeReadError(t *testing.T) {
+	dec := protocol.NewDecoder(strings.NewReader(""))
+	var v any
+	if err := dec.Decode(&v); err == nil {
+		t.Fatal("Decode: want error on empty input, got nil")
+	}
+}
+
+func TestDecodeUnmarshalError(t *testing.T) {
+	dec := protocol.NewDecoder(strings.NewReader("not json\n"))
+	var v any
+	if err := dec.Decode(&v); err == nil {
+		t.Fatal("Decode: want error for malformed JSON, got nil")
+	}
+}
+
+func TestDecodeServerMessageReadError(t *testing.T) {
+	dec := protocol.NewDecoder(strings.NewReader(""))
+	resp, event, err := dec.DecodeServerMessage()
+	if err == nil {
+		t.Fatal("DecodeServerMessage: want error on empty input, got nil")
+	}
+	if resp != nil || event != nil {
+		t.Fatalf("DecodeServerMessage: want nil resp/event on error, got resp=%+v event=%+v", resp, event)
+	}
+}
+
+func TestDecodeServerMessageProbeUnmarshalError(t *testing.T) {
+	dec := protocol.NewDecoder(strings.NewReader("not json\n"))
+	if _, _, err := dec.DecodeServerMessage(); err == nil {
+		t.Fatal("DecodeServerMessage: want error for malformed JSON, got nil")
+	}
+}
+
+func TestDecodeServerMessageResponseUnmarshalError(t *testing.T) {
+	// Has an "id" field (so the probe succeeds and picks the Response
+	// shape) but "ok" is a string where Response expects a bool.
+	dec := protocol.NewDecoder(strings.NewReader(`{"id":1,"ok":"nope"}` + "\n"))
+	if _, _, err := dec.DecodeServerMessage(); err == nil {
+		t.Fatal("DecodeServerMessage: want error when the Response shape doesn't match, got nil")
+	}
+}
+
+func TestDecodeServerMessageEventUnmarshalError(t *testing.T) {
+	// No "id" field (so the probe picks the Event shape), but "type" is a
+	// number where Event expects a string.
+	dec := protocol.NewDecoder(strings.NewReader(`{"type":123}` + "\n"))
+	if _, _, err := dec.DecodeServerMessage(); err == nil {
+		t.Fatal("DecodeServerMessage: want error when the Event shape doesn't match, got nil")
 	}
 }
 
