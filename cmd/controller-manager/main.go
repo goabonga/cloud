@@ -50,6 +50,7 @@ func run() error {
 	computes := registry.New[resource.ComputeSpec, resource.ComputeStatus](store, resource.KindCompute)
 	microvms := registry.New[resource.MicroVMSpec, resource.MicroVMStatus](store, resource.KindMicroVM)
 	disks := registry.New[resource.DiskSpec, resource.DiskStatus](store, resource.KindDisk)
+	asyncReplicas := registry.New[resource.AsyncDiskReplicaSpec, resource.AsyncDiskReplicaStatus](store, resource.KindAsyncDiskReplica)
 	nodes := registry.New[resource.NodeSpec, resource.NodeStatus](store, resource.KindNode)
 	nodePools := registry.New[resource.NodePoolSpec, resource.NodePoolStatus](store, resource.KindNodePool)
 	functions := registry.New[resource.FunctionSpec, resource.FunctionStatus](store, resource.KindFunction)
@@ -61,6 +62,7 @@ func run() error {
 	mgr.Add(controllers.NewSchedulerController(computes, nodes, nodePools, 4*(*interval), logger))
 	mgr.Add(controllers.NewMicroVMSchedulerController(microvms, nodes, nodePools, 4*(*interval), logger))
 	mgr.Add(controllers.NewDiskSchedulerController(disks, nodes, 4*(*interval), logger))
+	mgr.Add(controllers.NewAsyncDiskReplicaSchedulerController(asyncReplicas, disks, nodes, nodePools, 4*(*interval), logger))
 	mgr.Add(controllers.NewFunctionController(functions, functionInstances, computes, subnets, vpcs, sgs, nil, logger))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
