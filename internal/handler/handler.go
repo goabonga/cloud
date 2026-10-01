@@ -22,10 +22,11 @@ import (
 // Handler serves CRUD requests for one resource kind. S is the spec type, ST
 // the status type.
 type Handler[S any, ST any] struct {
-	reg  *registry.Registry[S, ST]
-	kind string
-	now  func() time.Time
-	az   *iam.Authorizer
+	reg       *registry.Registry[S, ST]
+	kind      string
+	now       func() time.Time
+	az        *iam.Authorizer
+	adminOnly bool
 }
 
 // Option configures a Handler.
@@ -38,6 +39,17 @@ func WithAuthorization[S any, ST any](az *iam.Authorizer) Option[S, ST] {
 	return func(h *Handler[S, ST]) { h.az = az }
 }
 
+// WithAdminOnly restricts every verb to the global admin role, ignoring
+// ownership and project grants entirely. Use it for a kind where granting
+// self-service access via the owner fast path would itself be a privilege
+// escalation - iam_binding is the reason this exists: nothing populates its
+// own metadata.projectId, so without this option it would be an unscoped
+// resource anyone could create, including one naming themselves as owner of
+// a project they otherwise have no access to.
+func WithAdminOnly[S any, ST any]() Option[S, ST] {
+	return func(h *Handler[S, ST]) { h.adminOnly = true }
+}
+
 // New returns a Handler backed by reg for the given kind.
 func New[S any, ST any](reg *registry.Registry[S, ST], kind string, opts ...Option[S, ST]) *Handler[S, ST] {
 	h := &Handler[S, ST]{reg: reg, kind: kind, now: time.Now}
@@ -48,16 +60,19 @@ func New[S any, ST any](reg *registry.Registry[S, ST], kind string, opts ...Opti
 }
 
 // authorize reports whether the caller may exercise perm on a resource owned
-// by ownerUID and scoped to projectID. With no Authorizer configured every
-// request is allowed. An absent identity or a resolution error both count
-// as "not allowed", never as a server error.
+// by ownerUID and scoped to projectID. With neither WithAuthorization nor
+// WithAdminOnly configured, every request is allowed. An absent identity or
+// a resolution error both count as "not allowed", never as a server error.
 func (h *Handler[S, ST]) authorize(r *http.Request, ownerUID, projectID string, perm iam.Permission) bool {
-	if h.az == nil {
+	if !h.adminOnly && h.az == nil {
 		return true
 	}
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
 		return false
+	}
+	if h.adminOnly {
+		return id.HasRole(AdminRole)
 	}
 	allowed, err := h.az.Allowed(id.Subject, id.HasRole(AdminRole), ownerUID, projectID, perm)
 	return err == nil && allowed
@@ -78,7 +93,7 @@ func (h *Handler[S, ST]) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if h.az != nil {
+	if h.az != nil || h.adminOnly {
 		visible := make([]resource.Resource[S, ST], 0, len(items))
 		for _, it := range items {
 			if h.authorize(r, it.Metadata.OwnerUID, it.Metadata.ProjectID, iam.PermissionRead) {
@@ -142,7 +157,15 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 		res.Metadata.OwnerUID = existing.Metadata.OwnerUID
 		res.Status = existing.Status
 	case errors.Is(err, state.ErrNotFound):
-		if h.az != nil {
+		switch {
+		case h.adminOnly:
+			id, ok := auth.IdentityFrom(r.Context())
+			if !ok || !id.HasRole(AdminRole) {
+				writeError(w, http.StatusForbidden, "forbidden")
+				return
+			}
+			res.Metadata.OwnerUID = id.Subject
+		case h.az != nil:
 			id, ok := auth.IdentityFrom(r.Context())
 			if !ok {
 				writeError(w, http.StatusForbidden, "forbidden")

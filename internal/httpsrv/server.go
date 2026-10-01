@@ -14,6 +14,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/handler"
 	"github.com/goabonga/infrastructure/internal/httpsec"
+	"github.com/goabonga/infrastructure/internal/iam"
 	"github.com/goabonga/infrastructure/internal/registry"
 	"github.com/goabonga/infrastructure/internal/secret"
 	"github.com/goabonga/infrastructure/internal/ssl"
@@ -32,6 +33,7 @@ type Server struct {
 	store state.Store
 	kek   *crypto.KEK
 	authn auth.Authenticator
+	az    *iam.Authorizer
 }
 
 // Option configures a Server.
@@ -59,6 +61,22 @@ func New(store state.Store, opts ...Option) *Server {
 }
 
 func (s *Server) routes() {
+	// Authorization only runs when a request can actually carry an identity:
+	// with no authenticator configured, every generically-registered kind
+	// stays exactly as open as it is without this block at all (see
+	// register below), which is what the many tests that build an
+	// unauthenticated Server rely on.
+	bindings := registry.New[resource.IAMBindingSpec, resource.IAMBindingStatus](s.store, resource.KindIAMBinding)
+	if s.authn != nil {
+		s.az = &iam.Authorizer{
+			Lookup: iam.RegistryLookup{
+				Projects: registry.New[resource.ProjectSpec, resource.ProjectStatus](s.store, resource.KindProject),
+				Folders:  registry.New[resource.FolderSpec, resource.FolderStatus](s.store, resource.KindFolder),
+			},
+			Bindings: bindings.List,
+		}
+	}
+
 	// Control-plane CRUD resources, served by the generic handler. The agent
 	// reconciles the kernel-backed ones (vpc, subnet, ...) out of band.
 	register[resource.VPCSpec, resource.VPCStatus](s, resource.KindVPC)
@@ -88,12 +106,23 @@ func (s *Server) routes() {
 	register[resource.NodeSpec, resource.NodeStatus](s, resource.KindNode)
 	register[resource.NodePoolSpec, resource.NodePoolStatus](s, resource.KindNodePool)
 
-	// Resource hierarchy and IAM (additive only; not yet enforced - see
-	// Phase 2 of the IAM roadmap).
+	// Organization/folder/project get the same ownership/grant enforcement as
+	// everything else above; since nothing populates their own
+	// metadata.projectId, only their creator or a global admin can manage
+	// one. iam_binding is different: writing one grants access, so letting
+	// its own creator manage it via the owner fast path would let anyone
+	// grant themselves a role on a project they otherwise can't touch -
+	// it is admin-only instead, with no self-service path, whenever
+	// authentication is enabled; with none, it stays exactly as open as
+	// every other kind above.
 	register[resource.OrganizationSpec, resource.OrganizationStatus](s, resource.KindOrganization)
 	register[resource.FolderSpec, resource.FolderStatus](s, resource.KindFolder)
 	register[resource.ProjectSpec, resource.ProjectStatus](s, resource.KindProject)
-	register[resource.IAMBindingSpec, resource.IAMBindingStatus](s, resource.KindIAMBinding)
+	if s.authn != nil {
+		handler.New(bindings, resource.KindIAMBinding, handler.WithAdminOnly[resource.IAMBindingSpec, resource.IAMBindingStatus]()).Register(s.mux, APIBase)
+	} else {
+		handler.New(bindings, resource.KindIAMBinding).Register(s.mux, APIBase)
+	}
 
 	// Encryption-backed resources need a KEK.
 	if s.kek != nil {
@@ -112,10 +141,15 @@ func (s *Server) routes() {
 	})
 }
 
-// register mounts the generic CRUD handler for a resource kind.
+// register mounts the generic CRUD handler for a resource kind, enforcing
+// ownership and project grants whenever the server has an Authorizer.
 func register[S any, ST any](s *Server, kind string) {
 	reg := registry.New[S, ST](s.store, kind)
-	handler.New(reg, kind).Register(s.mux, APIBase)
+	var opts []handler.Option[S, ST]
+	if s.az != nil {
+		opts = append(opts, handler.WithAuthorization[S, ST](s.az))
+	}
+	handler.New(reg, kind, opts...).Register(s.mux, APIBase)
 }
 
 // Handler returns the routed HTTP handler. When authentication is enabled every
