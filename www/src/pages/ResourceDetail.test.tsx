@@ -128,4 +128,91 @@ describe("ResourceDetail", () => {
     screen.getByText('Unknown resource kind "not-a-kind".');
     expect(generic.getResource).not.toHaveBeenCalled();
   });
+
+  it("shows an error when the resource fails to load", async () => {
+    vi.mocked(generic.getResource).mockRejectedValue(new Error("boom"));
+
+    renderAt("/vpc/vpc-1");
+
+    await waitFor(() => screen.getByText("Could not load this resource."));
+  });
+
+  it("skips deletion when the confirmation is declined", async () => {
+    vi.mocked(generic.getResource).mockResolvedValue({
+      metadata: { uid: "vpc-1", generation: 1, createdAt: "" },
+      spec: { cidr: "10.0.0.0/16" },
+      status: {},
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    renderAt("/vpc/vpc-1");
+    await waitFor(() => screen.getByText("10.0.0.0/16"));
+
+    fireEvent.click(screen.getByText("Delete"));
+
+    expect(generic.deleteResource).not.toHaveBeenCalled();
+  });
+
+  it("shows an error when deletion fails", async () => {
+    vi.mocked(generic.getResource).mockResolvedValue({
+      metadata: { uid: "vpc-1", generation: 1, createdAt: "" },
+      spec: { cidr: "10.0.0.0/16" },
+      status: {},
+    });
+    vi.mocked(generic.deleteResource).mockRejectedValue(new Error("boom"));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderAt("/vpc/vpc-1");
+    await waitFor(() => screen.getByText("10.0.0.0/16"));
+
+    fireEvent.click(screen.getByText("Delete"));
+
+    await waitFor(() => screen.getByText("Could not delete this resource."));
+  });
+
+  it("renders boolean, text, stringList, keyValue and group field values", async () => {
+    vi.mocked(generic.getResource).mockResolvedValue({
+      metadata: { uid: "compute-1", generation: 1, createdAt: "" },
+      spec: {
+        subnetId: "subnet-1",
+        env: { tier: "gold" },
+        ports: ["80", "443"],
+        disks: [{ diskId: "disk-1", mountPath: "/data", readOnly: true }],
+        privileged: true,
+      },
+      status: {},
+    });
+
+    renderAt("/compute/compute-1");
+
+    await waitFor(() => screen.getByText("tier=gold"));
+    screen.getByText("80, 443");
+    screen.getByText(/mountPath: \/data/);
+    screen.getByText("true");
+  });
+
+  it("renders dashes for empty stringList, keyValue and group field values, and false for a boolean", async () => {
+    vi.mocked(generic.getResource).mockResolvedValue({
+      metadata: { uid: "compute-1", generation: 1, createdAt: "" },
+      spec: { subnetId: "subnet-1", env: {}, ports: [], disks: [], privileged: false },
+      status: {},
+    });
+
+    renderAt("/compute/compute-1");
+
+    await waitFor(() => screen.getByText("false"));
+    expect(screen.queryAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("renders a text field as preformatted content", async () => {
+    vi.mocked(generic.getResource).mockResolvedValue({
+      metadata: { uid: "file-1", generation: 1, createdAt: "" },
+      spec: { diskId: "disk-1", path: "/etc/motd", content: "hello\nworld" },
+      status: {},
+    });
+
+    renderAt("/disk_file/file-1");
+
+    await waitFor(() => screen.getByText((_, el) => el?.tagName === "PRE" && el.textContent === "hello\nworld"));
+  });
 });
