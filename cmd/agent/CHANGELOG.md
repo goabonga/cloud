@@ -2,6 +2,16 @@
 
 All notable changes to this component are documented here.
 
+## [0.17.0] - 2026-10-01
+
+### Added
+
+- **agent**: preserve sparseness when cloning a microvm boot image (`e75ce33`)
+
+### Fixed
+
+- **agent**: keep the microvm guest's NIC named eth0 (`5c7ba76`)
+
 ## [0.16.0] - 2026-10-01
 
 ### Added
