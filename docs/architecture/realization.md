@@ -58,6 +58,7 @@ run as root.
 | Load balancer    | an IPVS virtual service in the VPC's load-balancer namespace, full-NAT through its node port; on the edges, also on its public address |
 | Public IP address | an address of the edges' public block, reserved in the shared store |
 | Compute          | a network namespace running an OCI image |
+| MicroVM          | a cloud-hypervisor process attached to the VPC bridge by a TAP device |
 
 ## VPCs across hosts
 
@@ -314,6 +315,44 @@ ticks only keep the firewall rules in place while the namespace exists, so an
 instance an older agent created gets the rules this one writes. The finalizer kills the cgroup,
 removes the veth, deletes the namespace and the firewall rules, and unmounts the
 disks.
+
+## MicroVMs
+
+A micro-VM is a second realization path alongside compute, for workloads that
+need a kernel of their own rather than a namespaced container. It is a real
+VM booted under **cloud-hypervisor**, which the agent drives like any other
+external tool (`iproute2`, `iptables`): a process the agent starts and talks
+to over its REST API, not a Go dependency.
+
+```
+TAP device: tap-<hash>, enslaved to the VPC bridge, created with
+            `ip tuntap add ... mode tap` (the same device-creation style as
+            the rest of this package, not a raw netlink/ioctl call)
+cloud-hypervisor: one process per instance, its API on a unix socket under
+            the agent's state directory; vm.create then vm.boot configure
+            and start it
+kernel cmdline: the allocated address is passed as a static `ip=` directive,
+            so the guest configures eth0 at boot - there is no cloud-init
+            integration yet
+firewall:   FORWARD/OUTPUT -d <ip> -j <security-group chain>, the same rule
+            shape as compute
+```
+
+The reconciler resolves the subnet gateway, the VPC bridge, an address
+(reserved the same way as compute's) and the security-group chain, then asks
+the backend to boot cloud-hypervisor. Creation happens once: a subsequent
+pass that finds the process still alive is a no-op. The finalizer asks
+cloud-hypervisor to shut down (killing it if it doesn't respond within a
+second), removes the TAP device and the firewall rules.
+
+The kernel, initramfs and disk image are host-prepared absolute paths given
+in the spec (`kernelPath`, `initrdPath`, `bootImagePath`) - there is no image
+fetch/cache yet, and no CLI or Terraform support; only the control-plane API
+and the agent realize this resource so far. There is also no scheduler
+support: like compute before a scheduler assigns it, a micro-VM with no
+`status.nodeName` is realized by every agent (the single-host default); with
+`GOA_NODE_ID` set on a multi-host cluster it stays `Pending` until scheduling
+support lands.
 
 ## The end-to-end chain
 
