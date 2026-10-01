@@ -18,9 +18,12 @@ type MicroVMSpec struct {
 	Name            string `json:"name,omitempty"`
 	SubnetID        string `json:"subnetId"`
 	SecurityGroupID string `json:"securityGroupId,omitempty"`
-	Hostname        string `json:"hostname,omitempty"`
-	VCPUs           int    `json:"vcpus"`
-	MemoryMB        int    `json:"memoryMb"`
+	// NodePoolID constrains placement to a node pool; empty schedules
+	// anywhere.
+	NodePoolID string `json:"nodePoolId,omitempty"`
+	Hostname   string `json:"hostname,omitempty"`
+	VCPUs      int    `json:"vcpus"`
+	MemoryMB   int    `json:"memoryMb"`
 	// KernelPath is an absolute path to an uncompressed Linux kernel readable
 	// by the agent's host. There is no kernel fetch/caching: this must
 	// already exist on the node.
@@ -78,9 +81,9 @@ type MicroVMStatus struct {
 	// Ready mirrors StatusBase.Phase == PhaseReady for API consumers that read
 	// the flag directly, matching ComputeStatus.
 	Ready bool `json:"ready"`
-	// NodeName is populated once a scheduler assigns placement (not yet
-	// implemented for microvm); empty means "realize on every agent", the
-	// same single-host fallback compute uses.
+	// NodeName is the node the scheduler assigned; empty means either not
+	// yet scheduled, or (with no scheduler running) "realize on every
+	// agent", the same single-host fallback compute uses.
 	NodeName string `json:"nodeName,omitempty"`
 }
 
