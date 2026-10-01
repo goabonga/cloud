@@ -3,10 +3,10 @@
 
 // Command hypervisor boots one VM under internal/hypervisor and serves
 // internal/hypervisor/protocol's control socket for it: one OS process per
-// VM, the same isolation granularity cloud-hypervisor gets today (see
+// VM, the same isolation granularity cloud-hypervisor had before it (see
 // internal/manager/vmm.go), so a bug in this process can't take another
-// VM or infra-agent down with it. It is not yet wired into microvm as a
-// selectable backend — see docs/architecture/go-hypervisor.md.
+// VM or infra-agent down with it. It is microvm's realization backend —
+// see docs/architecture/go-hypervisor.md.
 package main
 
 import (

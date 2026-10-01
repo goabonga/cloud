@@ -35,7 +35,7 @@ type Config struct {
 	// TapName, if set, attaches a virtio-net device backed by that
 	// already-persistent TAP device (see virtio.OpenTap) — created and
 	// attached to its bridge out of band, the same way
-	// ExecMicroVMBackend's EnsureMicroVM does for cloud-hypervisor today.
+	// ExecMicroVMBackend's EnsureMicroVM did for cloud-hypervisor before.
 	// Leaving it empty boots a VM with no network device at all.
 	TapName string
 	// MAC is the network device's MAC address, standard colon-hex
@@ -45,9 +45,10 @@ type Config struct {
 	// DiskPath, if set, attaches a virtio-blk device backed by that raw
 	// disk file — already resolved/fetched/cloned into a node-local,
 	// per-instance file the same way internal/manager's vmImageCache
-	// already does for cloud-hypervisor's boot images; this package
-	// never fetches or clones one itself. Leaving it empty boots a VM
-	// with no disk at all (kernel + initrd only).
+	// already does today (unchanged from when it fed cloud-hypervisor's
+	// boot images); this package never fetches or clones one itself.
+	// Leaving it empty boots a VM with no disk at all (kernel + initrd
+	// only).
 	DiskPath string
 	// DiskReadonly rejects writes to DiskPath's device with
 	// VIRTIO_BLK_S_IOERR instead of performing them. Ignored if DiskPath

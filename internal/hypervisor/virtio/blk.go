@@ -39,12 +39,12 @@ type BlockBackend interface {
 }
 
 // Blk is a virtio-blk device backed by a single raw disk file — the same
-// convention internal/manager's vmImageCache/cloneFile already produce for
-// cloud-hypervisor today (see docs/architecture/realization.md), so an
-// existing microvm boot image needs no conversion to be usable here. No
-// multi-queue, no discard/write-zeroes: genuine parity with what
-// cloud-hypervisor's own chDiskConfig{Path, Readonly} exposes today, not a
-// reduced target.
+// convention internal/manager's vmImageCache/cloneFile already produce
+// today (see docs/architecture/realization.md), unchanged from when they
+// fed cloud-hypervisor, so an existing microvm boot image needs no
+// conversion to be usable here. No multi-queue, no discard/write-zeroes:
+// genuine parity with what cloud-hypervisor's own chDiskConfig{Path,
+// Readonly} used to expose, not a reduced target.
 type Blk struct {
 	transport   *Transport
 	backend     BlockBackend

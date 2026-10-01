@@ -166,13 +166,14 @@ sudo nsenter --net=/proc/$p/ns/net ping -c1 -W2 1.1.1.1                     # re
 
 ## Micro-VM demo: a 3-node kubeadm cluster
 
-`infra_microvm` boots a real VM under cloud-hypervisor for each node (one
+`infra_microvm` boots a real VM under infra-hypervisor for each node (one
 control plane, two workers) instead of a namespaced container - see
 [../../../docs/architecture/realization.md](../../../docs/architecture/realization.md#microvms).
-The agent hosts need `cloud-hypervisor` and a raw base image, installed by
-the `microvm` Ansible role (part of `site.yml`); nothing extra to build. Each
-node gets 2 vCPUs and 2048MiB of RAM, enough to clear kubeadm's own preflight
-checks (1700MiB minimum).
+infra-hypervisor ships inside the `infra-agent` package the agent role
+already installs; the agent hosts just need a raw base image, staged by
+the `microvm` Ansible role (part of `site.yml`); nothing extra to build.
+Each node gets 2 vCPUs and 2048MiB of RAM, enough to clear kubeadm's own
+preflight checks (1700MiB minimum).
 
 A `tls_private_key` resource generates the SSH key pair used to reach every
 node - nothing to pass in on the command line, and the private half never
