@@ -374,14 +374,16 @@ jobs:
           cache: true
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      # Fails on every reachable vulnerability but those osv-scanner.toml
+      # accepts, with a reason and an expiry date.
       - name: Run govulncheck
-        run: govulncheck ./...
+        run: scripts/govulncheck.sh ./...
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
         with:
           title: govulncheck
-          body: "`govulncheck` against the Go vulnerability database."
+          body: "`govulncheck` against the Go vulnerability database, less the entries `osv-scanner.toml` accepts."
 
   osv-scanner:
     name: osv-scanner
@@ -411,8 +413,9 @@ jobs:
           fi
           chmod +x "$HOME/.local/bin/osv-scanner"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # osv-scanner.toml, at the root, lists the accepted entries.
       - name: Run OSV-Scanner
-        run: osv-scanner scan source --lockfile=go.mod
+        run: osv-scanner scan source --config=osv-scanner.toml --lockfile=go.mod
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
