@@ -91,6 +91,7 @@ func (s *Server) routes() {
 	register[resource.KMSKeySpec, resource.KMSKeyStatus](s, resource.KindKMSKey)
 	register[resource.DiskSpec, resource.DiskStatus](s, resource.KindDisk)
 	register[resource.DiskFileSpec, resource.DiskFileStatus](s, resource.KindDiskFile)
+	register[resource.AsyncDiskReplicaSpec, resource.AsyncDiskReplicaStatus](s, resource.KindAsyncDiskReplica)
 	register[resource.ComputeSpec, resource.ComputeStatus](s, resource.KindCompute)
 	register[resource.MicroVMSpec, resource.MicroVMStatus](s, resource.KindMicroVM)
 	register[resource.ACLPolicySpec, resource.ACLPolicyStatus](s, resource.KindACLPolicy)
