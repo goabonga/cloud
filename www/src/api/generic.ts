@@ -67,8 +67,9 @@ export async function createResource(
   kind: string,
   uid: string,
   spec: Record<string, unknown>,
+  metadata?: ResourceMetadataInput,
 ): Promise<GenericResource> {
-  return apiRequest<GenericResource>("PUT", `/${kind}/${uid}`, { spec });
+  return apiRequest<GenericResource>("PUT", `/${kind}/${uid}`, metadata ? { spec, metadata } : { spec });
 }
 
 export async function deleteResource(kind: string, uid: string): Promise<void> {

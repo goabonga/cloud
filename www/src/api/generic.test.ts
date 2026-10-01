@@ -40,6 +40,22 @@ describe("generic api", () => {
     expect(JSON.parse(opts.body as string)).toEqual({ spec: { subnetId: "sn-1", image: "nginx:latest" } });
   });
 
+  it("sends metadata.projectId on create when given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ metadata: { uid: "v-1", generation: 1, createdAt: "" }, spec: {}, status: {} }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createResource("vpc", "v-1", { cidr: "10.0.0.0/16" }, { projectId: "project-1" });
+    const [, opts] = fetchMock.mock.calls[0];
+    expect(JSON.parse(opts.body as string)).toEqual({
+      spec: { cidr: "10.0.0.0/16" },
+      metadata: { projectId: "project-1" },
+    });
+  });
+
   it("deletes a resource", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
     vi.stubGlobal("fetch", fetchMock);
