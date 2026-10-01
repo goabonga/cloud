@@ -7,10 +7,16 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/goabonga/infrastructure/internal/meta"
 )
 
 func main() {
-	fmt.Println(meta.Line("infra-container-init", Version))
+	run(os.Stdout)
+}
+
+func run(stdout io.Writer) {
+	fmt.Fprintln(stdout, meta.Line("infra-container-init", Version))
 }
