@@ -93,6 +93,7 @@ func (p *infraProvider) Resources(_ context.Context) []func() resource.Resource 
 		resources.NewKMSKeyResource,
 		resources.NewDiskResource,
 		resources.NewDiskFileResource,
+		resources.NewAsyncDiskReplicaResource,
 		resources.NewComputeResource,
 		resources.NewMicroVMResource,
 		resources.NewSSLCAResource,
