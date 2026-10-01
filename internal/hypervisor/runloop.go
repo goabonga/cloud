@@ -55,15 +55,16 @@ type ExitEvent struct {
 //
 // kvm.ExitHLT is treated as idle and resumed without surfacing an event.
 // A kvm.ExitIO on COM1's port range is answered by the emulated UART
-// (console.go), which is safe for concurrent use from multiple vCPUs, and
-// never reaches onExit. Every other exit reason (today, any other
-// kvm.ExitIO port, and all of kvm.ExitMMIO — no MMIO device exists yet,
-// added in a later milestone) is reported via onExit — which may be nil —
-// and then resumed without this package acting on it: an unhandled port or
-// MMIO read gets whatever was already in its (zeroed) data buffer and a
-// write is silently dropped. onExit may mutate IOData/MMIOData in place to
-// answer a read before Run resumes, but must be safe to call from more
-// than one goroutine at once if there is more than one vCPU.
+// (console.go); a kvm.ExitMMIO inside a registered virtio device's window
+// (mmio.go) is answered by its Transport. Neither reaches onExit, and both
+// are safe for concurrent use from multiple vCPUs. Every other exit reason
+// (today, any other kvm.ExitIO port or kvm.ExitMMIO address) is reported
+// via onExit — which may be nil — and then resumed without this package
+// acting on it: an unhandled port or MMIO read gets whatever was already
+// in its (zeroed) data buffer and a write is silently dropped. onExit may
+// mutate IOData/MMIOData in place to answer a read before Run resumes, but
+// must be safe to call from more than one goroutine at once if there is
+// more than one vCPU.
 func (m *Machine) Run(ctx context.Context, onExit func(*ExitEvent)) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -127,8 +128,8 @@ func (m *Machine) runVCPU(ctx context.Context, v *vcpu, onExit func(*ExitEvent))
 			}
 
 		case kvm.ExitMMIO:
-			if onExit != nil {
-				addr, data, isWrite := v.run.MMIO()
+			addr, data, isWrite := v.run.MMIO()
+			if !m.serveMMIO(addr, data, isWrite) && onExit != nil {
 				onExit(&ExitEvent{VCPU: v.kv.ID(), Reason: reason, MMIOAddr: addr, MMIOData: data, MMIOWrite: isWrite})
 			}
 

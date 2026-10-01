@@ -72,6 +72,22 @@ const (
 	KernelLoadAddr uint64 = 0x100000
 )
 
+// MMIOBaseAddr is where the first virtio-mmio device's register window
+// starts, each subsequent device spaced MMIODeviceSize apart
+// (MMIOBaseAddr, MMIOBaseAddr+MMIODeviceSize, ...). It sits in the
+// standard x86 "MMIO hole" below 4 GiB (below the IOAPIC/LAPIC default
+// MMIO bases this package's irqchip already uses at 0xfec00000/0xfee00000,
+// and the TSS/identity-map addresses near the very top), comfortably above
+// any guest memory size the microvm resource targets, so it never
+// collides with a real memory slot. MMIODeviceSize (512 bytes) covers the
+// fixed transport register block (ConfigSpaceOffset, 256 bytes) plus
+// headroom for a device's own config space — generous for virtio-net's
+// (MAC + status, 8 bytes) and virtio-blk's (an 8-byte capacity).
+const (
+	MMIOBaseAddr   uint64 = 0xd0000000
+	MMIODeviceSize uint64 = 0x200
+)
+
 // KernelEntryOffset is added to KernelLoadAddr to get %rip at vCPU entry:
 // the Linux x86-64 boot protocol's 64-bit entry point (startup_64 in
 // arch/x86/boot/compressed/head_64.S, placed there by a linker .org
