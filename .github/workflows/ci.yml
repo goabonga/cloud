@@ -366,6 +366,93 @@ jobs:
             `${{ matrix.security_threshold || '11' }}`.
 
   # ---------------------------------------------------------------------
+  # Arch Linux packaging chain. Same nine components and the same
+  # has_package_changes gate as `deb`/`deb-validate`, but makepkg only exists
+  # inside an Arch userland, so these two jobs run in a `container:
+  # archlinux:base-devel` rather than on the bare ubuntu-24.04 runner `deb`
+  # uses for dpkg-deb.
+  # ---------------------------------------------------------------------
+
+  archlinux:
+    name: archlinux (${{ matrix.component }})
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    if: >-
+      !cancelled() && !failure()
+      && needs.detect.outputs.has_package_changes == 'true'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - infra
+          - infra-api
+          - infra-idp
+          - infra-exporter
+          - infra-controller-manager
+          - infra-agent
+          - infra-container-init
+          - terraform-provider-infra
+          - infra-www
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The .pkg.tar.zst carries the version in its PKGBUILD-rendered
+      # filename, so it has to be the version the release will publish.
+      - uses: ./.github/actions/bump-preview
+      # All nine, every run: a component released by cascade needs a package
+      # too, and `multicz changed` cannot tell us which those are.
+      - uses: ./.github/actions/build-archlinux
+        with:
+          component: ${{ matrix.component }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux (${{ matrix.component }})
+          body: x86_64 package uploaded as `${{ matrix.component }}-archlinux`.
+
+  archlinux-validate:
+    name: archlinux-validate (${{ matrix.component }})
+    needs: archlinux
+    if: needs.archlinux.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - infra
+          - infra-api
+          - infra-idp
+          - infra-exporter
+          - infra-controller-manager
+          - infra-agent
+          - infra-container-init
+          - terraform-provider-infra
+          - infra-www
+    steps:
+      - uses: actions/checkout@v7
+      # No probe: `archlinux` builds all nine legs on every run, so a missing
+      # artifact means its leg failed - and that already skips this job
+      # through `!failure()`.
+      - uses: ./.github/actions/validate-archlinux
+        with:
+          component: ${{ matrix.component }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux-validate (${{ matrix.component }})
+          body: |
+            namcap and `test/install/validate-archlinux.sh` against the
+            installed package.
+
+  # ---------------------------------------------------------------------
   # End-to-end and DAST. Both bring the control plane up from source as plain
   # processes against PostgreSQL - the same five binaries `deploy/ansible`
   # installs as .debs, not a cluster nothing in this repo's own install path
@@ -488,6 +575,7 @@ jobs:
       - osv-scanner
       - integration
       - deb-validate
+      - archlinux-validate
       - e2e
       - owasp
     # www is gated on www_changed, so it is skipped on non-frontend pushes. A
@@ -597,6 +685,7 @@ jobs:
       - osv-scanner
       - integration
       - deb-validate
+      - archlinux-validate
       - e2e
       - owasp
       - release
