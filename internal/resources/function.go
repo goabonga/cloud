@@ -42,6 +42,7 @@ type functionModel struct {
 	Image           types.String  `tfsdk:"image"`
 	Command         types.String  `tfsdk:"command"`
 	Env             types.Map     `tfsdk:"env"`
+	Port            types.Int64   `tfsdk:"port"`
 	WarmPool        types.Object  `tfsdk:"warm_pool"`
 	Phase           types.String  `tfsdk:"phase"`
 	WarmCount       types.Int64   `tfsdk:"warm_count"`
@@ -59,7 +60,7 @@ func NewFunctionResource() resource.Resource {
 		schema: schema.Schema{
 			MarkdownDescription: "A FaaS function: the compute shape run for each invocation, plus a warm-pool " +
 				"policy. Realized as ordinary compute instances that a controller creates and retires to the " +
-				"policy; invoking a function is not implemented yet.",
+				"policy, invoked synchronously over HTTP.",
 			Attributes: map[string]schema.Attribute{
 				"id":                idAttribute(),
 				"name":              schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Display name."},
@@ -72,6 +73,7 @@ func NewFunctionResource() resource.Resource {
 				"image":             schema.StringAttribute{Required: true, MarkdownDescription: "OCI image reference run on invocation."},
 				"command":           schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Entrypoint command."},
 				"env":               schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, MarkdownDescription: "Environment variables."},
+				"port":              schema.Int64Attribute{Required: true, MarkdownDescription: "Port the runtime listens on inside the instance; invoke requests are forwarded to it."},
 				"warm_pool": schema.SingleNestedAttribute{
 					Optional:            true,
 					Computed:            true,
@@ -80,7 +82,7 @@ func NewFunctionResource() resource.Resource {
 						"min_warm":         schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: "Instances kept running regardless of idle time; 0 by default."},
 						"max_warm":         schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: "Cap on concurrent warm instances; 0, the default, is unbounded."},
 						"idle_ttl_seconds": schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: "Seconds an instance above min_warm may sit idle before eviction; 0 evicts as soon as it is idle."},
-						"allow_cold_start": schema.BoolAttribute{Optional: true, Computed: true, MarkdownDescription: "Permit creating a fresh instance on invoke when none are warm. Reserved: the invoke path does not exist yet."},
+						"allow_cold_start": schema.BoolAttribute{Optional: true, Computed: true, MarkdownDescription: "Permit creating a fresh instance on invoke when none are warm."},
 					},
 				},
 				"phase":      phaseAttribute(),
@@ -124,6 +126,7 @@ func functionToSpec(ctx context.Context, m functionModel) (infra.FunctionSpec, d
 		Image:           m.Image.ValueString(),
 		Command:         m.Command.ValueString(),
 		Env:             env,
+		Port:            int(m.Port.ValueInt64()),
 		WarmPool:        warmPool,
 	}, diags
 }
@@ -154,6 +157,7 @@ func functionToModel(ctx context.Context, r *infra.Function) (functionModel, dia
 		Image:           types.StringValue(r.Spec.Image),
 		Command:         types.StringValue(r.Spec.Command),
 		Env:             env,
+		Port:            types.Int64Value(int64(r.Spec.Port)),
 		WarmPool:        warmPool,
 		Phase:           types.StringValue(string(r.Status.Phase)),
 		WarmCount:       types.Int64Value(int64(r.Status.WarmCount)),
