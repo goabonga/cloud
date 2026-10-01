@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"strings"
@@ -115,5 +116,46 @@ func TestHypervisorBootSerialOutput(t *testing.T) {
 
 	if !strings.Contains(console.String(), "Linux version") {
 		t.Fatalf("console output does not contain the kernel boot banner; got %d bytes:\n%s", console.Len(), console.String())
+	}
+}
+
+// TestHypervisorBootSMP boots with more than one vcpu and asserts the
+// guest itself reports bringing them all up — the kernel's own SMP
+// bring-up code logs "smp: Brought up ... N CPUs" once every vcpu beyond
+// the boot one has responded to the INIT-SIPI-SIPI sequence the booted
+// kernel issued (not anything this package drives itself; see Run's doc
+// comment in runloop.go). This has been Linux's exact wording for a long
+// time, but isn't a documented, stable interface — if a future kernel
+// changes it, this test (not the hypervisor) needs updating.
+func TestHypervisorBootSMP(t *testing.T) {
+	kernel := os.Getenv("GOA_ITEST_HYPERVISOR_KERNEL")
+	if kernel == "" {
+		t.Skip("GOA_ITEST_HYPERVISOR_KERNEL not set")
+	}
+
+	const numCPUs = 2
+	var console bytes.Buffer
+	m, err := hypervisor.New(hypervisor.Config{
+		VCPUs:      numCPUs,
+		MemoryMB:   256,
+		KernelPath: kernel,
+		CmdLine:    "console=ttyS0 panic=-1",
+		Console:    &console,
+	})
+	if err != nil {
+		skipIfKVMUnusable(t, err)
+		t.Fatalf("New: %v", err)
+	}
+	defer m.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := m.Run(ctx, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	want := fmt.Sprintf("Brought up 1 node, %d CPUs", numCPUs)
+	if !strings.Contains(console.String(), want) {
+		t.Fatalf("console output does not contain %q; got %d bytes:\n%s", want, console.Len(), console.String())
 	}
 }

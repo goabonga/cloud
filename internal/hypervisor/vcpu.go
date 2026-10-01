@@ -47,13 +47,30 @@ var (
 	dataSegment = kvm.Segment{Base: 0, Limit: 0xfffff, Selector: boot.DataSelector, Type: 0x3, Present: 1, S: 1, DB: 1, G: 1}
 )
 
-// bootVCPU creates vCPU 0, maps its kvm_run region, and sets its registers
+// bootVCPU creates vCPU id, maps its kvm_run region, and sets its registers
 // to the Linux x86-64 boot protocol's entry state: long mode already
 // active, paging on via the identity map boot.BuildPageTables wrote,
 // flat code/data segments from a GDT at boot.GDTAddr, and RSI pointing at
 // the zero page loadGuest wrote at boot.BootParamsAddr.
-func (m *Machine) bootVCPU() (*vcpu, error) {
-	kv, err := m.vm.CreateVCPU(0)
+//
+// Every vCPU gets this identical configuration, id 0 (the BSP) included —
+// not just id 0 as the x86-64 boot protocol alone might suggest. For any
+// id other than 0, it is inert rather than a race against the BSP
+// executing the same entry point: this package creates the in-kernel
+// irqchip (machine.go), and per the KVM API documentation (the
+// KVM_GET/SET_MP_STATE section) "this ioctl is only useful after
+// KVM_CREATE_IRQCHIP[;] [w]ithout an in-kernel irqchip, the
+// multiprocessing state must be maintained by userspace" — the converse,
+// confirmed against Firecracker's and crosvm's own x86_64 vcpu setup
+// (neither special-cases non-boot vcpus either), is that WITH one, KVM
+// itself holds every non-boot vcpu in KVM_MP_STATE_UNINITIALIZED and its
+// KVM_RUN calls do not execute guest code until the booted kernel's own
+// SMP bring-up sends a real INIT-SIPI-SIPI over the in-kernel LAPIC —
+// which resets the target vcpu's state (including %rip/%rsp) to what the
+// SIPI vector specifies, discarding whatever this function configured
+// here. See docs/architecture/go-hypervisor.md for the longer account.
+func (m *Machine) bootVCPU(id int) (*vcpu, error) {
+	kv, err := m.vm.CreateVCPU(id)
 	if err != nil {
 		return nil, fmt.Errorf("hypervisor: %w", err)
 	}

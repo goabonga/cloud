@@ -9,7 +9,10 @@
 // and asserts its interrupt line.
 package uart
 
-import "io"
+import (
+	"io"
+	"sync"
+)
 
 // Register offsets from the UART's base I/O port (COM1 is 0x3f8), per the
 // 16550 programming model. Offsets 0 and 1 are overloaded with the baud
@@ -39,10 +42,13 @@ const (
 
 // UART is one emulated 16550A. Every transmitted byte is written to Out
 // immediately — there is no FIFO delay to model since this is a
-// paravirtual device with no real transmission latency to hide.
+// paravirtual device with no real transmission latency to hide. Safe for
+// concurrent use: with more than one vCPU, any of them may be the one
+// whose guest code happens to touch the console at a given moment.
 type UART struct {
 	out io.Writer
 
+	mu                     sync.Mutex
 	ier, lcr, mcr, scratch byte
 	divisorLatch           uint16
 }
@@ -62,6 +68,8 @@ func New(out io.Writer) *UART {
 // THRE interrupt enabled, since this device is always immediately ready
 // for the next byte.
 func (u *UART) Write(off uint8, val byte) (wantInterrupt bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	switch off {
 	case RegData:
 		if u.lcr&lcrDLAB != 0 {
@@ -96,6 +104,8 @@ func (u *UART) Write(off uint8, val byte) (wantInterrupt bool) {
 // as "no data" and LSR always reports the transmitter ready — enough for
 // an output-only console.
 func (u *UART) Read(off uint8) byte {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	switch off {
 	case RegData:
 		if u.lcr&lcrDLAB != 0 {

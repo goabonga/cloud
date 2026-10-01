@@ -21,8 +21,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/hypervisor/uart"
 )
 
-// Config describes the VM to boot. VCPUs must be 1 for now — multi-vCPU
-// lands in a later milestone.
+// Config describes the VM to boot.
 type Config struct {
 	VCPUs      int
 	MemoryMB   int
@@ -56,8 +55,8 @@ type vcpu struct {
 // configures the boot vCPU's registers to enter it — everything Run needs
 // to actually start executing the guest.
 func New(cfg Config) (*Machine, error) {
-	if cfg.VCPUs != 1 {
-		return nil, fmt.Errorf("hypervisor: %d vcpus requested, only 1 is supported for now", cfg.VCPUs)
+	if cfg.VCPUs < 1 {
+		return nil, fmt.Errorf("hypervisor: vcpus must be positive, got %d", cfg.VCPUs)
 	}
 	if cfg.MemoryMB <= 0 {
 		return nil, fmt.Errorf("hypervisor: memory must be positive, got %d MiB", cfg.MemoryMB)
@@ -122,15 +121,17 @@ func New(cfg Config) (*Machine, error) {
 		return nil, fmt.Errorf("hypervisor: %w", err)
 	}
 
-	if err := m.loadGuest(img, initrdData, cfg.CmdLine, memSize); err != nil {
+	if err := m.loadGuest(img, initrdData, cfg.CmdLine, memSize, cfg.VCPUs); err != nil {
 		return nil, err
 	}
 
-	v, err := m.bootVCPU()
-	if err != nil {
-		return nil, err
+	for id := range cfg.VCPUs {
+		v, err := m.bootVCPU(id)
+		if err != nil {
+			return nil, err
+		}
+		m.vcpus = append(m.vcpus, v)
 	}
-	m.vcpus = []*vcpu{v}
 
 	ok = true
 	return m, nil
@@ -150,9 +151,9 @@ func (m *Machine) write(addr uint64, b []byte) error {
 }
 
 // loadGuest writes every structure the boot protocol needs into guest
-// memory: page tables, GDT, kernel, initrd, command line and the zero
-// page tying them together.
-func (m *Machine) loadGuest(img *boot.Image, initrdData []byte, cmdline string, memSize uint64) error {
+// memory: page tables, GDT, MP table, kernel, initrd, command line and the
+// zero page tying them together.
+func (m *Machine) loadGuest(img *boot.Image, initrdData []byte, cmdline string, memSize uint64, numCPUs int) error {
 	pages, err := boot.BuildPageTables(memSize)
 	if err != nil {
 		return fmt.Errorf("hypervisor: %w", err)
@@ -164,6 +165,14 @@ func (m *Machine) loadGuest(img *boot.Image, initrdData []byte, cmdline string, 
 	}
 
 	if err := m.write(boot.GDTAddr, boot.BuildGDT()); err != nil {
+		return err
+	}
+
+	mpTable, err := boot.BuildMPTable(numCPUs)
+	if err != nil {
+		return fmt.Errorf("hypervisor: %w", err)
+	}
+	if err := m.write(boot.MPTableAddr, mpTable); err != nil {
 		return err
 	}
 
