@@ -42,12 +42,17 @@ type IPAddress = Resource[IPAddressSpec, IPAddressStatus]
 // IGWSpec is the desired state of an internet gateway.
 type IGWSpec struct {
 	VPCID string `json:"vpcId"`
+	// EgressProxy, when enabled, filters the VPC's egress (see egress.go).
+	EgressProxy *EgressProxySpec `json:"egressProxy,omitempty"`
 }
 
 // Validate reports whether the spec is well-formed.
 func (s IGWSpec) Validate() error {
 	if s.VPCID == "" {
 		return fmt.Errorf("igw: vpcId is required")
+	}
+	if s.EgressProxy != nil {
+		return s.EgressProxy.validate()
 	}
 	return nil
 }
@@ -57,6 +62,8 @@ type IGWStatus struct {
 	StatusBase
 	HostIface string `json:"hostIface,omitempty"`
 	Bridge    string `json:"bridge,omitempty"`
+	// EgressProxy is set while the egress proxy is enabled.
+	EgressProxy *EgressProxyStatus `json:"egressProxy,omitempty"`
 }
 
 // IGW is an internet-gateway resource.
