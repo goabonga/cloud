@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Vulnerabilities accepted after review, each with why and until when. The
+# osv-scanner and govulncheck CI jobs both read this file: any other finding
+# still fails them, and an entry past its date fails them again.
+
+[[IgnoredVulns]]
+id = "GO-2026-4736"
+ignoreUntil = 2027-01-31
+reason = """\
+CVE-2026-30405 / GHSA-4p9m-8gc4-rw2h, a crash on a malformed NEXT_HOP \
+attribute in GoBGP. GitHub's advisory bounds it to <= 4.3.0, and the fix, \
+osrg/gobgp@583080a ("server: fix malformed nexthop attribute crash"), ships \
+in every release since v4.4.0 - this module requires v4.9.0. The Go \
+vulnerability database records no fixed version, so it flags them all. Drop \
+this entry once it does.\
+"""
+
