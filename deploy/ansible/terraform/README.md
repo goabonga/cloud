@@ -60,12 +60,35 @@ and the dashboard (`http://<control-ip>:8088`) and Grafana
 
 Each instance serves an `index.html` naming it, put by an `infra_disk_file` on
 its own KMS-encrypted disk mounted over nginx's document root. The load
-balancer round-robins port 80 between them, so repeated requests to its
-address alternate between the two pages, from an agent host or from inside the
-VPC:
+balancer round-robins port 443 between them, passing TLS through to nginx, so
+repeated requests alternate between the two pages.
+
+nginx holds two certificates, on a second disk mounted over
+`/etc/nginx/conf.d` next to its server blocks:
+
+- **Public** - `demo.test` and `www.demo.test`, signed by the platform's
+  public root (`ca_id = "public-root"`), which the API creates at its first
+  start and every lab machine trusts (`public_trust` role).
+- **Internal** - `web.internal.demo` and `www.internal.demo`, signed by
+  `infra_ssl_ca.internal`, a CA trusted only by the instances of the VPC its
+  `vpc_ids` names: the agent adds it to their system trust bundle.
+
+Each chain and private key is an `infra_disk_file` with `ssl_cert_id` and
+`ssl_part`: the agent renders it from the store, decrypting the key with the
+KMS key, so no key passes through Terraform. nginx's command waits for the keys
+to be written before starting.
 
 ```bash
-ssh ubuntu@<agent-ip> 'for i in 1 2 3 4; do curl -s http://<lb_address>/ | grep h1; done'
+ssh ubuntu@<agent-ip> 'for i in 1 2 3 4; do curl -s https://www.demo.test/ | grep h1; done'
+```
+
+The lab machines do not trust the internal CA; check it against the demo's
+output instead:
+
+```bash
+terraform output -raw internal_ca_pem > internal-ca.pem
+scp internal-ca.pem ubuntu@<agent-ip>:
+ssh ubuntu@<agent-ip> 'curl -s --cacert internal-ca.pem --resolve web.internal.demo:443:<lb_address> https://web.internal.demo/'
 ```
 
 The demo also publishes DNS, served by the agents:
@@ -88,9 +111,12 @@ on it, and `demo.test` - so `www.demo.test` too - names it. Every lab machine re
 through the public DNS, so from any of them, or from the simulated Internet:
 
 ```bash
-ssh ubuntu@192.168.122.10 'curl -s http://www.demo.test/'
-ssh ubuntu@192.168.122.30 'sudo ip netns exec inet curl -s http://www.demo.test/'
+ssh ubuntu@192.168.122.10 'curl -s https://www.demo.test/'
+ssh ubuntu@192.168.122.30 'sudo ip netns exec inet curl -s https://www.demo.test/'
 ```
+
+No `-k`: the certificate verifies against the public root every machine
+trusts.
 
 ## Tear down
 
