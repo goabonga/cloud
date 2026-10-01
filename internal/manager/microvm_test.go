@@ -277,7 +277,7 @@ func TestMicroVMFinalize(t *testing.T) {
 
 // tapSim is a minimal in-memory stand-in for `ip tuntap`/`ip link`/`iptables`,
 // used to drive ExecMicroVMBackend's networking side effects without touching
-// the kernel or shelling out to cloud-hypervisor.
+// the kernel or shelling out to infra-hypervisor.
 type tapSim struct {
 	exist map[string]bool
 	calls [][]string
@@ -324,7 +324,7 @@ func (s *tapSim) run(_ context.Context, name string, args ...string) (string, er
 
 // TestExecMicroVMBackendNetworkSetup exercises the TAP and security-group
 // setup EnsureMicroVM does before resolving the boot image and handing off to
-// cloud-hypervisor. It expects an error back - the image path doesn't exist
+// infra-hypervisor. It expects an error back - the image path doesn't exist
 // in this test - but the networking side effects must already have happened
 // by then.
 func TestExecMicroVMBackendNetworkSetup(t *testing.T) {

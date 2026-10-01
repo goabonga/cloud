@@ -5,6 +5,7 @@ package manager
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
@@ -16,13 +17,14 @@ import (
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
+	"github.com/goabonga/infrastructure/internal/hypervisor/protocol"
 	"github.com/goabonga/infrastructure/internal/registry"
 	"github.com/goabonga/infrastructure/internal/state"
 )
 
-// chvShutdownGrace bounds how long DeleteMicroVM waits for a graceful
-// vmm.shutdown before killing the process.
-const chvShutdownGrace = time.Second
+// vmmShutdownGrace bounds how long DeleteMicroVM waits for a graceful
+// shutdown request before killing the process.
+const vmmShutdownGrace = time.Second
 
 // MicroVMRequest is a fully resolved micro-VM to realize on the host: the
 // reconciler has already resolved the bridge, an address and the subnet
@@ -66,16 +68,16 @@ type MicroVMTeardown struct {
 // MicroVMBackend abstracts the host operations a micro-VM needs.
 type MicroVMBackend interface {
 	// EnsureMicroVM realizes req and returns its topology. It boots the VM
-	// once: a subsequent call for a live cloud-hypervisor process is a no-op.
+	// once: a subsequent call for a live infra-hypervisor process is a no-op.
 	EnsureMicroVM(ctx context.Context, req MicroVMRequest) (MicroVMResult, error)
 	// DeleteMicroVM tears an instance down. Tearing down an absent instance is
 	// not an error.
 	DeleteMicroVM(ctx context.Context, td MicroVMTeardown) error
 }
 
-// ExecMicroVMBackend realizes micro-VMs as cloud-hypervisor processes attached
-// to a TAP device on the VPC bridge. It requires root / CAP_NET_ADMIN and the
-// cloud-hypervisor binary on PATH.
+// ExecMicroVMBackend realizes micro-VMs as infra-hypervisor processes
+// attached to a TAP device on the VPC bridge. It requires root /
+// CAP_NET_ADMIN and the infra-hypervisor binary on PATH.
 type ExecMicroVMBackend struct {
 	run      Runner
 	net      *ExecBackend
@@ -85,18 +87,18 @@ type ExecMicroVMBackend struct {
 	binary   string
 }
 
-// NewExecMicroVMBackend stores per-instance state (api socket, pid, log,
-// boot disk) and the shared image cache under stateDir, and resolves
-// cloud-hypervisor through PATH.
+// NewExecMicroVMBackend stores per-instance state (control socket, pid,
+// log, boot disk) and the shared image cache under stateDir, and resolves
+// infra-hypervisor through PATH.
 func NewExecMicroVMBackend(stateDir string) *ExecMicroVMBackend {
 	return &ExecMicroVMBackend{run: defaultRun, net: NewExecBackendWithRunner(defaultRun), images: newVMImageCache(stateDir), seed: newCloudInitSeeds(cloudInitPort), stateDir: stateDir}
 }
 
 // NewExecMicroVMBackendWithRunner builds a backend with an overridable
-// directory and runner, used in tests to assert the issued commands without
-// touching the host or starting cloud-hypervisor. Its cloud-init seed server,
-// if started, binds an OS-assigned port rather than the production one, so
-// parallel tests never collide on it.
+// directory and runner, used in tests to assert the issued commands
+// without touching the host or starting infra-hypervisor. Its cloud-init
+// seed server, if started, binds an OS-assigned port rather than the
+// production one, so parallel tests never collide on it.
 func NewExecMicroVMBackendWithRunner(stateDir string, run Runner) *ExecMicroVMBackend {
 	return &ExecMicroVMBackend{run: run, net: NewExecBackendWithRunner(run), images: newVMImageCache(stateDir), seed: newCloudInitSeeds(0), stateDir: stateDir}
 }
@@ -106,13 +108,13 @@ func (b *ExecMicroVMBackend) instanceDir(uid string) string {
 }
 
 // EnsureMicroVM creates the TAP device, attaches it to the bridge, applies the
-// security-group chain and starts cloud-hypervisor the first time; a live
+// security-group chain and starts infra-hypervisor the first time; a live
 // process from a previous call is left alone.
 func (b *ExecMicroVMBackend) EnsureMicroVM(ctx context.Context, req MicroVMRequest) (MicroVMResult, error) {
 	tap := ifaceName("tap-", req.UID)
 	res := MicroVMResult{Tap: tap}
 	dir := b.instanceDir(req.UID)
-	pidFile := filepath.Join(dir, "chv.pid")
+	pidFile := filepath.Join(dir, "vmm.pid")
 
 	if pid, alive := readAlivePid(pidFile); alive {
 		res.Pid = pid
@@ -158,28 +160,31 @@ func (b *ExecMicroVMBackend) EnsureMicroVM(ctx context.Context, req MicroVMReque
 	}
 	b.seed.set(req.UID, buildCloudInitSeed(req))
 
-	sock := filepath.Join(dir, "api.sock")
-	handle, err := startVMM(ctx, b.binary, sock, filepath.Join(dir, "chv.log"))
+	sock := filepath.Join(dir, "control.sock")
+	handle, err := startVMM(ctx, b.binary, sock, filepath.Join(dir, "hypervisor.log"))
 	if err != nil {
 		return res, err
 	}
 	res.Pid = handle.pid
 
-	client := newVMMClient(handle.sock)
-	cfg := chVMConfig{
-		CPUs:    chCPUsConfig{BootVCPUs: req.VCPUs, MaxVCPUs: req.VCPUs},
-		Memory:  chMemoryConfig{SizeBytes: int64(req.MemoryMB) * 1024 * 1024},
-		Payload: chPayloadConfig{Kernel: req.KernelPath, Initramfs: req.InitrdPath, Cmdline: guestCmdline(req)},
-		Disks:   []chDiskConfig{{Path: disk}},
-		Net:     []chNetConfig{{Tap: tap}},
-		Serial:  chConsoleConfig{Mode: "Tty"},
-		Console: chConsoleConfig{Mode: "Off"},
-	}
-	if err := client.createVM(ctx, cfg); err != nil {
+	client, err := newVMMClient(ctx, handle.sock)
+	if err != nil {
 		_ = syscall.Kill(handle.pid, syscall.SIGKILL)
 		return res, err
 	}
-	if err := client.bootVM(ctx); err != nil {
+	defer func() { _ = client.Close() }()
+
+	params := protocol.CreateParams{
+		VCPUs:      req.VCPUs,
+		MemoryMB:   req.MemoryMB,
+		KernelPath: req.KernelPath,
+		InitrdPath: req.InitrdPath,
+		CmdLine:    guestCmdline(req),
+		DiskPath:   disk,
+		TapName:    tap,
+		MAC:        deriveMAC(req.UID),
+	}
+	if err := client.create(params); err != nil {
 		_ = syscall.Kill(handle.pid, syscall.SIGKILL)
 		return res, err
 	}
@@ -189,19 +194,35 @@ func (b *ExecMicroVMBackend) EnsureMicroVM(ctx context.Context, req MicroVMReque
 	return res, nil
 }
 
-// DeleteMicroVM shuts the cloud-hypervisor process down (killing it if it
+// deriveMAC returns a deterministic, locally-administered MAC address for
+// uid (the 0x02 low bit of the first octet marks it locally administered,
+// per IEEE 802), the same deterministic-from-UID style ifaceName("tap-",
+// uid) already uses for the TAP device name. Deterministic rather than
+// random so EnsureMicroVM stays idempotent, and distinct per instance so
+// two micro-VMs on the same bridge never collide at layer 2 — unlike
+// cloud-hypervisor's net config (no MAC field at all; it generated one
+// internally), infra-hypervisor's virtio-net needs one explicitly.
+func deriveMAC(uid string) string {
+	sum := sha256.Sum256([]byte(uid))
+	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
+}
+
+// DeleteMicroVM shuts the infra-hypervisor process down (killing it if it
 // doesn't respond), removes the TAP device and the security-group rules.
 // Best effort: tearing down an absent instance is not an error.
 func (b *ExecMicroVMBackend) DeleteMicroVM(ctx context.Context, td MicroVMTeardown) error {
 	dir := b.instanceDir(td.UID)
-	pidFile := filepath.Join(dir, "chv.pid")
+	pidFile := filepath.Join(dir, "vmm.pid")
 	b.seed.remove(td.UID)
 
 	if pid, alive := readAlivePid(pidFile); alive {
-		shutdownCtx, cancel := context.WithTimeout(ctx, chvShutdownGrace)
-		_ = newVMMClient(filepath.Join(dir, "api.sock")).shutdownVMM(shutdownCtx)
+		shutdownCtx, cancel := context.WithTimeout(ctx, vmmShutdownGrace)
+		if client, err := newVMMClient(shutdownCtx, filepath.Join(dir, "control.sock")); err == nil {
+			_ = client.shutdown()
+			_ = client.Close()
+		}
 		cancel()
-		deadline := time.Now().Add(chvShutdownGrace)
+		deadline := time.Now().Add(vmmShutdownGrace)
 		for processAlive(pid) && time.Now().Before(deadline) {
 			time.Sleep(50 * time.Millisecond)
 		}
@@ -259,7 +280,7 @@ func readAlivePid(path string) (int, bool) {
 	return pid, true
 }
 
-// writePidFile records a cloud-hypervisor process's pid for later liveness
+// writePidFile records an infra-hypervisor process's pid for later liveness
 // checks and teardown.
 func writePidFile(path string, pid int) error {
 	// #nosec G306 -- state bookkeeping file, not sensitive
@@ -275,10 +296,11 @@ func writePidFile(path string, pid int) error {
 //
 // "ip=" names the interface "eth0", which only stays true if systemd's
 // predictable network interface naming never gets to rename it first (to
-// something like "ens2", derived from its virtio-pci slot) - udev races the
-// initramfs's own "ip=" processing, and loses often enough in practice that
-// this isn't a corner case. "net.ifnames=0 biosdevname=0" disables that
-// naming scheme outright, which is the documented way to keep "eth0" eth0.
+// something derived from its bus path) - udev races the initramfs's own
+// "ip=" processing, and loses often enough in practice that this isn't a
+// corner case, regardless of whether the NIC is virtio-mmio (today) or
+// virtio-pci. "net.ifnames=0 biosdevname=0" disables that naming scheme
+// outright, which is the documented way to keep "eth0" eth0.
 func guestCmdline(req MicroVMRequest) string {
 	parts := []string{}
 	if req.CmdLine != "" {
@@ -300,7 +322,7 @@ type MicroVMRegistry = registry.Registry[resource.MicroVMSpec, resource.MicroVMS
 
 // MicroVMReconciler realizes a micro-VM: it resolves the subnet, VPC bridge,
 // an address and the security-group chain, then asks the backend to boot
-// cloud-hypervisor.
+// it.
 type MicroVMReconciler struct {
 	reg     *MicroVMRegistry
 	subnets *SubnetRegistry

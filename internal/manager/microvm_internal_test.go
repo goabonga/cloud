@@ -47,7 +47,7 @@ func TestGuestCmdline(t *testing.T) {
 
 func TestReadAlivePidAndWritePidFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "chv.pid")
+	path := filepath.Join(dir, "vmm.pid")
 
 	if _, ok := readAlivePid(path); ok {
 		t.Fatal("expected no pid for a missing file")
