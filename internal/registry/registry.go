@@ -73,6 +73,37 @@ func (r *Registry[S, ST]) Delete(uid string) error {
 	return nil
 }
 
+// TryUpdate loads the resource at uid, applies mutate to it, and writes the
+// result back only if nothing else has changed the stored value since the
+// load (a compare-and-swap). It reports whether the update was applied:
+// false with a nil error means another writer won the race, and the caller
+// should retry against a fresh read rather than treat it as a failure.
+func (r *Registry[S, ST]) TryUpdate(uid string, mutate func(*resource.Resource[S, ST]) error) (bool, error) {
+	key := r.key(uid)
+	oldData, err := r.store.Get(key)
+	if err != nil {
+		return false, fmt.Errorf("registry: get %s/%s: %w", r.kind, uid, err)
+	}
+	var res resource.Resource[S, ST]
+	if err := json.Unmarshal(oldData, &res); err != nil {
+		return false, fmt.Errorf("registry: unmarshal %s/%s: %w", r.kind, uid, err)
+	}
+	if err := mutate(&res); err != nil {
+		return false, err
+	}
+	res.APIVersion = resource.APIVersion
+	res.Kind = r.kind
+	newData, err := json.Marshal(&res)
+	if err != nil {
+		return false, fmt.Errorf("registry: marshal %s/%s: %w", r.kind, uid, err)
+	}
+	ok, err := r.store.CompareAndSwap(key, oldData, newData)
+	if err != nil {
+		return false, fmt.Errorf("registry: swap %s/%s: %w", r.kind, uid, err)
+	}
+	return ok, nil
+}
+
 // List returns every resource of this kind.
 func (r *Registry[S, ST]) List() ([]resource.Resource[S, ST], error) {
 	kvs, err := r.store.List(r.kind)
