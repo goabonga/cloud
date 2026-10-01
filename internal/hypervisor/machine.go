@@ -19,6 +19,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/hypervisor/boot"
 	"github.com/goabonga/infrastructure/internal/hypervisor/kvm"
 	"github.com/goabonga/infrastructure/internal/hypervisor/uart"
+	"github.com/goabonga/infrastructure/internal/hypervisor/virtio"
 )
 
 // Config describes the VM to boot.
@@ -31,6 +32,16 @@ type Config struct {
 	// Console receives the guest's serial console output (COM1). A nil
 	// Console discards it.
 	Console io.Writer
+	// TapName, if set, attaches a virtio-net device backed by that
+	// already-persistent TAP device (see virtio.OpenTap) — created and
+	// attached to its bridge out of band, the same way
+	// ExecMicroVMBackend's EnsureMicroVM does for cloud-hypervisor today.
+	// Leaving it empty boots a VM with no network device at all.
+	TapName string
+	// MAC is the network device's MAC address, standard colon-hex
+	// notation (e.g. "02:00:00:00:00:01"). Ignored if TapName is empty;
+	// defaults to defaultMAC if TapName is set but MAC isn't.
+	MAC string
 }
 
 // Machine is one booted (or about to be booted) VM: its KVM handles, its
@@ -40,6 +51,8 @@ type Machine struct {
 	vm      *kvm.VM
 	mem     []byte // guest-physical address 0 maps to mem[0]
 	console *uart.UART
+	tap     *os.File
+	net     *virtio.Net
 
 	vcpus       []*vcpu
 	mmioDevices []*mmioDevice
@@ -122,7 +135,16 @@ func New(cfg Config) (*Machine, error) {
 		return nil, fmt.Errorf("hypervisor: %w", err)
 	}
 
-	if err := m.loadGuest(img, initrdData, cfg.CmdLine, memSize, cfg.VCPUs); err != nil {
+	cmdline := cfg.CmdLine
+	if cfg.TapName != "" {
+		extra, err := m.setupNet(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("hypervisor: %w", err)
+		}
+		cmdline += extra
+	}
+
+	if err := m.loadGuest(img, initrdData, cmdline, memSize, cfg.VCPUs); err != nil {
 		return nil, err
 	}
 
@@ -224,6 +246,10 @@ func (m *Machine) Close() error {
 		}
 	}
 	m.vcpus = nil
+	if m.tap != nil {
+		_ = m.tap.Close() // also unblocks virtio.Net.ReadLoop's pending Read, see OpenTap
+		m.tap = nil
+	}
 	if m.mem != nil {
 		_ = unix.Munmap(m.mem)
 		m.mem = nil
