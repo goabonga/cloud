@@ -8,9 +8,10 @@
 #                                                #   controller-manager, stop its etcd
 #
 # The checks: the API is healthy and refuses unauthenticated calls, an IdP
-# token is accepted, every agent is registered as a node, the etcd cluster has
-# a healthy member on every host, and an agent host holds the
-# controller-manager lease.
+# client-credentials token is accepted, the bootstrapped admin can log in and
+# their token carries the admin role, every agent is registered as a node,
+# the etcd cluster has a healthy member on every host, and an agent host
+# holds the controller-manager lease.
 #
 # The drill simulates the lease holder hanging rather than shutting down: a
 # clean stop releases the lease, which would hide whether expiry works. It
@@ -57,6 +58,30 @@
           Authorization: "Bearer {{ verify_token.json.access_token }}"
         status_code: 200
       register: verify_nodes
+
+    - name: The bootstrapped admin can log in
+      ansible.builtin.uri:
+        url: "{{ idp_issuer }}/login"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ idp_admin_username }}"
+          password: "{{ lookup('file', idp_admin_password_file) | trim }}"
+        status_code: 200
+      register: verify_admin_login
+
+    - name: The admin's token carries the admin role
+      ansible.builtin.uri:
+        url: "{{ idp_issuer }}/userinfo"
+        headers:
+          Authorization: "Bearer {{ verify_admin_login.json.access_token }}"
+        status_code: 200
+      register: verify_admin_userinfo
+
+    - name: Assert the admin role is present
+      ansible.builtin.assert:
+        that: "'admin' in verify_admin_userinfo.json.roles"
+        fail_msg: "Expected roles to include admin, got {{ verify_admin_userinfo.json.roles }}"
 
     - name: Every agent host is registered as a node
       ansible.builtin.assert:
