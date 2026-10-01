@@ -14,8 +14,9 @@ import (
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := run(ctx, os.Args[1:], nil); err != nil {
+	err := run(ctx, os.Args[1:], nil)
+	stop()
+	if err != nil {
 		log.Fatalf("infra-exporter: %v", err)
 	}
 }

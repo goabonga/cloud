@@ -110,7 +110,7 @@ func runWith(ctx context.Context, args []string, listener net.Listener, openStor
 	if err != nil {
 		return fmt.Errorf("open state: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ln := listener
 	if ln == nil {
@@ -119,7 +119,7 @@ func runWith(ctx context.Context, args []string, listener net.Listener, openStor
 			return fmt.Errorf("listen: %w", err)
 		}
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	srv := newServer(newMux(store))
 	log.Printf("%s listening on %s (state dir %s)", meta.Line("infra-exporter", Version), ln.Addr(), cfg.stateDir)
