@@ -12,6 +12,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/auth"
 	"github.com/goabonga/infrastructure/internal/crypto"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
+	"github.com/goabonga/infrastructure/internal/function"
 	"github.com/goabonga/infrastructure/internal/handler"
 	"github.com/goabonga/infrastructure/internal/httpsec"
 	"github.com/goabonga/infrastructure/internal/iam"
@@ -105,8 +106,27 @@ func (s *Server) routes() {
 	register[resource.WAFRuleSpec, resource.WAFRuleStatus](s, resource.KindWAFRule)
 	register[resource.NodeSpec, resource.NodeStatus](s, resource.KindNode)
 	register[resource.NodePoolSpec, resource.NodePoolStatus](s, resource.KindNodePool)
-	register[resource.FunctionSpec, resource.FunctionStatus](s, resource.KindFunction)
-	register[resource.FunctionInstanceSpec, resource.FunctionInstanceStatus](s, resource.KindFunctionInstance)
+
+	// function and function_instance get the same ownership/grant enforcement
+	// as everything registered through register() above, but are wired by
+	// hand rather than through that helper, so their registries can also be
+	// shared with the invoke handler below. computes and nodes are already
+	// routed by register() above: these are second Registry instances over
+	// the same store and kind, for the invoke service to read, not to serve
+	// again.
+	functions := registry.New[resource.FunctionSpec, resource.FunctionStatus](s.store, resource.KindFunction)
+	functionInstances := registry.New[resource.FunctionInstanceSpec, resource.FunctionInstanceStatus](s.store, resource.KindFunctionInstance)
+	computes := registry.New[resource.ComputeSpec, resource.ComputeStatus](s.store, resource.KindCompute)
+	nodes := registry.New[resource.NodeSpec, resource.NodeStatus](s.store, resource.KindNode)
+	var functionOpts []handler.Option[resource.FunctionSpec, resource.FunctionStatus]
+	var functionInstanceOpts []handler.Option[resource.FunctionInstanceSpec, resource.FunctionInstanceStatus]
+	if s.az != nil {
+		functionOpts = append(functionOpts, handler.WithAuthorization[resource.FunctionSpec, resource.FunctionStatus](s.az))
+		functionInstanceOpts = append(functionInstanceOpts, handler.WithAuthorization[resource.FunctionInstanceSpec, resource.FunctionInstanceStatus](s.az))
+	}
+	handler.New(functions, resource.KindFunction, functionOpts...).Register(s.mux, APIBase)
+	handler.New(functionInstances, resource.KindFunctionInstance, functionInstanceOpts...).Register(s.mux, APIBase)
+	handler.NewFunctionInvokeHandler(function.NewService(functions, functionInstances, computes, nodes)).Register(s.mux, APIBase)
 
 	// Organization/folder/project get the same ownership/grant enforcement as
 	// everything else above; since nothing populates their own
