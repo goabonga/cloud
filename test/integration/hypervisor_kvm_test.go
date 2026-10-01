@@ -30,7 +30,7 @@ func TestKVMOpen(t *testing.T) {
 		}
 		t.Fatalf("open: %v", err)
 	}
-	defer dev.Close()
+	defer func() { _ = dev.Close() }()
 
 	version, err := dev.APIVersion()
 	if err != nil {

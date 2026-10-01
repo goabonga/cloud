@@ -79,7 +79,7 @@ func TestHypervisorBootNetworking(t *testing.T) {
 		skipIfKVMUnusable(t, err)
 		t.Fatalf("New: %v", err)
 	}
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	runCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -59,7 +59,7 @@ func TestHypervisorBootReachesExit(t *testing.T) {
 		skipIfKVMUnusable(t, err)
 		t.Fatalf("New: %v", err)
 	}
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -106,7 +106,7 @@ func TestHypervisorBootSerialOutput(t *testing.T) {
 		skipIfKVMUnusable(t, err)
 		t.Fatalf("New: %v", err)
 	}
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -146,7 +146,7 @@ func TestHypervisorBootSMP(t *testing.T) {
 		skipIfKVMUnusable(t, err)
 		t.Fatalf("New: %v", err)
 	}
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

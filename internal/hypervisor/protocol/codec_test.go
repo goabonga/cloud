@@ -15,8 +15,8 @@ import (
 
 func TestRequestResponseRoundTrip(t *testing.T) {
 	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
 
 	done := make(chan error, 1)
 	go func() {
@@ -80,8 +80,8 @@ func TestRequestResponseRoundTrip(t *testing.T) {
 
 func TestDecodeServerMessageDistinguishesEventFromResponse(t *testing.T) {
 	client, server := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
 
 	done := make(chan error, 1)
 	go func() {

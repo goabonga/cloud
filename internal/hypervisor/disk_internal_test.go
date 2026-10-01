@@ -19,7 +19,9 @@ func TestSetupDisk(t *testing.T) {
 	if err := f.Truncate(4096); err != nil {
 		t.Fatalf("Truncate: %v", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 
 	m := &Machine{mem: make([]byte, 0x1000)}
 	param, err := m.setupDisk(Config{DiskPath: f.Name()})
