@@ -52,6 +52,16 @@ const (
 	// never collide with a real memory slot.
 	TSSAddr         uint64 = 0xfffbd000
 	IdentityMapAddr uint64 = 0xfffbc000
+	// MPTableAddr is where the Intel MP Specification table (mptable.go)
+	// is written — the legacy "last 1 KiB below 640 KiB" address the
+	// kernel's mpparse.c scans for it when no EBDA segment pointer is set
+	// at the fixed BIOS Data Area location (0x40e), which is how it
+	// always reads here since this package never writes a BDA at all.
+	// This happens to be the same address BuildE820 already leaves out of
+	// the RAM map as the conventional reserved EBDA/VGA/option-ROM gap —
+	// writing real (if tiny) structure data into that otherwise-unused
+	// region is exactly what real firmware does too.
+	MPTableAddr uint64 = 0x9fc00
 	// KernelLoadAddr is where the bzImage's protected-mode kernel code is
 	// written. This is the historical fixed load address for a bzImage
 	// not marked relocatable; a relocatable kernel (the common case on
