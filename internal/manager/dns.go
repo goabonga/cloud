@@ -109,6 +109,8 @@ type DNSReconciler struct {
 	vpcs       *VPCRegistry
 	backend    DNSBackend
 	publicAddr string
+	// publicServed is whether the last pass served publicAddr.
+	publicServed bool
 }
 
 // NewDNSReconciler returns a DNS pass backed by backend.
@@ -125,6 +127,15 @@ func (r *DNSReconciler) WithPublicAddress(addr string) *DNSReconciler {
 
 // Name identifies the reconcile pass.
 func (r *DNSReconciler) Name() string { return resource.KindDNSZone }
+
+// PublicAddresses implements PublicSource: the public DNS address, while the
+// last pass served it.
+func (r *DNSReconciler) PublicAddresses() []string {
+	if !r.publicServed {
+		return nil
+	}
+	return []string{r.publicAddr}
+}
 
 // ReconcileAll rebuilds every view from the store and serves it.
 func (r *DNSReconciler) ReconcileAll(ctx context.Context) error {
@@ -179,6 +190,7 @@ func (r *DNSReconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
+	r.publicServed = publicServed
 	r.updateStatuses(zones, records, served, publicServed, badRecords)
 	return errors.Join(errs...)
 }

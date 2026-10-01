@@ -10,10 +10,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -90,7 +93,12 @@ func run() error {
 		sslCerts := registry.New[resource.SSLCertSpec, resource.SSLCertStatus](store, resource.KindSSLCert)
 		diskFileReconciler.WithCertificates(manager.NewSSLCertificates(ssl.NewService(sslCAs, sslCerts, kek)))
 	}
-	agent := manager.NewAgent(*interval, logger,
+	dnsReconciler := manager.NewDNSReconciler(dnsZones, dnsRecords, vpcs, manager.NewNativeDNS()).WithPublicAddress(os.Getenv("GOA_DNS_PUBLIC_ADDR"))
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	passes := []manager.ReconcilePass{
 		manager.NewNodeHeartbeat(nodes, nodeID),
 		manager.NewVPCReconciler(vpcs, net),
 		manager.NewOverlayReconciler(vpcs, nodes, manager.NewExecOverlay(), nodeID),
@@ -98,7 +106,7 @@ func run() error {
 		manager.NewIGWReconciler(igws, vpcs, net),
 		manager.NewPeeringReconciler(peerings, vpcs, manager.NewExecPeering()),
 		// GOA_DNS_PUBLIC_ADDR (set on the edges) answers the public zones.
-		manager.NewDNSReconciler(dnsZones, dnsRecords, vpcs, manager.NewNativeDNS()).WithPublicAddress(os.Getenv("GOA_DNS_PUBLIC_ADDR")),
+		dnsReconciler,
 		manager.NewDiskReconciler(disks, manager.NewExecDiskBackend(filepath.Join(*stateDir, "disks")), master),
 		manager.NewSecurityGroupReconciler(sgs, sgRules, manager.NewExecSecurityGroup()),
 		manager.NewACLReconciler(acls, manager.NewExecFirewall()),
@@ -110,15 +118,57 @@ func run() error {
 		// The public DNS address is taken: never hand it to an ip_address.
 		manager.NewPublicIPReconciler(ipAddresses, store, os.Getenv("GOA_PUBLIC_CIDR"), os.Getenv("GOA_DNS_PUBLIC_ADDR")),
 		lbReconciler,
-	)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	}
+	// GOA_BGP_ASN (set on the edges) announces what they serve to the
+	// upstream, last, once the passes above have served it.
+	speaker, err := bgpSpeaker(ctx, logger)
+	if err != nil {
+		return err
+	}
+	if speaker != nil {
+		passes = append(passes, manager.NewBGPReconciler(speaker, dnsReconciler, lbReconciler))
+		defer func() {
+			// Withdraw at once rather than when the upstream's hold timer runs out.
+			stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := speaker.Stop(stopCtx); err != nil {
+				logger.Error("stop bgp", "err", err)
+			}
+		}()
+	}
+	agent := manager.NewAgent(*interval, logger, passes...)
 
 	if err := agent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
+}
+
+// bgpSpeaker starts the BGP speaker GOA_BGP_* configures, or returns nil when
+// GOA_BGP_ASN is unset.
+func bgpSpeaker(ctx context.Context, logger *slog.Logger) (*manager.GoBGPSpeaker, error) {
+	raw := os.Getenv("GOA_BGP_ASN")
+	if raw == "" {
+		return nil, nil
+	}
+	asn, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("GOA_BGP_ASN %q: %w", raw, err)
+	}
+	routerID, err := netip.ParseAddr(os.Getenv("GOA_BGP_ROUTER_ID"))
+	if err != nil {
+		return nil, fmt.Errorf("GOA_BGP_ROUTER_ID: %w", err)
+	}
+	peers, err := manager.ParseBGPPeers(os.Getenv("GOA_BGP_PEERS"))
+	if err != nil {
+		return nil, err
+	}
+	return manager.NewGoBGPSpeaker(ctx, manager.BGPConfig{
+		ASN:      uint32(asn),
+		RouterID: routerID,
+		Peers:    peers,
+		BFD:      envOr("GOA_BGP_BFD", "true") == "true",
+	}, logger)
 }
 
 func envOr(key, def string) string {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -268,6 +269,9 @@ type LoadBalancerReconciler struct {
 	// movedOut records the load balancers whose host-level service, left by
 	// an agent before the load-balancer namespace, this agent removed.
 	movedOut map[string]bool
+	// healthyPublic is what servedPublic held when this host last served it
+	// without error: what it announces (see bgp.go).
+	healthyPublic map[string]string
 }
 
 // NewLoadBalancerReconciler returns a reconciler backed by the LB and backend
@@ -282,8 +286,19 @@ func NewLoadBalancerReconciler(reg *LoadBalancerRegistry, backends *LBBackendReg
 // so traffic routed to the edge for it reaches the backends, full-NAT
 // included.
 func (r *LoadBalancerReconciler) AsEdge(publicIPs *IPAddressRegistry) *LoadBalancerReconciler {
-	r.publicIPs, r.servedPublic = publicIPs, map[string]string{}
+	r.publicIPs, r.servedPublic, r.healthyPublic = publicIPs, map[string]string{}, map[string]string{}
 	return r
+}
+
+// PublicAddresses implements PublicSource: the public addresses this edge
+// served without error on the last pass.
+func (r *LoadBalancerReconciler) PublicAddresses() []string {
+	out := make([]string, 0, len(r.healthyPublic))
+	for _, a := range r.healthyPublic {
+		out = append(out, a)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Name identifies the reconcile pass.
@@ -294,6 +309,13 @@ func (r *LoadBalancerReconciler) ReconcileAll(ctx context.Context) error {
 	lbs, err := r.reg.List()
 	if err != nil {
 		return fmt.Errorf("manager: list load balancers: %w", err)
+	}
+	// A load balancer another host finalized leaves the store without this
+	// one running its finalizer: stop announcing it.
+	for uid := range r.healthyPublic {
+		if !slices.ContainsFunc(lbs, func(lb resource.LoadBalancer) bool { return lb.Metadata.UID == uid }) {
+			delete(r.healthyPublic, uid)
+		}
 	}
 	var errs []error
 	for i := range lbs {
@@ -321,6 +343,8 @@ func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, uid string) erro
 }
 
 func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBalancer) error {
+	// Announced again only once served again, below.
+	delete(r.healthyPublic, lb.Metadata.UID)
 	if !lb.Metadata.HasFinalizer(resource.LoadBalancerFinalizer) {
 		lb.Metadata.AddFinalizer(resource.LoadBalancerFinalizer)
 	}
@@ -417,6 +441,7 @@ func (r *LoadBalancerReconciler) finalize(ctx context.Context, lb *resource.Load
 				}
 			}
 			delete(r.servedPublic, lb.Metadata.UID)
+			delete(r.healthyPublic, lb.Metadata.UID)
 		}
 		lb.Metadata.RemoveFinalizer(resource.LoadBalancerFinalizer)
 		lb.Status.SetPhase(resource.PhaseDeleting, "Deleting", "service removed")
@@ -566,6 +591,7 @@ func (r *LoadBalancerReconciler) ensurePublic(ctx context.Context, lb *resource.
 			return err
 		}
 		r.servedPublic[lb.Metadata.UID] = want
+		r.healthyPublic[lb.Metadata.UID] = want
 	}
 	lb.Status.PublicAddress = want
 	return nil

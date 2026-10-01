@@ -5,6 +5,7 @@ package manager_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"slices"
 	"sort"
@@ -22,10 +23,11 @@ import (
 
 // fakeDNSBackend records the views the reconciler hands out.
 type fakeDNSBackend struct {
-	vpc     map[string]*manager.DNSView
-	addrs   map[string]string
-	public  map[string]*manager.DNSView
-	stopped []string
+	vpc       map[string]*manager.DNSView
+	addrs     map[string]string
+	public    map[string]*manager.DNSView
+	stopped   []string
+	publicErr error
 }
 
 func newFakeDNSBackend() *fakeDNSBackend {
@@ -52,6 +54,9 @@ func (f *fakeDNSBackend) ServedVPCs() []string {
 }
 
 func (f *fakeDNSBackend) ServePublic(_ context.Context, addr string, view *manager.DNSView) error {
+	if f.publicErr != nil {
+		return f.publicErr
+	}
 	f.public[addr] = view
 	return nil
 }
@@ -309,5 +314,27 @@ func (env *dnsEnv) putPublicZone(t *testing.T, uid, domain string) {
 		Spec:     resource.DNSZoneSpec{Domain: domain, Visibility: "public"},
 	}); err != nil {
 		t.Fatalf("seed zone: %v", err)
+	}
+}
+
+func TestDNSAnnouncesThePublicAddressWhileServingIt(t *testing.T) {
+	t.Parallel()
+
+	env := newDNSEnv(t)
+	be := newFakeDNSBackend()
+	r := manager.NewDNSReconciler(env.zones, env.records, env.vpcs, be).WithPublicAddress("203.0.113.53")
+	if err := r.ReconcileAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.PublicAddresses(); !slices.Equal(got, []string{"203.0.113.53"}) {
+		t.Fatalf("announced %v", got)
+	}
+	be.publicErr = errors.New("address taken")
+	_ = r.ReconcileAll(context.Background())
+	if got := r.PublicAddresses(); len(got) != 0 {
+		t.Fatalf("an address no longer served must not be announced: %v", got)
+	}
+	if got := manager.NewDNSReconciler(env.zones, env.records, env.vpcs, be).PublicAddresses(); len(got) != 0 {
+		t.Fatalf("a host without a public address announces none: %v", got)
 	}
 }
