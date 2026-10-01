@@ -39,12 +39,19 @@ runs:
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
       with:
-        # lcov.info records paths relative to www/ (vitest's cwd), so the
-        # uploader needs that same cwd to prefix them back to www/src/...
-        # when it maps them onto the repo tree.
+        # lcov.info records paths relative to www/ (vitest's cwd). Running
+        # the uploader from that same cwd finds the file, but its
+        # "network" section (the file listing it validates uploaded paths
+        # against) then defaults to that cwd too - so it computes bare
+        # src/... paths instead of the real www/src/... ones and Codecov
+        # rejects the whole report as "source code unavailability /
+        # path mismatch" (confirmed: the merged report for a www-only
+        # push had zero www/ files in it). network-prefix tells the CLI
+        # to prepend www/ to that network section so it matches reality.
         working-directory: www
         files: coverage/lcov.info
         flags: www
+        network_prefix: www/
         token: ${{ inputs.codecov-token }}
         fail_ci_if_error: false
         disable_search: true
