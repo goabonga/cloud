@@ -14,10 +14,16 @@ const KindFunctionInstance = "function_instance"
 // removed.
 const FunctionInstanceFinalizer = "infra.io/function-instance"
 
-// FunctionInstanceWarm is the State of an instance sitting idle in the pool,
-// ready to serve an invocation. More states (e.g. "Assigned") are added once
-// the invoke path exists and can claim an instance out of the pool.
-const FunctionInstanceWarm = "Warm"
+// Function instance states.
+const (
+	// FunctionInstanceWarm is the State of an instance sitting idle in the
+	// pool, ready to serve an invocation.
+	FunctionInstanceWarm = "Warm"
+	// FunctionInstanceAssigned is the State of an instance claimed by an
+	// in-flight invocation. The pool controller excludes it from eviction
+	// and from the warm count while it is assigned.
+	FunctionInstanceAssigned = "Assigned"
+)
 
 // FunctionInstanceSpec is the desired state of one function-instance pool
 // slot: which function it backs and which compute realizes it. It is created
@@ -48,6 +54,12 @@ type FunctionInstanceStatus struct {
 	// LastUsedAt is the RFC3339 time the instance was last released back to
 	// the pool; it drives idle-TTL eviction.
 	LastUsedAt string `json:"lastUsedAt,omitempty"`
+	// Port is the host port the function controller allocated and mapped to
+	// the backing compute's Function.Spec.Port, set at creation time.
+	Port int `json:"port,omitempty"`
+	// NodeName mirrors the backing compute's Status.NodeName once the
+	// scheduler places it, so invoke can resolve which host to reach.
+	NodeName string `json:"nodeName,omitempty"`
 }
 
 // FunctionInstance is a function-instance resource.
