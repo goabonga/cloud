@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# The egress proxy of one load-balancer namespace, %i (lb-<vpc>): infra-lb
+# serving the egress listeners infra-agent writes to
+# /run/infra-egress/%i/config.json, inside the namespace infra-netns@%i
+# holds, and reporting to /run/infra-egress/%i/status.json. It is a process of
+# its own, next to infra-lb@%i, which balances the proxy address over the
+# egress proxies of every host: one host's proxy failing, the others serve
+# its instances. The agent starts it while the VPC's internet gateway has its
+# egress proxy enabled, reloads it with SIGHUP, and stops it otherwise.
+[Unit]
+Description=infra egress proxy of namespace %i
+Documentation=https://github.com/goabonga/infrastructure
+BindsTo=infra-netns@%i.service
+After=infra-netns@%i.service
+JoinsNamespaceOf=infra-netns@%i.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/infra-lb -config /run/infra-egress/%i/config.json -status /run/infra-egress/%i/status.json
+ExecReload=/bin/kill -HUP $MAINPID
+# The holder's network namespace, not a new one: JoinsNamespaceOf= takes
+# effect for units that both set PrivateNetwork=.
+PrivateNetwork=yes
+Restart=always
+RestartSec=1
+
+# --- Hardening --------------------------------------------------------------
+# Root only to read the configuration the agent writes 0600. Its ports are
+# above 1024: no capability at all.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/run/infra-egress/%i
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
