@@ -41,7 +41,8 @@ type Machine struct {
 	mem     []byte // guest-physical address 0 maps to mem[0]
 	console *uart.UART
 
-	vcpus []*vcpu
+	vcpus       []*vcpu
+	mmioDevices []*mmioDevice
 }
 
 type vcpu struct {
