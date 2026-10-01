@@ -82,11 +82,11 @@ func basicMicroVM(uid string) *resource.MicroVM {
 	return &resource.MicroVM{
 		Metadata: resource.ObjectMeta{UID: uid, Generation: 1},
 		Spec: resource.MicroVMSpec{
-			SubnetID:      "sn-1",
-			VCPUs:         1,
-			MemoryMB:      512,
-			KernelPath:    "/boot/vmlinux",
-			BootImagePath: "/images/base.raw",
+			SubnetID:   "sn-1",
+			VCPUs:      1,
+			MemoryMB:   512,
+			KernelPath: "/boot/vmlinux",
+			Image:      "/images/base.raw",
 		},
 	}
 }
@@ -127,7 +127,7 @@ func TestMicroVMReconcileSuccess(t *testing.T) {
 	if req.SGChain != "INFRA-SG-AB" {
 		t.Fatalf("sg chain = %q", req.SGChain)
 	}
-	if req.KernelPath != "/boot/vmlinux" || req.BootImage != "/images/base.raw" {
+	if req.KernelPath != "/boot/vmlinux" || req.Image != "/images/base.raw" {
 		t.Fatalf("boot inputs not carried over: %+v", req)
 	}
 }
@@ -342,7 +342,7 @@ func TestExecMicroVMBackendNetworkSetup(t *testing.T) {
 		VCPUs:      1,
 		MemoryMB:   512,
 		KernelPath: "/boot/vmlinux",
-		BootImage:  "/images/base.raw",
+		Image:      "/images/base.raw",
 	}
 	if _, err := be.EnsureMicroVM(context.Background(), req); err == nil {
 		t.Fatal("expected an error: no cloud-hypervisor binary in this test environment")
