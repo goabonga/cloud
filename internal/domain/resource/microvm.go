@@ -22,8 +22,8 @@ type MicroVMSpec struct {
 	VCPUs           int    `json:"vcpus"`
 	MemoryMB        int    `json:"memoryMb"`
 	// KernelPath is an absolute path to an uncompressed Linux kernel readable
-	// by the agent's host. Image fetch/caching is not implemented yet: this
-	// must already exist on the node.
+	// by the agent's host. There is no kernel fetch/caching: this must
+	// already exist on the node.
 	KernelPath string `json:"kernelPath"`
 	// InitrdPath is an optional absolute path to an initramfs.
 	InitrdPath string `json:"initrdPath,omitempty"`
@@ -31,10 +31,9 @@ type MicroVMSpec struct {
 	// static "ip=" directive derived from the allocated address so the guest
 	// configures eth0 at boot without cloud-init.
 	CmdLine string `json:"cmdLine,omitempty"`
-	// BootImagePath is an absolute path to a raw disk image readable by the
-	// agent's host. Image fetch/caching is not implemented yet: this must
-	// already exist on the node, and is used in place, not copied.
-	BootImagePath string `json:"bootImagePath"`
+	// Image is the boot disk's source. For now this must be an absolute path
+	// on the agent's host, used in place: there is no fetch/cache yet.
+	Image string `json:"image"`
 }
 
 // Validate reports whether the spec is well-formed.
@@ -51,8 +50,8 @@ func (s MicroVMSpec) Validate() error {
 	if s.KernelPath == "" {
 		return fmt.Errorf("microvm: kernelPath is required")
 	}
-	if s.BootImagePath == "" {
-		return fmt.Errorf("microvm: bootImagePath is required")
+	if s.Image == "" {
+		return fmt.Errorf("microvm: image is required")
 	}
 	return nil
 }
