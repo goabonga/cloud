@@ -79,6 +79,7 @@ func run() error {
 	microvms := registry.New[resource.MicroVMSpec, resource.MicroVMStatus](store, resource.KindMicroVM)
 	ipAddresses := registry.New[resource.IPAddressSpec, resource.IPAddressStatus](store, resource.KindIPAddress)
 	diskFiles := registry.New[resource.DiskFileSpec, resource.DiskFileStatus](store, resource.KindDiskFile)
+	asyncReplicas := registry.New[resource.AsyncDiskReplicaSpec, resource.AsyncDiskReplicaStatus](store, resource.KindAsyncDiskReplica)
 	sslCAs := registry.New[resource.SSLCASpec, resource.SSLCAStatus](store, resource.KindSSLCA)
 	nodeID := os.Getenv("GOA_NODE_ID")
 	lbReconciler := manager.NewLoadBalancerReconciler(lbs, lbBackends, computes, vpcs, manager.NewExecLB())
@@ -119,7 +120,8 @@ func run() error {
 
 	// The replication transport needs the same shared key every other node
 	// has; without GOA_KMS_KEY there is no key to authenticate with, so it
-	// stays off rather than serving unauthenticated.
+	// stays off rather than serving (or pulling) unauthenticated.
+	var asyncReplicaReconciler *manager.AsyncDiskReplicaReconciler
 	if master != nil {
 		repKey, err := crypto.DeriveKey(master, "replication:transport", 32)
 		if err != nil {
@@ -131,6 +133,13 @@ func run() error {
 				logger.Error("replication server stopped", "err", err)
 			}
 		}()
+		repPort, err := replication.Port(*replicationAddr)
+		if err != nil {
+			return fmt.Errorf("replication-addr: %w", err)
+		}
+		repClient := replication.NewClient(repKey, nodeID)
+		asyncReplicaReconciler = manager.NewAsyncDiskReplicaReconciler(
+			asyncReplicas, disks, nodes, repClient, filepath.Join(*stateDir, "disk-replicas"), repPort, nodeID)
 	} else {
 		logger.Warn("GOA_KMS_KEY not set: disk-replication transport disabled")
 	}
@@ -158,6 +167,9 @@ func run() error {
 		lbReconciler,
 		egressReconciler,
 		listenerReconciler,
+	}
+	if asyncReplicaReconciler != nil {
+		passes = append(passes, asyncReplicaReconciler)
 	}
 	// GOA_BGP_ASN (set on the edges) announces what they serve to the
 	// upstream, last, once the passes above have served it.
