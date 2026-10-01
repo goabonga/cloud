@@ -5,7 +5,14 @@ import type { LucideIcon } from "lucide-react";
 
 // CategoryKey groups resource kinds the way the GCP console groups services
 // in its left nav (one collapsible section per key).
-export type CategoryKey = "networking" | "security" | "compute" | "storage" | "loadbalancing" | "dns";
+export type CategoryKey =
+  | "networking"
+  | "security"
+  | "compute"
+  | "storage"
+  | "loadbalancing"
+  | "dns"
+  | "resourceManagement";
 
 export interface CategoryDef {
   key: CategoryKey;
@@ -58,4 +65,10 @@ export interface ResourceDef {
   // addition to metadata.uid which is always searchable.
   searchableFields: string[];
   fields: FieldSchema[];
+  // scoped marks a kind as living inside a project (metadata.projectId),
+  // defaulting to true: the create form offers a Project picker for every
+  // kind unless it sets scoped: false. The hierarchy/IAM kinds themselves
+  // (organization, folder, project, iam_binding) are not in a project the
+  // same way - their own scoping is a spec field, not metadata.projectId.
+  scoped?: boolean;
 }
