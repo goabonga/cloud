@@ -22,16 +22,31 @@ type LBRealServer struct {
 	Weight int
 }
 
-// LoadBalancerBackend abstracts the IPVS operations a load balancer needs.
+// LoadBalancerBackend abstracts the IPVS operations a load balancer needs. The
+// virtual services live in the VPC's load-balancer namespace (see lbns.go).
 type LoadBalancerBackend interface {
-	// EnsureService binds the VIP to the bridge, ensures the IPVS virtual service
-	// and syncs its real servers to the desired set. Traffic to the real servers
-	// leaves through nodePort, masqueraded to this host's address there, so
-	// every reply returns through this host whichever host the backend runs on
-	// and whichever subnet the client sits in. Idempotent.
-	EnsureService(ctx context.Context, vip string, port int, protocol, algorithm, bridge, nodePort string, servers []LBRealServer) error
-	// DeleteService removes the virtual service and the VIP. Idempotent.
-	DeleteService(ctx context.Context, vip string, port int, protocol, bridge string) error
+	// EnsureService serves vip:port in the VPC's load-balancer namespace: the
+	// VIP on the anycast port, an IPVS virtual service and its real servers,
+	// synced to servers. The host routes the VIP onto bridge, for instances
+	// outside its subnet, which send it to their gateway. Traffic to the real
+	// servers leaves through the node port, masqueraded to this host's address
+	// there, so every reply returns through this host whichever host the
+	// backend runs on and whichever subnet the client sits in. Idempotent.
+	EnsureService(ctx context.Context, vpcID, bridge, vip string, port int, protocol, algorithm string, servers []LBRealServer) error
+	// DeleteService removes the virtual service, the VIP and the host's route
+	// to it. Idempotent.
+	DeleteService(ctx context.Context, vpcID, bridge, vip string, port int, protocol string) error
+	// EnsurePublicService serves addr, a public address, the same way, behind
+	// the namespace's public leg: the host routes addr there, and the
+	// namespace sends its replies back through it. Idempotent.
+	EnsurePublicService(ctx context.Context, vpcID, addr string, port int, protocol, algorithm string, servers []LBRealServer) error
+	// DeletePublicService removes the public virtual service, its address and
+	// the host's route to it. Idempotent.
+	DeletePublicService(ctx context.Context, vpcID, addr string, port int, protocol string) error
+	// DeleteHostService removes a virtual service an agent before the
+	// load-balancer namespace realized in the host itself, with its address
+	// on iface. Idempotent.
+	DeleteHostService(ctx context.Context, addr string, port int, protocol, iface string) error
 }
 
 // ipvsProtoFlag maps a protocol to its ipvsadm flag.
@@ -79,28 +94,121 @@ func NewExecLBWithRunner(run Runner) *ExecLB {
 	return &ExecLB{run: run}
 }
 
-// EnsureService binds the VIP, ensures the virtual service and reconciles its
-// real servers to match the desired set.
-func (b *ExecLB) EnsureService(ctx context.Context, vip string, port int, protocol, algorithm, bridge, nodePort string, servers []LBRealServer) error {
+// EnsureService binds the VIP in the namespace, ensures the virtual service
+// and reconciles its real servers to match the desired set.
+func (b *ExecLB) EnsureService(ctx context.Context, vpcID, bridge, vip string, port int, protocol, algorithm string, servers []LBRealServer) error {
+	ns := lbNamespaces{run: b.run}
+	pid, err := ns.pid(ctx, vpcID, true)
+	if err != nil {
+		return err
+	}
+	// The host resolves the VIP on the bridge, where only its own namespace's
+	// anycast port answers (see lbns.go). It forwards back out the interface
+	// the request came in on, which must not make it redirect the instance.
+	if err := runSteps(ctx, b.run, "vip route", [][]string{
+		{"sysctl", "-w", "net.ipv4.conf." + bridge + ".send_redirects=0"},
+		{"ip", "route", "replace", vip + "/32", "dev", bridge},
+	}); err != nil {
+		return err
+	}
+	in := ns.in(pid)
 	// replace, not add: idempotent without matching iproute2's error text
 	// (see ExecBackend.EnsureAddress).
-	if out, err := b.run(ctx, "ip", "addr", "replace", vip+"/32", "dev", bridge); err != nil {
-		return fmt.Errorf("manager: add vip %s on %s: %w: %s", vip, bridge, err, strings.TrimSpace(out))
+	if out, err := in(ctx, "ip", "addr", "replace", vip+"/32", "dev", lbAnycastIface); err != nil {
+		return fmt.Errorf("manager: add vip %s: %w: %s", vip, err, strings.TrimSpace(out))
 	}
+	return syncService(ctx, in, vip, port, protocol, algorithm, servers)
+}
+
+// DeleteService removes the virtual service and the VIP (best effort).
+func (b *ExecLB) DeleteService(ctx context.Context, vpcID, bridge, vip string, port int, protocol string) error {
+	if bridge != "" {
+		_, _ = b.run(ctx, "ip", "route", "del", vip+"/32", "dev", bridge)
+	}
+	ns := lbNamespaces{run: b.run}
+	pid, err := ns.pid(ctx, vpcID, false)
+	if err != nil || pid == 0 {
+		return err
+	}
+	in := ns.in(pid)
+	_, _ = in(ctx, "ipvsadm", "-D", ipvsProtoFlag(protocol), fmt.Sprintf("%s:%d", vip, port))
+	_, _ = in(ctx, "ip", "addr", "del", vip+"/32", "dev", lbAnycastIface)
+	return nil
+}
+
+// EnsurePublicService plugs the public leg in, routes addr to it and serves
+// addr in the namespace.
+func (b *ExecLB) EnsurePublicService(ctx context.Context, vpcID, addr string, port int, protocol, algorithm string, servers []LBRealServer) error {
+	ns := lbNamespaces{run: b.run}
+	pid, err := ns.pid(ctx, vpcID, true)
+	if err != nil {
+		return err
+	}
+	in := ns.in(pid)
+	host := lbPublicPeerName(vpcID)
+	if err := ensureLeg(ctx, b.run, pid, host, lbPublicIface); err != nil {
+		return err
+	}
+	// The host answers the namespace's default gateway on the leg, and the
+	// namespace ARP for the public address it holds on its loopback.
+	if err := runSteps(ctx, b.run, "public leg", [][]string{
+		{"ip", "addr", "replace", lbPublicHost + "/32", "dev", host},
+		{"ip", "link", "set", host, "up"},
+		{"ip", "route", "replace", addr + "/32", "dev", host},
+	}); err != nil {
+		return err
+	}
+	if err := runSteps(ctx, in, "public leg", [][]string{
+		{"ip", "addr", "replace", lbPublicNS + "/32", "dev", lbPublicIface},
+		{"ip", "link", "set", lbPublicIface, "up"},
+		{"sysctl", "-w", "net.ipv4.conf." + lbPublicIface + ".rp_filter=0"},
+		{"ip", "route", "replace", "default", "via", lbPublicHost, "dev", lbPublicIface, "onlink"},
+		{"ip", "addr", "replace", addr + "/32", "dev", "lo"},
+	}); err != nil {
+		return err
+	}
+	return syncService(ctx, in, addr, port, protocol, algorithm, servers)
+}
+
+// DeletePublicService removes the public virtual service, its address and the
+// host's route to it (best effort).
+func (b *ExecLB) DeletePublicService(ctx context.Context, vpcID, addr string, port int, protocol string) error {
+	_, _ = b.run(ctx, "ip", "route", "del", addr+"/32", "dev", lbPublicPeerName(vpcID))
+	ns := lbNamespaces{run: b.run}
+	pid, err := ns.pid(ctx, vpcID, false)
+	if err != nil || pid == 0 {
+		return err
+	}
+	in := ns.in(pid)
+	_, _ = in(ctx, "ipvsadm", "-D", ipvsProtoFlag(protocol), fmt.Sprintf("%s:%d", addr, port))
+	_, _ = in(ctx, "ip", "addr", "del", addr+"/32", "dev", "lo")
+	return nil
+}
+
+// DeleteHostService removes a virtual service and its address from the host
+// (best effort).
+func (b *ExecLB) DeleteHostService(ctx context.Context, addr string, port int, protocol, iface string) error {
+	_, _ = b.run(ctx, "ipvsadm", "-D", ipvsProtoFlag(protocol), fmt.Sprintf("%s:%d", addr, port))
+	return deleteAddress(ctx, b.run, iface, addr+"/32")
+}
+
+// syncService ensures the virtual service addr:port where run looks, with
+// full-NAT through the node port, and reconciles its real servers.
+func syncService(ctx context.Context, run Runner, addr string, port int, protocol, algorithm string, servers []LBRealServer) error {
 	proto := ipvsProtoFlag(protocol)
 	sched := ipvsScheduler(algorithm)
-	svc := fmt.Sprintf("%s:%d", vip, port)
+	svc := fmt.Sprintf("%s:%d", addr, port)
 
-	if _, err := b.run(ctx, "ipvsadm", "-A", proto, svc, "-s", sched); err != nil {
-		if out, eErr := b.run(ctx, "ipvsadm", "-E", proto, svc, "-s", sched); eErr != nil {
+	if _, err := run(ctx, "ipvsadm", "-A", proto, svc, "-s", sched); err != nil {
+		if out, eErr := run(ctx, "ipvsadm", "-E", proto, svc, "-s", sched); eErr != nil {
 			return fmt.Errorf("manager: ensure ipvs service %s: %w: %s", svc, eErr, strings.TrimSpace(out))
 		}
 	}
-	if err := b.ensureFullNAT(ctx, nodePort); err != nil {
+	if err := ensureFullNAT(ctx, run); err != nil {
 		return err
 	}
 
-	out, _ := b.run(ctx, "ipvsadm", "-Ln", proto, svc)
+	out, _ := run(ctx, "ipvsadm", "-Ln", proto, svc)
 	current := parseRealServers(out)
 	desired := make(map[string]LBRealServer, len(servers))
 	for _, s := range servers {
@@ -111,23 +219,15 @@ func (b *ExecLB) EnsureService(ctx context.Context, vip string, port int, protoc
 		if current[addr] {
 			flag = "-e"
 		}
-		if out, err := b.run(ctx, "ipvsadm", flag, proto, svc, "-r", addr, "-m", "-w", strconv.Itoa(lbWeight(s.Weight))); err != nil {
+		if out, err := run(ctx, "ipvsadm", flag, proto, svc, "-r", addr, "-m", "-w", strconv.Itoa(lbWeight(s.Weight))); err != nil {
 			return fmt.Errorf("manager: ensure real server %s on %s: %w: %s", addr, svc, err, strings.TrimSpace(out))
 		}
 	}
 	for addr := range current {
 		if _, ok := desired[addr]; !ok {
-			_, _ = b.run(ctx, "ipvsadm", "-d", proto, svc, "-r", addr)
+			_, _ = run(ctx, "ipvsadm", "-d", proto, svc, "-r", addr)
 		}
 	}
-	return nil
-}
-
-// DeleteService removes the virtual service and the VIP (best effort).
-func (b *ExecLB) DeleteService(ctx context.Context, vip string, port int, protocol, bridge string) error {
-	proto := ipvsProtoFlag(protocol)
-	_, _ = b.run(ctx, "ipvsadm", "-D", proto, fmt.Sprintf("%s:%d", vip, port))
-	_, _ = b.run(ctx, "ip", "addr", "del", vip+"/32", "dev", bridge)
 	return nil
 }
 
@@ -151,7 +251,8 @@ type LoadBalancerRegistry = registry.Registry[resource.LoadBalancerSpec, resourc
 type LBBackendRegistry = registry.Registry[resource.LBBackendSpec, resource.LBBackendStatus]
 
 // LoadBalancerReconciler realizes a load balancer as an IPVS virtual service on
-// a VIP attached to the VPC bridge, with real servers drawn from its backends.
+// a VIP in the VPC's load-balancer namespace, with real servers drawn from its
+// backends.
 type LoadBalancerReconciler struct {
 	reg      *LoadBalancerRegistry
 	backends *LBBackendRegistry
@@ -164,18 +265,22 @@ type LoadBalancerReconciler struct {
 	// one edge what it still has to remove.
 	publicIPs    *IPAddressRegistry
 	servedPublic map[string]string
+	// movedOut records the load balancers whose host-level service, left by
+	// an agent before the load-balancer namespace, this agent removed.
+	movedOut map[string]bool
 }
 
 // NewLoadBalancerReconciler returns a reconciler backed by the LB and backend
 // stores, the compute and VPC stores and the IPVS backend.
 func NewLoadBalancerReconciler(reg *LoadBalancerRegistry, backends *LBBackendRegistry, computes *ComputeRegistry, vpcs *VPCRegistry, backend LoadBalancerBackend) *LoadBalancerReconciler {
-	return &LoadBalancerReconciler{reg: reg, backends: backends, computes: computes, vpcs: vpcs, backend: backend}
+	return &LoadBalancerReconciler{reg: reg, backends: backends, computes: computes, vpcs: vpcs, backend: backend, movedOut: map[string]bool{}}
 }
 
 // AsEdge makes the reconciler serve each load balancer's public address too,
-// as an edge facing the public block does: the address goes on the loopback
-// and gets the same virtual service as the VIP, so traffic routed to the edge
-// for it reaches the backends, full-NAT included.
+// as an edge facing the public block does: the host routes the address to the
+// namespace's public leg, where it gets the same virtual service as the VIP,
+// so traffic routed to the edge for it reaches the backends, full-NAT
+// included.
 func (r *LoadBalancerReconciler) AsEdge(publicIPs *IPAddressRegistry) *LoadBalancerReconciler {
 	r.publicIPs, r.servedPublic = publicIPs, map[string]string{}
 	return r
@@ -260,14 +365,15 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 	}
 
 	lb.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "configuring service")
-	if err := r.backend.EnsureService(ctx, vip, lb.Spec.Port, lb.Spec.Protocol, lb.Spec.Algorithm, vpc.Status.BridgeName, nodePortName(lb.Spec.VPCID), servers); err != nil {
+	r.moveOutOfHost(ctx, lb, vip, vpc.Status.BridgeName)
+	if err := r.backend.EnsureService(ctx, lb.Spec.VPCID, vpc.Status.BridgeName, vip, lb.Spec.Port, lb.Spec.Protocol, lb.Spec.Algorithm, servers); err != nil {
 		lb.Status.SetPhase(resource.PhaseError, "IPVSError", err.Error())
 		_ = r.reg.Put(lb)
 		return err
 	}
 
 	if r.publicIPs != nil {
-		if err := r.ensurePublic(ctx, lb, nodePortName(lb.Spec.VPCID), servers); err != nil {
+		if err := r.ensurePublic(ctx, lb, servers); err != nil {
 			lb.Status.SetPhase(resource.PhaseError, "PublicAddressError", err.Error())
 			_ = r.reg.Put(lb)
 			return err
@@ -296,7 +402,7 @@ func (r *LoadBalancerReconciler) finalize(ctx context.Context, lb *resource.Load
 			bridge = vpc.Status.BridgeName
 		}
 		if vip != "" {
-			if err := r.backend.DeleteService(ctx, vip, lb.Spec.Port, lb.Spec.Protocol, bridge); err != nil {
+			if err := r.backend.DeleteService(ctx, lb.Spec.VPCID, bridge, vip, lb.Spec.Port, lb.Spec.Protocol); err != nil {
 				lb.Status.SetPhase(resource.PhaseError, "IPVSError", err.Error())
 				_ = r.reg.Put(lb)
 				return err
@@ -305,7 +411,7 @@ func (r *LoadBalancerReconciler) finalize(ctx context.Context, lb *resource.Load
 		if r.publicIPs != nil {
 			for _, pub := range []string{r.servedPublic[lb.Metadata.UID], lb.Status.PublicAddress} {
 				if pub != "" {
-					if err := r.backend.DeleteService(ctx, pub, lb.Spec.Port, lb.Spec.Protocol, "lo"); err != nil {
+					if err := r.backend.DeletePublicService(ctx, lb.Spec.VPCID, pub, lb.Spec.Port, lb.Spec.Protocol); err != nil {
 						return err
 					}
 				}
@@ -409,22 +515,23 @@ func (r *LoadBalancerReconciler) usedAddresses(excludeLB string) (map[string]boo
 	return used, nil
 }
 
-// ensureFullNAT masquerades the connections IPVS forwards through nodePort to
-// this host's address there. In plain IPVS-NAT a backend answers the client
-// directly, which bypasses the director whenever the client shares the
-// backend's subnet or the backend runs on another host. net.ipv4.vs.conntrack
-// exposes IPVS connections to netfilter so the MASQUERADE applies; it only
-// exists once ip_vs is loaded, hence after the virtual service is created.
-func (b *ExecLB) ensureFullNAT(ctx context.Context, nodePort string) error {
-	if out, err := b.run(ctx, "sysctl", "-w", "net.ipv4.vs.conntrack=1"); err != nil {
+// ensureFullNAT masquerades the connections IPVS forwards through the node
+// port to this host's address there, where run looks. In plain IPVS-NAT a
+// backend answers the client directly, which bypasses the director whenever
+// the client shares the backend's subnet or the backend runs on another host.
+// net.ipv4.vs.conntrack exposes IPVS connections to netfilter so the
+// MASQUERADE applies; it only exists once ip_vs is loaded, hence after the
+// virtual service is created.
+func ensureFullNAT(ctx context.Context, run Runner) error {
+	if out, err := run(ctx, "sysctl", "-w", "net.ipv4.vs.conntrack=1"); err != nil {
 		return fmt.Errorf("manager: enable ipvs conntrack: %w: %s", err, strings.TrimSpace(out))
 	}
-	rule := []string{"POSTROUTING", "-o", nodePort, "-m", "ipvs", "--ipvs", "-j", "MASQUERADE"}
-	if _, err := b.run(ctx, "iptables", append([]string{"-t", "nat", "-C"}, rule...)...); err == nil {
+	rule := []string{"POSTROUTING", "-o", lbNodeIface, "-m", "ipvs", "--ipvs", "-j", "MASQUERADE"}
+	if _, err := run(ctx, "iptables", append([]string{"-t", "nat", "-C"}, rule...)...); err == nil {
 		return nil
 	}
-	if out, err := b.run(ctx, "iptables", append([]string{"-t", "nat", "-A"}, rule...)...); err != nil {
-		return fmt.Errorf("manager: masquerade ipvs via %s: %w: %s", nodePort, err, strings.TrimSpace(out))
+	if out, err := run(ctx, "iptables", append([]string{"-t", "nat", "-A"}, rule...)...); err != nil {
+		return fmt.Errorf("manager: masquerade ipvs via %s: %w: %s", lbNodeIface, err, strings.TrimSpace(out))
 	}
 	return nil
 }
@@ -433,7 +540,7 @@ func (b *ExecLB) ensureFullNAT(ctx context.Context, nodePort string) error {
 // stops serving the one it no longer names. A public ip_address that is not
 // resolved yet is not an error: the VIP keeps serving and the next pass
 // picks the address up.
-func (r *LoadBalancerReconciler) ensurePublic(ctx context.Context, lb *resource.LoadBalancer, nodePort string, servers []LBRealServer) error {
+func (r *LoadBalancerReconciler) ensurePublic(ctx context.Context, lb *resource.LoadBalancer, servers []LBRealServer) error {
 	want := ""
 	if id := lb.Spec.PublicIPID; id != "" {
 		ip, err := r.publicIPs.Get(id)
@@ -449,17 +556,34 @@ func (r *LoadBalancerReconciler) ensurePublic(ctx context.Context, lb *resource.
 		want = ip.Status.Address
 	}
 	if old := r.servedPublic[lb.Metadata.UID]; old != "" && old != want {
-		if err := r.backend.DeleteService(ctx, old, lb.Spec.Port, lb.Spec.Protocol, "lo"); err != nil {
+		if err := r.backend.DeletePublicService(ctx, lb.Spec.VPCID, old, lb.Spec.Port, lb.Spec.Protocol); err != nil {
 			return err
 		}
 		delete(r.servedPublic, lb.Metadata.UID)
 	}
 	if want != "" {
-		if err := r.backend.EnsureService(ctx, want, lb.Spec.Port, lb.Spec.Protocol, lb.Spec.Algorithm, "lo", nodePort, servers); err != nil {
+		if err := r.backend.EnsurePublicService(ctx, lb.Spec.VPCID, want, lb.Spec.Port, lb.Spec.Protocol, lb.Spec.Algorithm, servers); err != nil {
 			return err
 		}
 		r.servedPublic[lb.Metadata.UID] = want
 	}
 	lb.Status.PublicAddress = want
 	return nil
+}
+
+// moveOutOfHost removes, once per load balancer and agent run, the service an
+// agent before the load-balancer namespace realized in the host itself: the
+// VIP on the bridge would answer for it with the gateway's MAC, and the public
+// address on the loopback would keep the edge from routing it to the
+// namespace. Failures are left to the next run: the host service does no harm
+// once its addresses are gone.
+func (r *LoadBalancerReconciler) moveOutOfHost(ctx context.Context, lb *resource.LoadBalancer, vip, bridge string) {
+	if r.movedOut[lb.Metadata.UID] {
+		return
+	}
+	_ = r.backend.DeleteHostService(ctx, vip, lb.Spec.Port, lb.Spec.Protocol, bridge)
+	if pub := lb.Status.PublicAddress; pub != "" {
+		_ = r.backend.DeleteHostService(ctx, pub, lb.Spec.Port, lb.Spec.Protocol, "lo")
+	}
+	r.movedOut[lb.Metadata.UID] = true
 }

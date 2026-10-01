@@ -77,8 +77,7 @@ func (r *VPCReconciler) ensure(ctx context.Context, vpc *resource.VPC) error {
 		_ = r.reg.Put(vpc)
 		return err
 	}
-	uid := vpc.Metadata.UID
-	if err := r.net.EnsureNodePort(ctx, name, nodePortName(uid), nodePortPeerName(uid)); err != nil {
+	if err := r.net.EnsureNodePort(ctx, vpc.Metadata.UID, name); err != nil {
 		vpc.Status.SetPhase(resource.PhaseError, "NodePortError", err.Error())
 		_ = r.reg.Put(vpc)
 		return err
@@ -95,7 +94,7 @@ func (r *VPCReconciler) ensure(ctx context.Context, vpc *resource.VPC) error {
 
 func (r *VPCReconciler) finalize(ctx context.Context, vpc *resource.VPC) error {
 	if vpc.Metadata.HasFinalizer(resource.VPCFinalizer) {
-		if err := r.net.DeleteNodePort(ctx, nodePortName(vpc.Metadata.UID)); err != nil {
+		if err := r.net.DeleteNodePort(ctx, vpc.Metadata.UID); err != nil {
 			vpc.Status.SetPhase(resource.PhaseError, "NodePortError", err.Error())
 			_ = r.reg.Put(vpc)
 			return err

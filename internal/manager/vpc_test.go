@@ -28,8 +28,9 @@ type fakeBackend struct {
 	natErr      error
 	ensureCalls []string
 	deleteCalls []string
-	nodePorts   map[string]string // port -> "bridge peer"
-	gateways    map[string]bool   // "bridge addr/prefix" assigned with noprefixroute
+	nodePorts   map[string]string // vpc -> bridge its load-balancer namespace is plugged into
+	nodeAddrs   map[string]bool   // "vpc addr/prefix" on the node port
+	gateways    map[string]bool   // "bridge addr/prefix" assigned as a gateway
 }
 
 func newFakeBackend() *fakeBackend {
@@ -98,21 +99,35 @@ func (f *fakeBackend) BridgeExists(_ context.Context, name string) (bool, error)
 	return f.bridges[name], nil
 }
 
-func (f *fakeBackend) EnsureNodePort(_ context.Context, bridge, port, peer string) error {
+func (f *fakeBackend) EnsureNodePort(_ context.Context, vpcID, bridge string) error {
 	if f.nodePorts == nil {
 		f.nodePorts = map[string]string{}
 	}
-	f.nodePorts[port] = bridge + " " + peer
+	f.nodePorts[vpcID] = bridge
 	return nil
 }
 
-func (f *fakeBackend) DeleteNodePort(_ context.Context, port string) error {
-	delete(f.nodePorts, port)
+func (f *fakeBackend) DeleteNodePort(_ context.Context, vpcID string) error {
+	delete(f.nodePorts, vpcID)
+	return nil
+}
+
+// EnsureNodeAddress records the address as "<vpc> addr/prefix".
+func (f *fakeBackend) EnsureNodeAddress(_ context.Context, vpcID, addrCIDR string) error {
+	if f.nodeAddrs == nil {
+		f.nodeAddrs = map[string]bool{}
+	}
+	f.nodeAddrs[vpcID+" "+addrCIDR] = true
+	return nil
+}
+
+func (f *fakeBackend) DeleteNodeAddress(_ context.Context, vpcID, addrCIDR string) error {
+	delete(f.nodeAddrs, vpcID+" "+addrCIDR)
 	return nil
 }
 
 // EnsureGatewayAddress records the gateway like EnsureAddress; gateways
-// records which addresses were assigned without a prefix route.
+// records which addresses were assigned as gateways.
 func (f *fakeBackend) EnsureGatewayAddress(ctx context.Context, bridge, addrCIDR string) error {
 	if f.gateways == nil {
 		f.gateways = map[string]bool{}

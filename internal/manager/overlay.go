@@ -20,15 +20,16 @@ import (
 // flooding unknown and broadcast frames to every other node (head-end
 // replication) and learning remote MACs from the traffic it receives.
 //
-// Each host also carries the subnet gateways and load balancer addresses on
-// its bridge. Giving the bridge the same MAC on every host, derived from the
-// VPC, turns those into an anycast gateway: whichever host answers an ARP
-// request, the reply names a MAC every bridge owns, so an instance always
-// routes through its own host. Frames sourced from that MAC are kept off the
-// overlay: a reply to them would be taken by the receiving host's own bridge
-// anyway, and every host would log the others' copies as its own address
-// arriving from outside. The gateway is strictly local to each host as a
-// result, and a host cannot reach an instance on another host directly.
+// Each host also carries the subnet gateways on its bridge. Giving the bridge
+// the same MAC on every host, derived from the VPC, turns those into an
+// anycast gateway: whichever host answers an ARP request, the reply names a
+// MAC every bridge owns, so an instance always routes through its own host.
+// Frames sourced from that MAC are kept off the overlay: a reply to them would
+// be taken by the receiving host's own bridge anyway, and every host would log
+// the others' copies as its own address arriving from outside. The gateway is
+// strictly local to each host as a result, and a host cannot reach an
+// instance on another host directly. The load balancer VIPs work the same
+// way, on the anycast port of each host's load-balancer namespace.
 const (
 	// vxlanPort is the IANA VXLAN port.
 	vxlanPort = 4789
@@ -54,13 +55,16 @@ type VXLAN struct {
 	// GatewayMAC is the bridge's anycast MAC; frames it sources are dropped
 	// on the way into the overlay.
 	GatewayMAC string
+	// LBMAC is the anycast MAC of the VPC's load-balancer namespace (see
+	// lbns.go), kept off the overlay the same way.
+	LBMAC string
 }
 
 // OverlayBackend abstracts the kernel operations of the VPC overlay.
 type OverlayBackend interface {
 	// EnsureVXLAN creates the device if absent (or recreates it when its VNI or
 	// local address changed), enslaves it to the bridge, keeps frames from the
-	// gateway MAC off it and brings it up.
+	// gateway and load-balancer anycast MACs off it and brings it up.
 	EnsureVXLAN(ctx context.Context, v VXLAN) error
 	// SetFloodPeers makes the device's flood entries exactly peers.
 	SetFloodPeers(ctx context.Context, dev string, peers []string) error
@@ -158,7 +162,7 @@ func (r *OverlayReconciler) ReconcileAll(ctx context.Context) error {
 			continue
 		}
 		uid := vpc.Metadata.UID
-		v := VXLAN{Name: vxlanName(uid), VNI: vniFor(uid), Local: local, Bridge: bridgeName(uid), GatewayMAC: gatewayMAC(uid)}
+		v := VXLAN{Name: vxlanName(uid), VNI: vniFor(uid), Local: local, Bridge: bridgeName(uid), GatewayMAC: gatewayMAC(uid), LBMAC: lbMAC(uid)}
 		want[v.Name] = true
 		if err := r.ensure(ctx, v, peers); err != nil {
 			errs = append(errs, fmt.Errorf("vpc %s: %w", uid, err))
@@ -231,6 +235,8 @@ func (b *ExecOverlay) EnsureVXLAN(ctx context.Context, v VXLAN) error {
 		{"tc", "qdisc", "replace", "dev", v.Name, "clsact"},
 		{"tc", "filter", "replace", "dev", v.Name, "egress", "pref", "1", "handle", "1",
 			"protocol", "all", "flower", "src_mac", v.GatewayMAC, "action", "drop"},
+		{"tc", "filter", "replace", "dev", v.Name, "egress", "pref", "2", "handle", "2",
+			"protocol", "all", "flower", "src_mac", v.LBMAC, "action", "drop"},
 		{"ip", "link", "set", v.Name, "up"},
 	} {
 		if out, err := b.run(ctx, step[0], step[1:]...); err != nil {

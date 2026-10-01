@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os/exec"
-	"strconv"
 	"strings"
 )
 
@@ -51,28 +50,37 @@ type NetworkBackend interface {
 	DeleteNAT(ctx context.Context, sourceCIDR, hostIface string) error
 	// DefaultInterface returns the host's default-route interface.
 	DefaultInterface(ctx context.Context) (string, error)
-	// EnsureNodePort gives the host a port of its own on the VPC bridge: a
-	// veth pair whose peer end is enslaved to bridge and whose port end, with
-	// a MAC of its own, carries this host's address in each subnet. Idempotent.
-	EnsureNodePort(ctx context.Context, bridge, port, peer string) error
-	// DeleteNodePort removes the pair. Removing an absent port is not an error.
-	DeleteNodePort(ctx context.Context, port string) error
-	// EnsureGatewayAddress assigns a subnet gateway to the bridge without the
-	// subnet's connected route, which the node port carries instead. An
-	// existing address lacking that flag is re-added with it. Idempotent.
+	// EnsureNodePort gives the VPC its load-balancer namespace on this host
+	// (see lbns.go), plugged into bridge by its anycast port and its node
+	// port. Idempotent.
+	EnsureNodePort(ctx context.Context, vpcID, bridge string) error
+	// DeleteNodePort removes the VPC's load-balancer namespace and its legs.
+	// Removing an absent namespace is not an error.
+	DeleteNodePort(ctx context.Context, vpcID string) error
+	// EnsureNodeAddress assigns addrCIDR, this host's address in a subnet, to
+	// the node port in the VPC's load-balancer namespace. Idempotent.
+	EnsureNodeAddress(ctx context.Context, vpcID, addrCIDR string) error
+	// DeleteNodeAddress removes addrCIDR from the node port. Removing an
+	// absent address is not an error.
+	DeleteNodeAddress(ctx context.Context, vpcID, addrCIDR string) error
+	// EnsureGatewayAddress assigns a subnet gateway to the bridge, with the
+	// subnet's connected route. Idempotent.
 	EnsureGatewayAddress(ctx context.Context, bridge, addrCIDR string) error
 }
 
 // The subnet gateways sit on the VPC bridge, which takes the same anycast MAC
-// on every host (see overlay.go). Traffic the host itself sends into the VPC -
-// to an instance on another host, or on behalf of a load balancer - must not
-// leave with that MAC: the reply would be taken by the receiving host's own
-// bridge. It leaves through the node port instead, a veth whose host end has
-// a MAC of its own and one address per subnet unique to this host, and which
-// carries the subnets' connected routes. arp_ignore=1 on both keeps each one
-// answering ARP only for the addresses it holds.
+// on every host (see overlay.go). Traffic sent into the VPC on behalf of a
+// load balancer must not leave with that MAC: the reply would be taken by the
+// receiving host's own bridge. It leaves through the node port instead, a veth
+// in the VPC's load-balancer namespace with a MAC of its own and one address
+// per subnet unique to this host (see lbns.go). The host itself only answers
+// its own instances - their resolver, their gateway - so the subnets'
+// connected routes stay on the bridge. arp_ignore=1 keeps the bridge and each
+// leg answering ARP only for the addresses they hold.
 
-// nodePortName and nodePortPeerName derive the two ends of a VPC's node port.
+// nodePortName is the host end of the node port an agent before the
+// load-balancer namespace kept in the host itself; nodePortPeerName is the
+// end on the bridge, which the namespace's node port now uses.
 func nodePortName(uid string) string     { return ifaceName("np-", uid) }
 func nodePortPeerName(uid string) string { return ifaceName("nb-", uid) }
 
@@ -192,20 +200,7 @@ func (b *ExecBackend) EnsureAddress(ctx context.Context, iface, addrCIDR string)
 // error of `ip addr del`, whose wording for an absent address changed across
 // kernels ("Cannot assign requested address", then "Address not found").
 func (b *ExecBackend) DeleteAddress(ctx context.Context, iface, addrCIDR string) error {
-	out, err := b.run(ctx, "ip", "-o", "addr", "show", "dev", iface)
-	if err != nil {
-		if strings.Contains(out, "does not exist") || strings.Contains(out, "Cannot find device") {
-			return nil
-		}
-		return fmt.Errorf("manager: show addresses of %s: %w: %s", iface, err, strings.TrimSpace(out))
-	}
-	if !strings.Contains(out, " "+addrCIDR+" ") {
-		return nil
-	}
-	if out, err := b.run(ctx, "ip", "addr", "del", addrCIDR, "dev", iface); err != nil {
-		return fmt.Errorf("manager: del address %s on %s: %w: %s", addrCIDR, iface, err, strings.TrimSpace(out))
-	}
-	return nil
+	return deleteAddress(ctx, b.run, iface, addrCIDR)
 }
 
 // EnableForwarding turns on IPv4 forwarding.
@@ -248,44 +243,101 @@ func (b *ExecBackend) DefaultInterface(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("manager: no default-route interface found")
 }
 
-// EnsureNodePort creates, attaches and brings up the node port.
-func (b *ExecBackend) EnsureNodePort(ctx context.Context, bridge, port, peer string) error {
-	exists, err := b.BridgeExists(ctx, port)
+// EnsureNodePort starts the VPC's load-balancer namespace and plugs its
+// anycast port and node port into bridge. A node port an agent before the
+// namespace left in the host is removed first: the namespace's node port
+// takes over its addresses.
+func (b *ExecBackend) EnsureNodePort(ctx context.Context, vpcID, bridge string) error {
+	legacy, err := linkExists(ctx, b.run, nodePortName(vpcID))
 	if err != nil {
 		return err
 	}
-	mtu := strconv.Itoa(overlayMTU)
-	steps := [][]string{}
-	if !exists {
-		steps = append(steps, []string{"ip", "link", "add", port, "mtu", mtu, "type", "veth", "peer", "name", peer, "mtu", mtu})
+	if legacy {
+		if out, err := b.run(ctx, "ip", "link", "del", nodePortName(vpcID)); err != nil {
+			return fmt.Errorf("manager: delete host node port %q: %w: %s", nodePortName(vpcID), err, strings.TrimSpace(out))
+		}
 	}
-	steps = append(steps,
-		[]string{"ip", "link", "set", peer, "master", bridge},
-		[]string{"ip", "link", "set", peer, "up"},
-		[]string{"ip", "link", "set", port, "up"},
-		[]string{"sysctl", "-w", "net.ipv4.conf." + bridge + ".arp_ignore=1"},
-		[]string{"sysctl", "-w", "net.ipv4.conf." + port + ".arp_ignore=1"},
-	)
-	for _, st := range steps {
-		if out, err := b.run(ctx, st[0], st[1:]...); err != nil {
-			return fmt.Errorf("manager: node port %q %v: %w: %s", port, st, err, strings.TrimSpace(out))
+	ns := lbNamespaces{run: b.run}
+	pid, err := ns.pid(ctx, vpcID, true)
+	if err != nil {
+		return err
+	}
+	nodePeer, anycastPeer := nodePortPeerName(vpcID), lbAnycastPeerName(vpcID)
+	if err := ensureLeg(ctx, b.run, pid, nodePeer, lbNodeIface); err != nil {
+		return err
+	}
+	if err := ensureLeg(ctx, b.run, pid, anycastPeer, lbAnycastIface); err != nil {
+		return err
+	}
+	if err := runSteps(ctx, b.run, "node port", [][]string{
+		{"ip", "link", "set", nodePeer, "master", bridge},
+		{"ip", "link", "set", nodePeer, "up"},
+		{"ip", "link", "set", anycastPeer, "master", bridge},
+		{"ip", "link", "set", anycastPeer, "up"},
+		{"sysctl", "-w", "net.ipv4.conf." + bridge + ".arp_ignore=1"},
+	}); err != nil {
+		return err
+	}
+	// rp_filter stays off in the namespace: a client's request comes in on
+	// la0 and the reply leaves through np0.
+	return runSteps(ctx, ns.in(pid), "load-balancer namespace", [][]string{
+		{"ip", "link", "set", "lo", "up"},
+		{"ip", "link", "set", lbAnycastIface, "address", lbMAC(vpcID)},
+		{"ip", "link", "set", lbAnycastIface, "up"},
+		{"ip", "link", "set", lbNodeIface, "up"},
+		{"sysctl", "-w", "net.ipv4.ip_forward=1"},
+		{"sysctl", "-w", "net.ipv4.conf.all.rp_filter=0"},
+		{"sysctl", "-w", "net.ipv4.conf." + lbAnycastIface + ".rp_filter=0"},
+		{"sysctl", "-w", "net.ipv4.conf." + lbNodeIface + ".rp_filter=0"},
+		{"sysctl", "-w", "net.ipv4.conf." + lbAnycastIface + ".arp_ignore=1"},
+		{"sysctl", "-w", "net.ipv4.conf." + lbNodeIface + ".arp_ignore=1"},
+		{"sysctl", "-w", "net.ipv4.conf." + lbNodeIface + ".arp_announce=2"},
+	})
+}
+
+// DeleteNodePort stops the VPC's load-balancer namespace, which frees its
+// legs, and removes a node port an agent before it left in the host.
+func (b *ExecBackend) DeleteNodePort(ctx context.Context, vpcID string) error {
+	if err := (lbNamespaces{run: b.run}).stop(ctx, vpcID); err != nil {
+		return err
+	}
+	for _, name := range []string{nodePortName(vpcID), nodePortPeerName(vpcID), lbAnycastPeerName(vpcID), lbPublicPeerName(vpcID)} {
+		out, err := b.run(ctx, "ip", "link", "del", name)
+		if err != nil && !strings.Contains(out, "Cannot find device") && !strings.Contains(out, "does not exist") {
+			return fmt.Errorf("manager: delete %q: %w: %s", name, err, strings.TrimSpace(out))
 		}
 	}
 	return nil
 }
 
-// DeleteNodePort removes the node port's veth pair.
-func (b *ExecBackend) DeleteNodePort(ctx context.Context, port string) error {
-	out, err := b.run(ctx, "ip", "link", "del", port)
-	if err != nil && !strings.Contains(out, "Cannot find device") && !strings.Contains(out, "does not exist") {
-		return fmt.Errorf("manager: delete node port %q: %w: %s", port, err, strings.TrimSpace(out))
+// EnsureNodeAddress assigns addrCIDR to the node port inside the namespace.
+func (b *ExecBackend) EnsureNodeAddress(ctx context.Context, vpcID, addrCIDR string) error {
+	ns := lbNamespaces{run: b.run}
+	pid, err := ns.pid(ctx, vpcID, true)
+	if err != nil {
+		return err
+	}
+	if out, err := ns.in(pid)(ctx, "ip", "addr", "replace", addrCIDR, "dev", lbNodeIface); err != nil {
+		return fmt.Errorf("manager: add node address %s: %w: %s", addrCIDR, err, strings.TrimSpace(out))
 	}
 	return nil
 }
 
-// EnsureGatewayAddress assigns addrCIDR to bridge with noprefixroute. `ip addr
-// replace` does not update the flags of an address already present, so one
-// assigned before the node port existed is deleted and added again.
+// DeleteNodeAddress removes addrCIDR from the node port, if the namespace runs.
+func (b *ExecBackend) DeleteNodeAddress(ctx context.Context, vpcID, addrCIDR string) error {
+	ns := lbNamespaces{run: b.run}
+	pid, err := ns.pid(ctx, vpcID, false)
+	if err != nil || pid == 0 {
+		return err
+	}
+	return deleteAddress(ctx, ns.in(pid), lbNodeIface, addrCIDR)
+}
+
+// EnsureGatewayAddress assigns addrCIDR to bridge with its prefix route. An
+// agent before the load-balancer namespace assigned it with noprefixroute, the
+// node port in the host carrying the route instead; `ip addr replace` does not
+// update the flags of an address already present, so such an address is
+// deleted and added again.
 func (b *ExecBackend) EnsureGatewayAddress(ctx context.Context, bridge, addrCIDR string) error {
 	out, err := b.run(ctx, "ip", "-o", "-4", "addr", "show", "dev", bridge)
 	if err != nil {
@@ -295,14 +347,14 @@ func (b *ExecBackend) EnsureGatewayAddress(ctx context.Context, bridge, addrCIDR
 		if !strings.Contains(line, " inet "+addrCIDR+" ") {
 			continue
 		}
-		if strings.Contains(line, " noprefixroute ") {
+		if !strings.Contains(line, " noprefixroute ") {
 			return nil
 		}
 		if err := b.DeleteAddress(ctx, bridge, addrCIDR); err != nil {
 			return err
 		}
 	}
-	if out, err := b.run(ctx, "ip", "addr", "add", addrCIDR, "dev", bridge, "noprefixroute"); err != nil {
+	if out, err := b.run(ctx, "ip", "addr", "add", addrCIDR, "dev", bridge); err != nil {
 		return fmt.Errorf("manager: add gateway %s on %s: %w: %s", addrCIDR, bridge, err, strings.TrimSpace(out))
 	}
 	return nil
