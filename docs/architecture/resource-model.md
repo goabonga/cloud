@@ -32,7 +32,9 @@ underlying kernel resources.
 
 ## Resource types
 
-VPC, subnet, internet gateway, route, peering, security group (+ rule), IP
+VPC, subnet, internet gateway (with an optional egress proxy: allowed domains
+and addresses, see [realization](realization.md#egress-proxy)), route, peering,
+security group (+ rule), IP
 address, compute, microvm, disk, disk file, DNS zone, DNS record, KMS
 keyring, KMS key, secret (+ version), SSL CA, SSL cert, WAF policy (+ rule),
 ACL policy (+ rule), load balancer (+ backend), load balancer target group
