@@ -64,6 +64,8 @@ type diskFileModel struct {
 	Path    types.String `tfsdk:"path"`
 	Content types.String `tfsdk:"content"`
 	Mode    types.String `tfsdk:"mode"`
+	SSLCert types.String `tfsdk:"ssl_cert_id"`
+	SSLPart types.String `tfsdk:"ssl_part"`
 	Phase   types.String `tfsdk:"phase"`
 }
 
@@ -72,22 +74,29 @@ func NewDiskFileResource() resource.Resource {
 	return newGeneric(resourceDef[diskFileModel, infra.DiskFileSpec, infra.DiskFileStatus]{
 		kind: infra.KindDiskFile,
 		schema: schema.Schema{
-			MarkdownDescription: "A file injected into a disk's filesystem.",
+			MarkdownDescription: "A file injected into a disk's filesystem: either `content`, or one part of an " +
+				"`infra_ssl_cert` (`ssl_cert_id` and `ssl_part`), rendered by the agent so the private key never " +
+				"passes through Terraform.",
 			Attributes: map[string]schema.Attribute{
-				"id":      idAttribute(),
-				"disk_id": schema.StringAttribute{Required: true, MarkdownDescription: "Target disk id."},
-				"path":    schema.StringAttribute{Required: true, MarkdownDescription: "Path within the disk."},
-				"content": schema.StringAttribute{Required: true, MarkdownDescription: "File content."},
-				"mode":    schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "File mode, e.g. 0644."},
-				"phase":   phaseAttribute(),
+				"id":          idAttribute(),
+				"disk_id":     schema.StringAttribute{Required: true, MarkdownDescription: "Target disk id."},
+				"path":        schema.StringAttribute{Required: true, MarkdownDescription: "Path within the disk."},
+				"content":     schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "File content; exclusive with `ssl_cert_id`."},
+				"mode":        schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "File mode, e.g. 0644; 0600 by default for a private key."},
+				"ssl_cert_id": schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Certificate whose part the file holds."},
+				"ssl_part": schema.StringAttribute{Optional: true, Computed: true,
+					MarkdownDescription: "Part of the certificate: `certificate`, `chain` (certificate then CA) or `private_key`."},
+				"phase": phaseAttribute(),
 			},
 		},
 		toSpec: func(_ context.Context, m diskFileModel) (infra.DiskFileSpec, diag.Diagnostics) {
 			return infra.DiskFileSpec{
-				DiskID:  m.DiskID.ValueString(),
-				Path:    m.Path.ValueString(),
-				Content: m.Content.ValueString(),
-				Mode:    m.Mode.ValueString(),
+				DiskID:    m.DiskID.ValueString(),
+				Path:      m.Path.ValueString(),
+				Content:   m.Content.ValueString(),
+				Mode:      m.Mode.ValueString(),
+				SSLCertID: m.SSLCert.ValueString(),
+				SSLPart:   m.SSLPart.ValueString(),
 			}, nil
 		},
 		toModel: func(_ context.Context, r *infra.DiskFile) (diskFileModel, diag.Diagnostics) {
@@ -97,6 +106,8 @@ func NewDiskFileResource() resource.Resource {
 				Path:    types.StringValue(r.Spec.Path),
 				Content: types.StringValue(r.Spec.Content),
 				Mode:    types.StringValue(r.Spec.Mode),
+				SSLCert: types.StringValue(r.Spec.SSLCertID),
+				SSLPart: types.StringValue(r.Spec.SSLPart),
 				Phase:   types.StringValue(string(r.Status.Phase)),
 			}, nil
 		},
