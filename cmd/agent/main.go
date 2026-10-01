@@ -72,6 +72,11 @@ func run() error {
 	ipAddresses := registry.New[resource.IPAddressSpec, resource.IPAddressStatus](store, resource.KindIPAddress)
 	diskFiles := registry.New[resource.DiskFileSpec, resource.DiskFileStatus](store, resource.KindDiskFile)
 	nodeID := os.Getenv("GOA_NODE_ID")
+	lbReconciler := manager.NewLoadBalancerReconciler(lbs, lbBackends, computes, vpcs, manager.NewExecLB())
+	if os.Getenv("GOA_PUBLIC_CIDR") != "" {
+		// An edge: also serve each load balancer's public address.
+		lbReconciler.AsEdge(ipAddresses)
+	}
 	agent := manager.NewAgent(*interval, logger,
 		manager.NewNodeHeartbeat(nodes, nodeID),
 		manager.NewVPCReconciler(vpcs, net),
@@ -89,7 +94,7 @@ func run() error {
 		manager.NewWAFReconciler(wafPolicies, wafRules, computes, subnets, igws, vpcs, manager.NewExecWAF()),
 		// GOA_PUBLIC_CIDR (set on the edges) is the public block routed to them.
 		manager.NewPublicIPReconciler(ipAddresses, store, os.Getenv("GOA_PUBLIC_CIDR")),
-		manager.NewLoadBalancerReconciler(lbs, lbBackends, computes, vpcs, manager.NewExecLB()),
+		lbReconciler,
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
