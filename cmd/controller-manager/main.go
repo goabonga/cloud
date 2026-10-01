@@ -45,11 +45,15 @@ func run() error {
 		return err
 	}
 	vpcs := registry.New[resource.VPCSpec, resource.VPCStatus](store, resource.KindVPC)
+	subnets := registry.New[resource.SubnetSpec, resource.SubnetStatus](store, resource.KindSubnet)
+	sgs := registry.New[resource.SecurityGroupSpec, resource.SecurityGroupStatus](store, resource.KindSecurityGroup)
 	computes := registry.New[resource.ComputeSpec, resource.ComputeStatus](store, resource.KindCompute)
 	microvms := registry.New[resource.MicroVMSpec, resource.MicroVMStatus](store, resource.KindMicroVM)
 	disks := registry.New[resource.DiskSpec, resource.DiskStatus](store, resource.KindDisk)
 	nodes := registry.New[resource.NodeSpec, resource.NodeStatus](store, resource.KindNode)
 	nodePools := registry.New[resource.NodePoolSpec, resource.NodePoolStatus](store, resource.KindNodePool)
+	functions := registry.New[resource.FunctionSpec, resource.FunctionStatus](store, resource.KindFunction)
+	functionInstances := registry.New[resource.FunctionInstanceSpec, resource.FunctionInstanceStatus](store, resource.KindFunctionInstance)
 
 	lease := controllers.NewLease(store, "leases/controller-manager", holderID(), *ttl, nil)
 	mgr := controllers.NewManager(lease, *interval, logger)
@@ -57,6 +61,7 @@ func run() error {
 	mgr.Add(controllers.NewSchedulerController(computes, nodes, nodePools, 4*(*interval), logger))
 	mgr.Add(controllers.NewMicroVMSchedulerController(microvms, nodes, nodePools, 4*(*interval), logger))
 	mgr.Add(controllers.NewDiskSchedulerController(disks, nodes, 4*(*interval), logger))
+	mgr.Add(controllers.NewFunctionController(functions, functionInstances, computes, subnets, vpcs, sgs, nil, logger))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
