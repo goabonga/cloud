@@ -18,14 +18,14 @@ export default function Overview() {
   }, []);
 
   return (
-    <section>
-      <h2>Overview</h2>
-      {error && <p className="error">{error}</p>}
-      <div className="cards">
+    <section className="space-y-4">
+      <h2 className="text-lg font-semibold text-slate-900">Overview</h2>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex flex-wrap gap-4">
         {TILES.map((k) => (
-          <div className="card" key={k}>
-            <div>{k}</div>
-            <div className="value">{counts[k] ?? "-"}</div>
+          <div key={k} className="min-w-36 rounded-lg border border-slate-200 bg-white px-5 py-4">
+            <div className="text-sm text-slate-500">{k}</div>
+            <div className="text-3xl font-bold text-slate-900">{counts[k] ?? "-"}</div>
           </div>
         ))}
       </div>
