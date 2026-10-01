@@ -15,7 +15,7 @@ import {
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { type GenericResource, deleteResource, listResources } from "../api/generic";
 import { formatValue, getPath } from "../lib/path";
@@ -54,7 +54,11 @@ export default function ResourceTable({ def }: { def: ResourceDef }) {
         id: "uid",
         header: "UID",
         accessorFn: (r) => r.metadata.uid,
-        cell: (info) => <span className="font-medium text-slate-900">{info.getValue<string>()}</span>,
+        cell: (info) => (
+          <Link to={`/${def.kind}/${info.getValue<string>()}`} className="font-medium text-indigo-600 hover:underline">
+            {info.getValue<string>()}
+          </Link>
+        ),
       },
       {
         id: "phase",
