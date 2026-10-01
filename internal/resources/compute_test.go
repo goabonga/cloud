@@ -90,3 +90,14 @@ func TestEveryComputeSettingButTheNameReplacesTheInstance(t *testing.T) {
 		}
 	}
 }
+
+func TestDiskSizeAndKeyChangesReplaceTheDisk(t *testing.T) {
+	t.Parallel()
+
+	var resp resource.SchemaResponse
+	NewDiskResource().Schema(context.Background(), resource.SchemaRequest{}, &resp)
+	if len(resp.Schema.Attributes["size_mb"].(schema.Int64Attribute).PlanModifiers) == 0 ||
+		len(resp.Schema.Attributes["kms_key_id"].(schema.StringAttribute).PlanModifiers) == 0 {
+		t.Fatal("a new size or key must replace the disk: the agent creates its image once")
+	}
+}
