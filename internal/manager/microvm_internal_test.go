@@ -28,12 +28,12 @@ func TestGuestCmdline(t *testing.T) {
 		{
 			name: "static ip and cloud-init seed appended after the extra cmdline",
 			req:  MicroVMRequest{UID: "vm-1", CmdLine: "console=ttyS0", IP: "10.0.1.10", Gateway: "10.0.1.1", Prefix: 24},
-			want: "console=ttyS0 ip=10.0.1.10::10.0.1.1:255.255.255.0::eth0:off ds=nocloud-net;s=http://10.0.1.1:8912/vm-1/",
+			want: "console=ttyS0 net.ifnames=0 biosdevname=0 ip=10.0.1.10::10.0.1.1:255.255.255.0::eth0:off ds=nocloud-net;s=http://10.0.1.1:8912/vm-1/",
 		},
 		{
 			name: "static ip and cloud-init seed with no extra cmdline",
 			req:  MicroVMRequest{UID: "vm-1", IP: "10.0.1.10", Gateway: "10.0.1.1", Prefix: 24},
-			want: "ip=10.0.1.10::10.0.1.1:255.255.255.0::eth0:off ds=nocloud-net;s=http://10.0.1.1:8912/vm-1/",
+			want: "net.ifnames=0 biosdevname=0 ip=10.0.1.10::10.0.1.1:255.255.255.0::eth0:off ds=nocloud-net;s=http://10.0.1.1:8912/vm-1/",
 		},
 	}
 	for _, tc := range cases {

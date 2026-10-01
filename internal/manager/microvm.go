@@ -270,8 +270,15 @@ func writePidFile(path string, pid int) error {
 }
 
 // guestCmdline appends a kernel "ip=" directive derived from the allocated
-// address so the guest configures eth0 at boot without cloud-init (not
-// implemented yet).
+// address, and the cloud-init seed directive, so the guest configures eth0
+// and runs cloud-init at boot without either being baked into the image.
+//
+// "ip=" names the interface "eth0", which only stays true if systemd's
+// predictable network interface naming never gets to rename it first (to
+// something like "ens2", derived from its virtio-pci slot) - udev races the
+// initramfs's own "ip=" processing, and loses often enough in practice that
+// this isn't a corner case. "net.ifnames=0 biosdevname=0" disables that
+// naming scheme outright, which is the documented way to keep "eth0" eth0.
 func guestCmdline(req MicroVMRequest) string {
 	parts := []string{}
 	if req.CmdLine != "" {
@@ -279,6 +286,7 @@ func guestCmdline(req MicroVMRequest) string {
 	}
 	if req.IP != "" && req.Gateway != "" {
 		mask := net.IP(net.CIDRMask(req.Prefix, 32)).String()
+		parts = append(parts, "net.ifnames=0", "biosdevname=0")
 		parts = append(parts, fmt.Sprintf("ip=%s::%s:%s::eth0:off", req.IP, req.Gateway, mask))
 	}
 	if req.Gateway != "" {
