@@ -35,7 +35,8 @@ underlying kernel resources.
 VPC, subnet, internet gateway, route, peering, security group (+ rule), IP
 address, compute, disk, disk file, DNS zone, DNS record, KMS keyring, KMS key,
 secret (+ version), SSL CA, SSL cert, WAF policy (+ rule), ACL policy (+ rule),
-load balancer (+ backend), load balancer target group (+ target) and listener.
+load balancer (+ backend), load balancer target group (+ target), listener,
+function and function instance (see [FaaS functions](faas.md)).
 
 ## Defaults
 
