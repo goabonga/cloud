@@ -129,7 +129,7 @@ resource "infra_ssl_cert" "internal" {
 resource "infra_disk" "conf" {
   for_each   = local.web
   name       = "${each.key}-conf"
-  size_mb    = 16
+  size_mb    = 64
   kms_key_id = infra_kms_key.disks.id
 }
 
