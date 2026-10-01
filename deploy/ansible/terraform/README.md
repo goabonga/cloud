@@ -134,6 +134,33 @@ ssh ubuntu@192.168.122.30 'sudo ip netns exec inet curl -s https://www.demo.test
 No `-k`: the certificate verifies against the public root every machine
 trusts.
 
+## Filtered egress
+
+The internet gateway has its egress proxy enabled: the instances reach the
+Internet only through it, and only for `example.com` and the demo's own
+`demo.test` names. On every agent, the VPC's load-balancer namespace runs an
+egress proxy, and infra-lb balances the proxy address (`egress_proxy_address`,
+the VPC's second address, `10.20.0.2`) over the proxies of both agents:
+
+- **Transparent** - an instance's HTTP and HTTPS to public addresses are
+  redirected to the proxy, which filters on the Host header and the TLS SNI,
+  without decrypting anything.
+- **Explicit** - `http://10.20.0.2:3128` is an HTTP proxy, for CONNECT
+  tunnels and absolute `http://` URLs.
+- **Everything else** leaving through the gateway is refused, since the demo
+  allows no address (`allowed_addresses`).
+
+From an instance (its network namespace, entered through its process):
+
+```bash
+ssh ubuntu@<agent-ip>
+p=$(pgrep -f "nginx: master" | head -1)
+sudo nsenter --net=/proc/$p/ns/net curl -sI https://example.com/          # 200, through the proxy
+sudo nsenter --net=/proc/$p/ns/net curl -sI -m 5 https://www.iana.org/    # refused: not allowed
+sudo nsenter --net=/proc/$p/ns/net curl -sI -x http://10.20.0.2:3128 https://example.com/   # explicit
+sudo nsenter --net=/proc/$p/ns/net ping -c1 -W2 1.1.1.1                     # refused: not HTTP(S)
+```
+
 ## Tear down
 
 ```bash
