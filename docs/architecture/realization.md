@@ -332,8 +332,14 @@ cloud-hypervisor: one process per instance, its API on a unix socket under
             the agent's state directory; vm.create then vm.boot configure
             and start it
 kernel cmdline: the allocated address is passed as a static `ip=` directive,
-            so the guest configures eth0 at boot - there is no cloud-init
-            integration yet
+            so the guest configures eth0 at boot, and a `ds=nocloud-net`
+            directive points cloud-init at the agent's seed server
+cloud-init: one HTTP listener for every micro-VM on the host (port 8912,
+            every interface, so each VPC's instances reach it at their own
+            subnet gateway) answers the NoCloud datasource:
+            `<uid>/meta-data` and `<uid>/user-data` - `userData` verbatim
+            when set, otherwise a minimal cloud-config from `hostname` and
+            `sshAuthorizedKey` - keyed by instance UID, forgotten on delete
 boot disk:  `image` (a URL or a local path) is fetched/copied once into a
             node-local cache keyed by its hash, then cloned - copy-on-write
             (FICLONE) where the filesystem supports it, a plain copy
