@@ -12,6 +12,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/auth"
 	"github.com/goabonga/infrastructure/internal/crypto"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
+	"github.com/goabonga/infrastructure/internal/function"
 	"github.com/goabonga/infrastructure/internal/handler"
 	"github.com/goabonga/infrastructure/internal/httpsec"
 	"github.com/goabonga/infrastructure/internal/registry"
@@ -87,8 +88,19 @@ func (s *Server) routes() {
 	register[resource.WAFRuleSpec, resource.WAFRuleStatus](s, resource.KindWAFRule)
 	register[resource.NodeSpec, resource.NodeStatus](s, resource.KindNode)
 	register[resource.NodePoolSpec, resource.NodePoolStatus](s, resource.KindNodePool)
-	register[resource.FunctionSpec, resource.FunctionStatus](s, resource.KindFunction)
-	register[resource.FunctionInstanceSpec, resource.FunctionInstanceStatus](s, resource.KindFunctionInstance)
+
+	// function and function_instance are registered directly, rather than
+	// through the register() helper, so their registries can be shared with
+	// the invoke handler below. computes and nodes are already routed by
+	// register() above: these are second Registry instances over the same
+	// store and kind, for the invoke service to read, not to serve again.
+	functions := registry.New[resource.FunctionSpec, resource.FunctionStatus](s.store, resource.KindFunction)
+	functionInstances := registry.New[resource.FunctionInstanceSpec, resource.FunctionInstanceStatus](s.store, resource.KindFunctionInstance)
+	computes := registry.New[resource.ComputeSpec, resource.ComputeStatus](s.store, resource.KindCompute)
+	nodes := registry.New[resource.NodeSpec, resource.NodeStatus](s.store, resource.KindNode)
+	handler.New(functions, resource.KindFunction).Register(s.mux, APIBase)
+	handler.New(functionInstances, resource.KindFunctionInstance).Register(s.mux, APIBase)
+	handler.NewFunctionInvokeHandler(function.NewService(functions, functionInstances, computes, nodes)).Register(s.mux, APIBase)
 
 	// Encryption-backed resources need a KEK.
 	if s.kek != nil {
