@@ -71,6 +71,7 @@ func run() error {
 	nodes := registry.New[resource.NodeSpec, resource.NodeStatus](store, resource.KindNode)
 	ipAddresses := registry.New[resource.IPAddressSpec, resource.IPAddressStatus](store, resource.KindIPAddress)
 	diskFiles := registry.New[resource.DiskFileSpec, resource.DiskFileStatus](store, resource.KindDiskFile)
+	sslCAs := registry.New[resource.SSLCASpec, resource.SSLCAStatus](store, resource.KindSSLCA)
 	nodeID := os.Getenv("GOA_NODE_ID")
 	lbReconciler := manager.NewLoadBalancerReconciler(lbs, lbBackends, computes, vpcs, manager.NewExecLB())
 	if os.Getenv("GOA_PUBLIC_CIDR") != "" {
@@ -90,6 +91,7 @@ func run() error {
 		manager.NewSecurityGroupReconciler(sgs, sgRules, manager.NewExecSecurityGroup()),
 		manager.NewACLReconciler(acls, manager.NewExecFirewall()),
 		manager.NewComputeReconciler(computes, subnets, vpcs, disks, sgs, manager.NewExecComputeBackend(*stateDir), nodeID).WithAddressStore(store),
+		manager.NewTrustReconciler(sslCAs, computes, subnets, manager.FSTrustWriter{}, nodeID),
 		manager.NewDiskFileReconciler(diskFiles, computes, manager.FSDiskFileWriter{}, nodeID),
 		manager.NewWAFReconciler(wafPolicies, wafRules, computes, subnets, igws, vpcs, manager.NewExecWAF()),
 		// GOA_PUBLIC_CIDR (set on the edges) is the public block routed to them.
