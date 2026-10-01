@@ -37,6 +37,21 @@ const (
 	PDAddr   uint64 = 0xb000
 	// GDTAddr is where the flat GDT in gdt.go is written.
 	GDTAddr uint64 = 0x6000
+	// StackPointer is RSP at kernel entry: scratch stack space in the
+	// otherwise-unused gap between GDTAddr's page and PML4Addr, enough
+	// for the few instructions startup_64 executes before switching to
+	// its own early stack. This is the same address Firecracker's
+	// x86_64 loader uses, for the same reason (it's free in this layout
+	// and known to work).
+	StackPointer uint64 = 0x8ff0
+	// TSSAddr and IdentityMapAddr are the addresses given to
+	// kvm.VM.SetTSSAddr / SetIdentityMapAddr — conventional, widely
+	// reused values (kvmtool, Firecracker, cloud-hypervisor) near the
+	// top of the 32-bit address space, well above any guest memory size
+	// this package's tests or the microvm resource use today, so they
+	// never collide with a real memory slot.
+	TSSAddr         uint64 = 0xfffbd000
+	IdentityMapAddr uint64 = 0xfffbc000
 	// KernelLoadAddr is where the bzImage's protected-mode kernel code is
 	// written. This is the historical fixed load address for a bzImage
 	// not marked relocatable; a relocatable kernel (the common case on
