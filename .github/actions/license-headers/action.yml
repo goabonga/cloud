@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: license headers
+description: Check SPDX license headers on cmd/, internal/, test/, scripts/ and .github/.
+
+runs:
+  using: composite
+  steps:
+    - name: Check SPDX license headers
+      shell: bash
+      run: |
+        python scripts/add_license_header.py --path cmd --types go --check
+        python scripts/add_license_header.py --path internal --types go --check
+        python scripts/add_license_header.py --path test --types go --check
+        python scripts/add_license_header.py --path scripts --types py,sh --check
+        python scripts/add_license_header.py --path .github --types yml,yaml --check
