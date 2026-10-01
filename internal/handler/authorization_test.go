@@ -304,6 +304,35 @@ func TestAuthorizationHierarchyKindOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestAuthorizationUnauthenticatedRequestIsForbidden(t *testing.T) {
+	t.Parallel()
+
+	mux, _, _ := newAuthzVPC(t, nil)
+
+	// Seed as alice so the record exists; an unauthenticated get must still be
+	// refused even though it isn't a 404.
+	in := resource.VPC{Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}
+	if rec := doAs(t, mux, "alice", nil, http.MethodPut, "/api/v1/vpc/vpc-1", in); rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d", rec.Code)
+	}
+
+	// do() issues the request with no identity in context at all.
+	if rec := do(t, mux, http.MethodGet, "/api/v1/vpc/vpc-1", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated get status = %d, want 403", rec.Code)
+	}
+}
+
+func TestAuthorizationUnauthenticatedCreateIsForbidden(t *testing.T) {
+	t.Parallel()
+
+	mux, _, _ := newAuthzVPC(t, nil)
+
+	in := resource.VPC{Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}
+	if rec := do(t, mux, http.MethodPut, "/api/v1/vpc/vpc-1", in); rec.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated create status = %d, want 403", rec.Code)
+	}
+}
+
 func TestAuthorizationAdminOnlyHasNoSelfServicePath(t *testing.T) {
 	t.Parallel()
 
