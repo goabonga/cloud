@@ -11,10 +11,10 @@ import (
 // E820Type is a struct boot_e820_entry type value (arch/x86/include/uapi/asm/e820.h).
 type E820Type uint32
 
-const (
-	E820TypeRAM   E820Type = 1
-	e820EntrySize          = 20 // addr u64 + size u64 + type u32, packed
-)
+// E820TypeRAM marks an entry as usable RAM.
+const E820TypeRAM E820Type = 1
+
+const e820EntrySize = 20 // addr u64 + size u64 + type u32, packed
 
 // E820Entry mirrors struct boot_e820_entry.
 type E820Entry struct {

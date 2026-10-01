@@ -80,9 +80,9 @@ const (
 	StatusFailed           = 1 << 7
 )
 
-// InterruptStatus bits (virtio 1.1 §4.2.2.3): bit 0 signals a used-ring
-// update, bit 1 a device-config change (unused — none of this package's
-// devices mutate their own config after creation).
+// UsedBufferInterrupt is InterruptStatus bit 0 (virtio 1.1 §4.2.2.3),
+// signalling a used-ring update; bit 1 (a device-config change) is unused
+// — none of this package's devices mutate their own config after creation.
 const UsedBufferInterrupt = 1 << 0
 
 // Queue is one virtqueue's transport-level state: its negotiated size and

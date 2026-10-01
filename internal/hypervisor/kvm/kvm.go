@@ -13,8 +13,8 @@ import (
 	"unsafe"
 )
 
-// Device path KVM exposes on a host with the kvm/kvm_intel (or kvm_amd)
-// kernel modules loaded.
+// DevicePath is the device path KVM exposes on a host with the
+// kvm/kvm_intel (or kvm_amd) kernel modules loaded.
 const DevicePath = "/dev/kvm"
 
 // Ioctl request numbers for the subset of the KVM API this package covers,
