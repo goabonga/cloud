@@ -2,9 +2,6 @@
 build/
 /dist/
 site/
-# Rendered manifests staged for checkov, which is a container action and can
-# only read paths inside the workspace.
-.checkov-render/
 
 # Go
 *.test

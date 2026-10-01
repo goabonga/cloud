@@ -77,10 +77,6 @@ bump_files = [
     { file = "cmd/api/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
 changelog = "cmd/api/CHANGELOG.md"
-mirrors = [
-    { file = "charts/infra/Chart.yaml", key = "appVersion" },
-    { file = "charts/infra/values.yaml", key = "components.api.image.tag" },
-]
 post_bump = ["go mod tidy"]
 
 [components.infra-controller-manager]
@@ -89,9 +85,6 @@ bump_files = [
     { file = "cmd/controller-manager/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
 changelog = "cmd/controller-manager/CHANGELOG.md"
-mirrors = [
-    { file = "charts/infra/values.yaml", key = "components.controller-manager.image.tag" },
-]
 post_bump = ["go mod tidy"]
 
 # ── Data plane ────────────────────────────────────────────────────────────
@@ -137,9 +130,6 @@ bump_files = [
     { file = "cmd/idp/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
 changelog = "cmd/idp/CHANGELOG.md"
-mirrors = [
-    { file = "charts/infra/values.yaml", key = "components.idp.image.tag" },
-]
 post_bump = ["go mod tidy"]
 
 # ── Observability ─────────────────────────────────────────────────────────
@@ -150,9 +140,6 @@ bump_files = [
     { file = "cmd/exporter/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
 changelog = "cmd/exporter/CHANGELOG.md"
-mirrors = [
-    { file = "charts/infra/values.yaml", key = "components.exporter.image.tag" },
-]
 post_bump = ["go mod tidy"]
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -184,22 +171,5 @@ bump_files = [
     { file = "cmd/www/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
 ]
 changelog = "cmd/www/CHANGELOG.md"
-mirrors = [
-    { file = "charts/infra/values.yaml", key = "components.www.image.tag" },
-]
 depends_on = ["infra-spa"]
 post_bump = ["go mod tidy"]
-
-# ── Deployment ────────────────────────────────────────────────────────────
-
-# The Helm chart is one component, not one per workload: the five containerised
-# daemons are not independently useful, so they deploy and roll together. Each
-# of them mirrors its image tag into values.yaml above, and every one of those
-# writes cascades a patch here - a new image is a new chart, even when no
-# template changed.
-[components.infra-chart]
-paths = ["charts/infra/**"]
-bump_files = [
-    { file = "charts/infra/Chart.yaml", key = "version" },
-]
-changelog = "charts/infra/CHANGELOG.md"

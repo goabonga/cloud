@@ -27,10 +27,6 @@ github:
         # Go toolchain and quality gates
         - golangci/golangci-lint-action # golangci-lint upstream
         - codecov/codecov-action # Codecov
-        # Kubernetes and Helm
-        - azure/setup-helm # Microsoft, maintained with the Helm project
-        - helm/kind-action # Helm project
-        - bridgecrewio/checkov-action # Prisma Cloud / Palo Alto, checkov upstream
         # DAST
         - zaproxy/action-baseline # ZAP project
         # Workflow plumbing

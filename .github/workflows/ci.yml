@@ -75,11 +75,6 @@ jobs:
       docs_changed: ${{ steps.bypass.outputs.docs_changed || steps.changed.outputs.docs_changed }}
       integration_changed: ${{ steps.bypass.outputs.integration_changed || steps.changed.outputs.integration_changed }}
       www_changed: ${{ steps.bypass.outputs.www_changed || steps.changed.outputs.www_changed }}
-      chart_changed: ${{ steps.bypass.outputs.chart_changed || steps.changed.outputs.chart_changed }}
-      # True for multicz's own chore(release) commit *or* a duplicate push
-      # delivery (see `bypass` below) - both mean "nothing here needs acting
-      # on", which is all chart-lint's own use of this output cares about.
-      bypassed: ${{ steps.bypass.outputs.active || 'false' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -146,13 +141,11 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "active=true"
             echo "packages=[]"
             echo "has_package_changes=false"
             echo "docs_changed=false"
             echo "integration_changed=false"
             echo "www_changed=false"
-            echo "chart_changed=false"
           } >> "$GITHUB_OUTPUT"
           [ "$IS_RELEASE_COMMIT" = "true" ] || exit 0
           # multicz shapes the subject as
@@ -220,16 +213,6 @@ jobs:
             echo "www_changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "www_changed=true" >> "$GITHUB_OUTPUT"
-          fi
-          # The chart is a multicz component, so `packages` covers a direct
-          # template change - but it also picks up a chart patch cascaded from
-          # an image-tag mirror, which is exactly when the rendered manifests
-          # need rechecking. Either signal runs the chart chain.
-          if git diff --quiet "$BASE" HEAD -- charts \
-             && ! echo "$PACKAGES" | jq -e 'index("infra-chart")' > /dev/null; then
-            echo "chart_changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "chart_changed=true" >> "$GITHUB_OUTPUT"
           fi
           {
             echo "## Detected changes"
@@ -673,177 +656,6 @@ jobs:
             `${{ matrix.security_threshold || '11' }}`.
 
   # ---------------------------------------------------------------------
-  # Helm chart. One chart for the whole control plane - see
-  # charts/infra/values.yaml for why it is not one chart per workload.
-  # ---------------------------------------------------------------------
-
-  chart-lint:
-    name: chart-lint
-    needs: detect
-    if: >-
-      needs.detect.outputs.bypassed != 'true'
-      && needs.detect.outputs.chart_changed == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      # The chart's appVersion and image tags are multicz bump_files and mirror
-      # targets, so linting the pre-bump values would lint a chart that will
-      # never be published.
-      - uses: ./.github/actions/bump-preview
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: v3.19.0
-      - name: helm lint
-        run: helm lint charts/infra
-      # Rendering is the actual test. `helm lint` accepts templates that fail
-      # to produce valid Kubernetes objects, and kubeconform checks the result
-      # against the real API schemas.
-      - name: Render and validate against the Kubernetes schemas
-        run: |
-          set -euo pipefail
-          curl -sSfL \
-            https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz \
-            | tar -xz -C /usr/local/bin kubeconform
-          helm template infra charts/infra --namespace infra \
-            > /tmp/rendered.yaml
-          kubeconform -strict -summary -kubernetes-version 1.31.0 /tmp/rendered.yaml
-      # The chart refuses to render a replicated stateful component with no
-      # shared backend. That guard is the kind of thing that silently stops
-      # working after a refactor, so assert both arms.
-      # The chart carries two render-time guards. Both are the kind of thing
-      # that silently stops working after a refactor of the values structure,
-      # so each is asserted in both directions - a guard that never rejects
-      # anything passes a one-armed test just as well as a working one.
-      - name: The render-time guards hold
-        run: |
-          set -euo pipefail
-          # A default install must render: no flags, no database, no secrets.
-          helm template infra charts/infra --namespace infra > /dev/null
-          # Replicated stateful component with no shared backend: rejected.
-          if helm template infra charts/infra --namespace infra \
-               --set components.api.replicas=2 > /dev/null 2>&1; then
-            echo "::error::replicas=2 with no state backend should have failed to render"
-            exit 1
-          fi
-          helm template infra charts/infra --namespace infra \
-            --set components.api.replicas=2 \
-            --set state.existingSecret=infra-state > /dev/null
-          # idp enabled with no clients: rejected. It exits at startup
-          # otherwise, so the chart must not produce that Deployment.
-          if helm template infra charts/infra --namespace infra \
-               --set components.idp.enabled=true > /dev/null 2>&1; then
-            echo "::error::idp with no clients should have failed to render"
-            exit 1
-          fi
-          helm template infra charts/infra --namespace infra \
-            --set components.idp.enabled=true \
-            --set components.idp.existingSecret=infra-idp-clients > /dev/null
-          # www enabled with no API to proxy to: rejected. The dashboard would
-          # come up serving 502s on every data call.
-          if helm template infra charts/infra --namespace infra \
-               --set components.api.enabled=false > /dev/null 2>&1; then
-            echo "::error::www with no api and no apiURL should have failed to render"
-            exit 1
-          fi
-          helm template infra charts/infra --namespace infra \
-            --set components.api.enabled=false \
-            --set components.www.apiURL=https://api.example.com > /dev/null
-          # The dashboard must actually be pointed somewhere, not merely render.
-          helm template infra charts/infra --namespace infra \
-            | grep -q 'name: GOA_API_URL' \
-            || { echo "::error::the www Deployment carries no GOA_API_URL"; exit 1; }
-          echo "all three guards reject the unsafe case and accept the safe one"
-      - name: Summary
-        if: always()
-        uses: ./.github/actions/summary
-        with:
-          title: chart-lint
-          body: |
-            `helm lint`, `helm template` validated against the Kubernetes 1.31
-            schemas with kubeconform, and both arms of the shared-state guard.
-
-  chart-checkov:
-    name: chart-checkov
-    needs: [detect, chart-lint]
-    if: >-
-      !cancelled() && !failure()
-      && needs.detect.outputs.chart_changed == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/bump-preview
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: v3.19.0
-      # Scan the rendered manifests, not the chart directory: checkov reads
-      # templates literally and would flag the Go template syntax rather than
-      # the objects it produces. An explicit namespace matters too - rendering
-      # without one puts everything in `default`, which is itself a finding.
-      #
-      # checkov runs from PyPI through uv (installed above by bump-preview)
-      # rather than bridgecrewio/checkov-action: the action's container
-      # entrypoint still calls the deprecated `set-output` command, which
-      # annotated every run with a warning. The version matches the image
-      # checkov-action v12.3125.0 pinned. `--directory` over a directory of
-      # its own keeps the scan on the rendered chart and nothing else.
-      - name: Render the chart
-        run: |
-          set -euo pipefail
-          mkdir -p .checkov-render
-          helm template infra charts/infra --namespace infra \
-            > .checkov-render/manifests.yaml
-          test -s .checkov-render/manifests.yaml
-      - name: checkov
-        run: >-
-          uv tool run --from checkov==3.3.19 checkov
-          --directory .checkov-render --framework kubernetes --quiet
-      - name: Summary
-        if: always()
-        uses: ./.github/actions/summary
-        with:
-          title: chart-checkov
-          body: |
-            checkov over the rendered manifests. The three suppressions are
-            inline on the objects that carry them, with a reason each.
-
-  chart-package:
-    name: chart-package
-    needs: [detect, chart-checkov]
-    if: >-
-      !cancelled() && !failure()
-      && needs.detect.outputs.chart_changed == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/bump-preview
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: v3.19.0
-      - name: helm package
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          helm package charts/infra --destination dist
-          ls -l dist
-      - uses: actions/upload-artifact@v7
-        with:
-          name: infra-chart
-          path: dist/infra-*.tgz
-          retention-days: 1
-      - name: Summary
-        if: always()
-        uses: ./.github/actions/summary
-        with:
-          title: chart-package
-          body: Packaged the chart as artifact `infra-chart`.
-
-  # ---------------------------------------------------------------------
   # End-to-end and DAST. Both bring the control plane up from source as plain
   # processes against PostgreSQL - the same five binaries `deploy/ansible`
   # installs as .debs, not a cluster nothing in this repo's own install path
@@ -966,7 +778,6 @@ jobs:
       - osv-scanner
       - integration
       - deb-validate
-      - chart-package
       - e2e
       - owasp
     # www is gated on www_changed, so it is skipped on non-frontend pushes. A
@@ -1099,9 +910,8 @@ jobs:
             `multicz bump` append their own detail above.
 
   # Build and publish the bumped components: cross-compiled binaries and .deb
-  # packages attached to a per-component GitHub Release, plus the Helm chart.
-  # Matrix over each bumped component so one failure does not abort the
-  # others.
+  # packages attached to a per-component GitHub Release. Matrix over each
+  # bumped component so one failure does not abort the others.
   publish:
     name: publish (${{ matrix.component }})
     needs: [detect, release]
@@ -1117,7 +927,6 @@ jobs:
         component: ${{ fromJson(needs.release.outputs.bumped_json) }}
     permissions:
       contents: write
-      packages: write # push the Helm chart to GHCR
       actions: write # delete the consumed CI artifacts
     steps:
       - uses: actions/checkout@v7
@@ -1140,39 +949,6 @@ jobs:
           python-version: "3.12"
       - name: Install multicz
         run: uv tool install multicz
-      # The chart is a component like any other, so it arrives through the same
-      # matrix - but it has no Go binary and no .deb, so it takes its own path
-      # and every step below is guarded against it.
-      - uses: actions/download-artifact@v8
-        if: matrix.component == 'infra-chart'
-        with:
-          name: infra-chart
-          path: dist
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        if: matrix.component == 'infra-chart'
-        with:
-          version: v3.19.0
-      - name: Push the chart to GHCR and cut its release
-        if: matrix.component == 'infra-chart'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REGISTRY_TOKEN: ${{ github.token }}
-          ACTOR: ${{ github.actor }}
-          OWNER: ${{ github.repository_owner }}
-        run: |
-          set -euo pipefail
-          version=$(multicz get infra-chart)
-          tag="infra-chart-v${version}"
-          owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
-          # Publishing the artifact chart-package produced, not a repack: the
-          # .tgz attached to the release is the one checkov cleared.
-          printf '%s' "$REGISTRY_TOKEN" \
-            | helm registry login ghcr.io -u "$ACTOR" --password-stdin
-          helm push "dist/infra-${version}.tgz" "oci://ghcr.io/${owner}/charts"
-          notes=$(multicz release-notes --tag "$tag" || echo "Release $tag")
-          gh release create "$tag" --title "$tag" --notes "$notes" \
-            "dist/infra-${version}.tgz"
-
       # Reuse the amd64 .deb the deb-validate chain already installed, started
       # and scored, instead of rebuilding it here. Rebuilding would publish a
       # package nothing had validated - identical in intent, unverified in
@@ -1180,7 +956,6 @@ jobs:
       # paths did not change), so probe rather than assume.
       - id: has_deb
         name: Check for a validated .deb from this run
-        if: matrix.component != 'infra-chart'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1199,7 +974,6 @@ jobs:
           name: ${{ matrix.component }}-deb
           path: dist
       - name: Build release binaries
-        if: matrix.component != 'infra-chart'
         env:
           GH_TOKEN: ${{ github.token }}
           HAS_VALIDATED_DEB: ${{ steps.has_deb.outputs.value }}
@@ -1302,7 +1076,6 @@ jobs:
       - osv-scanner
       - integration
       - deb-validate
-      - chart-package
       - e2e
       - owasp
       - release

@@ -68,11 +68,7 @@ updates:
           - "goabonga/*"
           - "geekyeggo/*"
           - "getplumber/*"
-          - "bridgecrewio/*"
-          - "helm/*"
           - "zaproxy/*"
-          - "azure/*"
-          - "yannh/*"
     commit-message:
       prefix: "ci"
     labels:
