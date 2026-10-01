@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# Makes every lab machine trust the platform's public root, as machines on the
+# Internet trust a public CA: certificates the platform signs for public names
+# then verify without -k. The API creates the root at its first start; it is
+# read once, from the controller, with a token of the Terraform client.
+- name: Get a token from the IdP
+  ansible.builtin.uri:
+    url: "{{ idp_issuer }}/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: client_credentials
+      client_id: "{{ idp_client_id }}"
+      client_secret: "{{ lookup('file', idp_client_secret_file) }}"
+    return_content: true
+  register: public_trust_token
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+
+- name: Read the public root from the API
+  ansible.builtin.uri:
+    url: "http://{{ control_ip }}:{{ api_addr | regex_replace('^:', '') }}/api/v1/ssl_ca/public-root"
+    headers:
+      Authorization: "Bearer {{ public_trust_token.json.access_token }}"
+    return_content: true
+  register: public_trust_root
+  delegate_to: localhost
+  become: false
+  run_once: true
+  retries: 10
+  delay: 3
+  until: public_trust_root.status == 200
+
+# The CA certificate is a byte field, so the API returns it base64-encoded.
+- name: Install the public root
+  ansible.builtin.copy:
+    content: "{{ public_trust_root.json.status.certPem | b64decode }}"
+    dest: /usr/local/share/ca-certificates/infra-public-root.crt
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Update the CA certificates
