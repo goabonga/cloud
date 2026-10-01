@@ -167,6 +167,8 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/bump-preview
       - uses: ./.github/actions/go-test
+        with:
+          codecov-token: ${{ secrets.CODECOV_TOKEN }}
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
