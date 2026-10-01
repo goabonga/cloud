@@ -43,6 +43,9 @@ type DiskStatus struct {
 	StatusBase
 	Encrypted bool   `json:"encrypted"`
 	Path      string `json:"path,omitempty"`
+	// NodeName is the node the disk is scheduled to; its backing file lives
+	// there and nowhere else. Empty until the scheduler places it.
+	NodeName string `json:"nodeName,omitempty"`
 }
 
 // Disk is a persistent-disk resource.
