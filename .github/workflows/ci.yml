@@ -343,9 +343,9 @@ jobs:
             has_unit: "true"
     steps:
       - uses: actions/checkout@v7
-      # No probe, for the same reason as the sbom job: `deb` builds all eight
-      # legs on every run, so a missing artifact means its leg failed - and
-      # that already skips this job through `!failure()`.
+      # No probe: `deb` builds all nine legs on every run, so a missing
+      # artifact means its leg failed - and that already skips this job
+      # through `!failure()`.
       - uses: ./.github/actions/validate-deb
         with:
           component: ${{ matrix.component }}
