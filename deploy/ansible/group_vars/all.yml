@@ -112,11 +112,17 @@ kms_key_file: "{{ cred_dir }}/kms.key"
 idp_key_file: "{{ cred_dir }}/idp-es256.key"
 jwt_pub_file: "{{ cred_dir }}/jwt-es256.pub"
 idp_client_secret_file: "{{ cred_dir }}/terraform-client.secret"
+idp_admin_password_file: "{{ cred_dir }}/idp-admin.password"
 
 # Identity provider (JWT, ES256). The API verifies the IdP's tokens.
 idp_addr: ":8081"
 idp_issuer: "http://{{ control_ip }}:8081"
 idp_client_id: "terraform"
+# The first (and, from the playbook's side, only) administrator. Bootstrapped
+# once via a throwaway systemd drop-in (see roles/idp/tasks/main.yml) - the
+# password lives only in the generated credential file and the drop-in it
+# briefly appears in, never in this repo.
+idp_admin_username: "admin"
 
 # Listen addresses / ports.
 api_addr: ":8080"

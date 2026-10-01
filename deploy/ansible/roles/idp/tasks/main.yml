@@ -39,3 +39,67 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# One-time bootstrap of the first admin user. GOA_IDP_BOOTSTRAP_ADMIN only
+# ever seeds a user when the store is empty (internal/idp), so this is safe
+# to leave in place indefinitely - but the credential still shouldn't sit in
+# the unit's environment longer than it takes to use it once, so the drop-in
+# that carries it is removed and the service restarted again right after. The
+# marker file (not infra-idp's own state, which could be etcd/Postgres
+# instead of a local file) is what makes re-running this playbook a no-op.
+- name: Check whether the admin user has already been bootstrapped
+  ansible.builtin.stat:
+    path: "{{ infra_conf_dir }}/.idp-admin-bootstrapped"
+  register: idp_admin_bootstrap_marker
+
+- name: Bootstrap the admin user, then drop the credential from the unit
+  when: not idp_admin_bootstrap_marker.stat.exists
+  block:
+    - name: Install a one-shot bootstrap drop-in
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/infra-idp.service.d/10-bootstrap.conf
+        mode: "0600"
+        content: |
+          [Service]
+          Environment=GOA_IDP_BOOTSTRAP_ADMIN={{ idp_admin_username }}:{{ lookup('file', idp_admin_password_file) | trim }}
+
+    - name: Restart infra-idp to run the bootstrap
+      ansible.builtin.systemd_service:
+        name: infra-idp
+        state: restarted
+        daemon_reload: true
+
+    - name: Verify the bootstrapped admin can log in
+      ansible.builtin.uri:
+        url: "{{ idp_issuer }}/login"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ idp_admin_username }}"
+          password: "{{ lookup('file', idp_admin_password_file) | trim }}"
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      register: idp_admin_login_check
+      retries: 5
+      delay: 2
+      until: idp_admin_login_check.status == 200
+
+    - name: Remove the one-shot bootstrap drop-in
+      ansible.builtin.file:
+        path: /etc/systemd/system/infra-idp.service.d/10-bootstrap.conf
+        state: absent
+
+    - name: Restart infra-idp without the bootstrap credential
+      ansible.builtin.systemd_service:
+        name: infra-idp
+        state: restarted
+        daemon_reload: true
+
+    - name: Mark the admin user as bootstrapped
+      ansible.builtin.file:
+        path: "{{ infra_conf_dir }}/.idp-admin-bootstrapped"
+        state: touch
+        mode: "0600"
+        owner: root
+        group: root
