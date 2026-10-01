@@ -66,10 +66,6 @@ updates:
           - "compilerla/*"
           - "pre-commit/*"
           - "goabonga/*"
-          - "docker/*"
-          - "anchore/*"
-          - "sigstore/*"
-          - "hadolint/*"
           - "geekyeggo/*"
           - "getplumber/*"
           - "bridgecrewio/*"
@@ -82,29 +78,6 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
-
-  # Base images in packaging/docker/*. Pinned by index digest, so nothing
-  # else in the repo would ever notice a new golang, node or distroless
-  # release - this is the only thing keeping them current.
-  - package-ecosystem: "docker"
-    directories:
-      - "/packaging/docker"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-      timezone: "Europe/Paris"
-    open-pull-requests-limit: 5
-    groups:
-      base-images:
-        applies-to: version-updates
-        patterns:
-          - "*"
-    commit-message:
-      prefix: "build"
-    labels:
-      - "dependencies"
-      - "docker"
 
   # Frontend dependencies for the Vite dashboard.
   - package-ecosystem: "npm"
