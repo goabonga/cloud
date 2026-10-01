@@ -1,0 +1,183 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: detect changed components
+description: |
+  Detect which components changed since the comparison ref. On PR: vs the
+  target branch. On main: vs each component's last tag (multicz default),
+  which scopes the release matrix to bump-worthy work. multicz is
+  language-agnostic: it reads multicz.toml `paths`, so it works on the Go
+  module just as it does on a Python workspace.
+
+  Docs and integration detection bypass multicz on purpose: neither carries a
+  version of its own, so there is no tag for `multicz changed` to compare
+  against. We use a plain `git diff` on their paths instead.
+
+  Short-circuits to an empty change set for multicz's own chore(release)
+  commit or a duplicate push-event delivery - both mean "nothing here needs
+  acting on". REQUIRES the calling job to have run `actions/checkout` with
+  `fetch-depth: 0` beforehand, and `permissions: actions: read` for the
+  duplicate-push check.
+
+outputs:
+  packages:
+    value: ${{ steps.bypass.outputs.packages || steps.changed.outputs.packages }}
+  has_package_changes:
+    value: ${{ steps.bypass.outputs.has_package_changes || steps.changed.outputs.has_package_changes }}
+  docs_changed:
+    value: ${{ steps.bypass.outputs.docs_changed || steps.changed.outputs.docs_changed }}
+  integration_changed:
+    value: ${{ steps.bypass.outputs.integration_changed || steps.changed.outputs.integration_changed }}
+  www_changed:
+    value: ${{ steps.bypass.outputs.www_changed || steps.changed.outputs.www_changed }}
+
+runs:
+  using: composite
+  steps:
+    # GitHub occasionally delivers the push webhook twice for one `git push`,
+    # firing two independent runs of this workflow for the same commit (seen
+    # on 647b8cd: two push-triggered runs, 17s apart, same sha). The
+    # concurrency group in ci.yml serializes them at the whole-workflow level
+    # - a queued run's jobs, including this one, don't start until the
+    # earlier run in the group finishes - so by the time a duplicate's
+    # `detect` job runs, the earlier run's real conclusion is already known.
+    # Only treat it as covering this commit when that conclusion is
+    # success/neutral/skipped (or still null, for the narrow window before
+    # serialization kicks in): a failed earlier duplicate must not suppress
+    # the only real attempt at this commit. Whichever eligible run has the
+    # lowest id is canonical; this only ever adds a bypass (duplicate=false,
+    # the default, changes nothing) - a failed or empty API read fails open
+    # rather than risk skipping a real push's CI.
+    - id: dedupe
+      name: Detect a duplicate push-event delivery
+      if: github.event_name == 'push'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        ids=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?event=push&head_sha=${{ github.sha }}&per_page=20" \
+          --jq '[.workflow_runs[] | select(.conclusion == null or .conclusion == "success" or .conclusion == "neutral" or .conclusion == "skipped") | .id] | sort' 2>/dev/null || echo '[]')
+        mine=${{ github.run_id }}
+        first=$(echo "$ids" | jq -r '.[0] // empty')
+        contains_mine=$(echo "$ids" | jq --argjson mine "$mine" 'any(. == $mine)')
+        if [ "$contains_mine" = "true" ] && [ -n "$first" ] && [ "$first" != "$mine" ]; then
+          echo "duplicate=true" >> "$GITHUB_OUTPUT"
+          echo "## detect - duplicate push delivery" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Run \`$first\` already covers \`${{ github.sha }}\`; bypassing this one." >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "duplicate=false" >> "$GITHUB_OUTPUT"
+        fi
+    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        enable-cache: false
+        python-version: "3.12"
+    - name: Install multicz
+      shell: bash
+      run: uv tool install multicz
+    # The `release` job pushes multicz's own chore(release) commit back to
+    # main, which re-triggers this workflow. Everything in that commit is
+    # generated (version constants, changelogs, state file) and every
+    # artifact it names was already published by the run that created it, so
+    # replaying the graph would rebuild byte-identical outputs and race the
+    # release it descends from. Report an empty change set instead; every
+    # gated job downstream skips, and detect itself still runs as a smoke
+    # check. A duplicate push delivery (see `dedupe` above) short-circuits
+    # exactly the same way - it is the same "this commit is already being or
+    # has already been handled" situation, just with a different cause.
+    - id: bypass
+      name: Short-circuit multicz release commits and duplicate deliveries
+      if: >-
+        startsWith(github.event.head_commit.message, 'chore(release):')
+        || steps.dedupe.outputs.duplicate == 'true'
+      shell: bash
+      env:
+        COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        IS_RELEASE_COMMIT: ${{ startsWith(github.event.head_commit.message, 'chore(release):') }}
+      run: |
+        set -euo pipefail
+        {
+          echo "packages=[]"
+          echo "has_package_changes=false"
+          echo "docs_changed=false"
+          echo "integration_changed=false"
+          echo "www_changed=false"
+        } >> "$GITHUB_OUTPUT"
+        [ "$IS_RELEASE_COMMIT" = "true" ] || exit 0
+        # multicz shapes the subject as
+        # `chore(release): bump infra-api 0.1.1 -> 0.1.2, infra-cli ...`.
+        # Split on the commas to render one bullet per component.
+        subject=$(printf '%s\n' "$COMMIT_MESSAGE" | head -n1)
+        {
+          printf '## chore(release) - pipeline short-circuited\n\n'
+          printf 'This run targets multicz'"'"'s own release commit (`%s`).\n' \
+            "${GITHUB_SHA:0:7}"
+          printf 'Binaries, `.deb` packages and GitHub Releases were already\n'
+          printf 'produced by the `release` -> `publish` chain that authored it.\n\n'
+          printf '### Versions published\n\n'
+          printf '%s' "${subject#chore(release): bump }" \
+            | tr ',' '\n' | sed -E 's/^ *//; s/^/- /'
+          printf '\n\n### Skipped\n\n'
+          printf 'Every quality, integration, release, publish and docs job\n'
+          printf 'skips on this commit via the empty change set below.\n'
+        } >> "$GITHUB_STEP_SUMMARY"
+    - id: changed
+      name: Compute changed components
+      if: >-
+        !startsWith(github.event.head_commit.message, 'chore(release):')
+        && steps.dedupe.outputs.duplicate != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          REF="origin/${{ github.base_ref }}"
+          ALL=$(multicz changed --since "$REF" --output json | jq -c '.changed')
+        else
+          REF="each component's last tag"
+          ALL=$(multicz changed --output json | jq -c '.changed')
+        fi
+        PACKAGES=$(echo "$ALL" | jq -c '.')
+        echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
+        if [ "$PACKAGES" = "[]" ] || [ -z "$PACKAGES" ]; then
+          echo "has_package_changes=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "has_package_changes=true" >> "$GITHUB_OUTPUT"
+        fi
+        # Docs / integration detection via git diff (no tag exists for them).
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          BASE="origin/${{ github.base_ref }}"
+        elif git rev-parse --verify --quiet "${{ github.event.before }}^{commit}" > /dev/null 2>&1; then
+          # Diff the whole pushed range, not just the last commit.
+          BASE="${{ github.event.before }}"
+        elif git rev-parse HEAD^ > /dev/null 2>&1; then
+          BASE="HEAD^"
+        else
+          BASE="$(git hash-object -t tree /dev/null)"
+        fi
+        if git diff --quiet "$BASE" HEAD -- docs zensical.toml; then
+          echo "docs_changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "docs_changed=true" >> "$GITHUB_OUTPUT"
+        fi
+        if git diff --quiet "$BASE" HEAD -- test/integration; then
+          echo "integration_changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "integration_changed=true" >> "$GITHUB_OUTPUT"
+        fi
+        # Frontend detection: the Vite app has its own toolchain (Node), so it
+        # is gated by a git diff on www/ rather than the Go matrix.
+        if git diff --quiet "$BASE" HEAD -- www; then
+          echo "www_changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "www_changed=true" >> "$GITHUB_OUTPUT"
+        fi
+        {
+          echo "## Detected changes"
+          echo ""
+          echo "| Field | Value |"
+          echo "| --- | --- |"
+          echo "| Packages | \`$PACKAGES\` |"
+          echo "| Reference | \`$REF\` |"
+          echo "| Event | \`${{ github.event_name }}\` |"
+        } >> "$GITHUB_STEP_SUMMARY"
