@@ -45,6 +45,10 @@ func (l *listener) acceptLoop(ln net.Listener) {
 // never terminated: the ClientHello read to route it is replayed.
 func (l *listener) serveConn(c net.Conn) {
 	cfg := l.cfg.Load()
+	if cfg.Protocol == ProtocolEgressTLS {
+		l.serveEgressTLS(c)
+		return
+	}
 	var prefix []byte
 	name := cfg.DefaultTargetGroup
 	if cfg.Protocol == ProtocolTLS {

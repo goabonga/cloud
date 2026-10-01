@@ -139,10 +139,11 @@ func route(l *Listener, host, path string) string {
 
 // listener is one bound socket and what it serves.
 type listener struct {
-	p     *Proxy
-	key   string
-	cfg   atomic.Pointer[Listener]
-	certs atomic.Pointer[certSet]
+	p      *Proxy
+	key    string
+	cfg    atomic.Pointer[Listener]
+	certs  atomic.Pointer[certSet]
+	policy atomic.Pointer[policy]
 
 	mu      sync.Mutex
 	ln      net.Listener
@@ -166,6 +167,12 @@ func (l *listener) update(cfg Listener) {
 	c := cfg
 	l.cfg.Store(&c)
 	l.certs.Store(newCertSet(cfg.Certificates))
+	if cfg.Egress != nil {
+		// Validated with the configuration.
+		if p, err := compilePolicy(cfg.Egress); err == nil {
+			l.policy.Store(p)
+		}
+	}
 }
 
 func (l *listener) bound() bool {
@@ -207,6 +214,15 @@ func (l *listener) bind() {
 	l.bindErr = nil
 	l.ln = ln
 	switch cfg.Protocol {
+	case ProtocolEgressHTTP, ProtocolEgressProxy:
+		l.srv = &http.Server{
+			Handler:           &egressHandler{l: l},
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       120 * time.Second,
+			ErrorLog:          slog.NewLogLogger(l.p.log.Handler(), slog.LevelDebug),
+		}
+		srv := l.srv
+		go func() { _ = srv.Serve(ln) }()
 	case ProtocolHTTP, ProtocolHTTPS:
 		if cfg.Protocol == ProtocolHTTPS {
 			ln = tls.NewListener(ln, &tls.Config{
