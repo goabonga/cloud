@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
@@ -211,5 +213,172 @@ func mustDecode(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 	t.Helper()
 	if err := json.NewDecoder(rec.Body).Decode(v); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+}
+
+// newMuxWithStore is like newMux but also returns the raw store, so a test
+// can corrupt an entry directly on disk to exercise a registry error that
+// isn't state.ErrNotFound.
+func newMuxWithStore(t *testing.T) (*http.ServeMux, *state.FileStore) {
+	t.Helper()
+	store := state.NewFileStore(t.TempDir())
+	reg := registry.New[resource.VPCSpec, resource.VPCStatus](store, resource.KindVPC)
+	mux := http.NewServeMux()
+	handler.New(reg, resource.KindVPC).Register(mux, "/api/v1")
+	return mux, store
+}
+
+func TestHandlerListPropagatesStoreError(t *testing.T) {
+	t.Parallel()
+
+	mux, store := newMuxWithStore(t)
+	// A file that isn't valid JSON makes List() fail to unmarshal it, which is
+	// a different failure mode than an absent key.
+	if err := store.Put(resource.KindVPC+"/garbled", []byte("not json")); err != nil {
+		t.Fatalf("seed corrupt entry: %v", err)
+	}
+
+	rec := do(t, mux, http.MethodGet, "/api/v1/vpc", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("list status = %d, want 500", rec.Code)
+	}
+}
+
+func TestHandlerGetPropagatesStoreError(t *testing.T) {
+	t.Parallel()
+
+	mux, store := newMuxWithStore(t)
+	if err := store.Put(resource.KindVPC+"/vpc-1", []byte("not json")); err != nil {
+		t.Fatalf("seed corrupt entry: %v", err)
+	}
+
+	rec := do(t, mux, http.MethodGet, "/api/v1/vpc/vpc-1", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("get status = %d, want 500", rec.Code)
+	}
+}
+
+func TestHandlerPutPropagatesExistingGetStoreError(t *testing.T) {
+	t.Parallel()
+
+	mux, store := newMuxWithStore(t)
+	if err := store.Put(resource.KindVPC+"/vpc-1", []byte("not json")); err != nil {
+		t.Fatalf("seed corrupt entry: %v", err)
+	}
+
+	in := resource.VPC{Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}
+	rec := do(t, mux, http.MethodPut, "/api/v1/vpc/vpc-1", in)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("put status = %d, want 500", rec.Code)
+	}
+}
+
+func TestHandlerPutPropagatesCreateStoreError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := state.NewFileStore(dir)
+	reg := registry.New[resource.VPCSpec, resource.VPCStatus](store, resource.KindVPC)
+	mux := http.NewServeMux()
+	handler.New(reg, resource.KindVPC).Register(mux, "/api/v1")
+
+	// Pre-create the kind directory, then strip write access from it so a
+	// brand-new Put (which needs to create a temp file inside it) fails with
+	// something other than a decode or validation error.
+	vpcDir := filepath.Join(dir, resource.KindVPC)
+	if err := os.MkdirAll(vpcDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(vpcDir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(vpcDir, 0o755) })
+
+	in := resource.VPC{Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}
+	rec := do(t, mux, http.MethodPut, "/api/v1/vpc/vpc-1", in)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("put status = %d, want 500", rec.Code)
+	}
+}
+
+func TestHandlerDeleteIsIdempotentForAMissingResource(t *testing.T) {
+	t.Parallel()
+
+	mux, _ := newMux(t)
+	rec := do(t, mux, http.MethodDelete, "/api/v1/vpc/ghost", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", rec.Code)
+	}
+}
+
+func TestHandlerDeletePropagatesGetStoreError(t *testing.T) {
+	t.Parallel()
+
+	mux, store := newMuxWithStore(t)
+	if err := store.Put(resource.KindVPC+"/vpc-1", []byte("not json")); err != nil {
+		t.Fatalf("seed corrupt entry: %v", err)
+	}
+
+	rec := do(t, mux, http.MethodDelete, "/api/v1/vpc/vpc-1", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("delete status = %d, want 500", rec.Code)
+	}
+}
+
+func TestHandlerDeletePropagatesStoreErrorWithoutFinalizers(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := state.NewFileStore(dir)
+	reg := registry.New[resource.VPCSpec, resource.VPCStatus](store, resource.KindVPC)
+	mux := http.NewServeMux()
+	handler.New(reg, resource.KindVPC).Register(mux, "/api/v1")
+
+	if err := reg.Put(&resource.VPC{Metadata: resource.ObjectMeta{UID: "vpc-1"}, Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Removing write access from the directory lets the file stay readable
+	// (so Get still succeeds) while os.Remove fails.
+	vpcDir := filepath.Join(dir, resource.KindVPC)
+	if err := os.Chmod(vpcDir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(vpcDir, 0o755) })
+
+	rec := do(t, mux, http.MethodDelete, "/api/v1/vpc/vpc-1", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("delete status = %d, want 500", rec.Code)
+	}
+}
+
+func TestHandlerDeletePropagatesStoreErrorWithFinalizers(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := state.NewFileStore(dir)
+	reg := registry.New[resource.VPCSpec, resource.VPCStatus](store, resource.KindVPC)
+	mux := http.NewServeMux()
+	handler.New(reg, resource.KindVPC).Register(mux, "/api/v1")
+
+	seed := &resource.VPC{
+		Metadata: resource.ObjectMeta{UID: "vpc-1", Finalizers: []string{resource.VPCFinalizer}},
+		Spec:     resource.VPCSpec{CIDR: "10.0.0.0/16"},
+	}
+	if err := reg.Put(seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// The soft-delete path writes the record back with a DeletionTimestamp;
+	// stripping write access from the directory makes that write fail.
+	vpcDir := filepath.Join(dir, resource.KindVPC)
+	if err := os.Chmod(vpcDir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(vpcDir, 0o755) })
+
+	rec := do(t, mux, http.MethodDelete, "/api/v1/vpc/vpc-1", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("delete status = %d, want 500", rec.Code)
 	}
 }
