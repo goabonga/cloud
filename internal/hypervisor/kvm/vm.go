@@ -59,7 +59,7 @@ func (vm *VM) SetTSSAddr(addr uint64) error {
 // KVM builds alongside the TSS region (KVM_SET_IDENTITY_MAP_ADDR). Must be
 // called before any vCPU is created.
 func (vm *VM) SetIdentityMapAddr(addr uint64) error {
-	if _, err := ioctl(vm.fd(), ioSetIdentityMap, uintptr(unsafe.Pointer(&addr))); err != nil {
+	if _, err := ioctl(vm.fd(), ioSetIdentityMap, uintptr(unsafe.Pointer(&addr))); err != nil { // #nosec G103 -- KVM_SET_IDENTITY_MAP_ADDR takes a pointer to a u64 per the KVM API; no non-unsafe way to pass it through ioctl
 		return fmt.Errorf("kvm: KVM_SET_IDENTITY_MAP_ADDR: %w", err)
 	}
 	return nil
@@ -80,7 +80,7 @@ func (vm *VM) CreateIRQChip() error {
 // (KVM_CREATE_PIT2), requires CreateIRQChip to have been called first.
 func (vm *VM) CreatePIT2(flags uint32) error {
 	cfg := PITConfig{Flags: flags}
-	if _, err := ioctl(vm.fd(), ioCreatePIT2, uintptr(unsafe.Pointer(&cfg))); err != nil {
+	if _, err := ioctl(vm.fd(), ioCreatePIT2, uintptr(unsafe.Pointer(&cfg))); err != nil { // #nosec G103 -- KVM_CREATE_PIT2 takes a pointer to struct kvm_pit_config per the KVM API; no non-unsafe way to pass it through ioctl
 		return fmt.Errorf("kvm: KVM_CREATE_PIT2: %w", err)
 	}
 	return nil
@@ -91,7 +91,7 @@ func (vm *VM) CreatePIT2(flags uint32) error {
 // memory the caller has already allocated (KVM_SET_USER_MEMORY_REGION) —
 // typically an anonymous mmap, whose address becomes region.UserspaceAddr.
 func (vm *VM) SetUserMemoryRegion(region MemoryRegion) error {
-	if _, err := ioctl(vm.fd(), ioSetUserMemRegion, uintptr(unsafe.Pointer(&region))); err != nil {
+	if _, err := ioctl(vm.fd(), ioSetUserMemRegion, uintptr(unsafe.Pointer(&region))); err != nil { // #nosec G103 -- KVM_SET_USER_MEMORY_REGION takes a pointer to struct kvm_userspace_memory_region per the KVM API; no non-unsafe way to pass it through ioctl
 		return fmt.Errorf("kvm: KVM_SET_USER_MEMORY_REGION(slot=%d): %w", region.Slot, err)
 	}
 	return nil
@@ -103,7 +103,7 @@ func (vm *VM) SetUserMemoryRegion(region MemoryRegion) error {
 // single assert.
 func (vm *VM) IRQLine(gsi uint32, level uint32) error {
 	irq := IRQLevel{IRQ: gsi, Level: level}
-	if _, err := ioctl(vm.fd(), ioIRQLine, uintptr(unsafe.Pointer(&irq))); err != nil {
+	if _, err := ioctl(vm.fd(), ioIRQLine, uintptr(unsafe.Pointer(&irq))); err != nil { // #nosec G103 -- KVM_IRQ_LINE takes a pointer to struct kvm_irq_level per the KVM API; no non-unsafe way to pass it through ioctl
 		return fmt.Errorf("kvm: KVM_IRQ_LINE(gsi=%d): %w", gsi, err)
 	}
 	return nil

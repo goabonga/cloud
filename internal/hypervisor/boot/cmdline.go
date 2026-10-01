@@ -23,7 +23,7 @@ func BuildCmdline(s string, kernelMax uint32) ([]byte, error) {
 	if kernelMax < max {
 		max = kernelMax
 	}
-	if uint32(len(s)) >= max {
+	if uint32(len(s)) >= max { // #nosec G115 -- len() is never negative, and a command line long enough to overflow uint32 is not a realistic input
 		return nil, fmt.Errorf("boot: command line is %d bytes, max %d", len(s), max-1)
 	}
 	b := make([]byte, len(s)+1)
@@ -54,11 +54,11 @@ func PlaceInitrd(memSize uint64, initrdLen int, maxAddr uint32) (uint64, error) 
 		ceiling = uint64(maxAddr) + 1
 	}
 
-	if uint64(initrdLen) > ceiling {
+	if uint64(initrdLen) > ceiling { // #nosec G115 -- initrdLen is len() of an already-loaded initrd file, never negative
 		return 0, fmt.Errorf("boot: %d-byte initrd does not fit below 0x%x with %d bytes of memory", initrdLen, maxAddr+1, memSize)
 	}
-	addr := ceiling - uint64(initrdLen)
-	addr &^= 0xfff // page-align down
+	addr := ceiling - uint64(initrdLen) // #nosec G115 -- same bound as above
+	addr &^= 0xfff                      // page-align down
 
 	if addr < KernelLoadAddr {
 		return 0, fmt.Errorf("boot: %d-byte initrd does not fit below 0x%x with %d bytes of memory", initrdLen, maxAddr+1, memSize)

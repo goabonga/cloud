@@ -147,7 +147,7 @@ func BuildMPTable(numCPUs int) ([]byte, error) {
 
 	header := mpcTableHeader{
 		Signature: [4]byte{'P', 'C', 'M', 'P'},
-		Length:    uint16(cfg.Len()),
+		Length:    uint16(cfg.Len()), // #nosec G115 -- cfg holds at most maxMPCPUs fixed-size entries plus a handful of fixed ones, nowhere near uint16's range
 		Spec:      4,
 		OEM:       [8]byte{'G', 'O', 'A', ' ', ' ', ' ', ' ', ' '},
 		ProductID: [12]byte{'g', 'o', '-', 'h', 'y', 'p', 'e', 'r', 'v', 'i', 's', 'r'},
@@ -173,8 +173,8 @@ func BuildMPTable(numCPUs int) ([]byte, error) {
 
 	// PhysPtr (offset 4, 4 bytes) must point at the config table, which
 	// immediately follows the floating pointer in this layout.
-	binary.LittleEndian.PutUint32(result[4:], uint32(MPTableAddr)+uint32(len(fpBytes)))
-	result[10] = checksum8(result[:16]) // offset 10: Checksum (Signature[4], PhysPtr u32, Length u8, Specification u8, then Checksum), covering only the 16-byte floating pointer itself
+	binary.LittleEndian.PutUint32(result[4:], uint32(MPTableAddr)+uint32(len(fpBytes))) // #nosec G115 -- MPTableAddr is a fixed low-memory constant and fpBytes is always exactly 16 bytes (the floating pointer structure)
+	result[10] = checksum8(result[:16])                                                 // offset 10: Checksum (Signature[4], PhysPtr u32, Length u8, Specification u8, then Checksum), covering only the 16-byte floating pointer itself
 
 	return result, nil
 }

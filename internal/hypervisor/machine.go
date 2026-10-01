@@ -135,7 +135,7 @@ func New(cfg Config) (*Machine, error) {
 		return nil, fmt.Errorf("hypervisor: %w", err)
 	}
 
-	m.mem, err = unix.Mmap(-1, 0, int(memSize), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_ANONYMOUS)
+	m.mem, err = unix.Mmap(-1, 0, int(memSize), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_ANONYMOUS) // #nosec G115 -- memSize is cfg.MemoryMB (a small, config-bounded vCPU-memory size in MiB) times 1MiB, nowhere near overflowing int on the only supported arch (amd64, 64-bit int)
 	if err != nil {
 		return nil, fmt.Errorf("hypervisor: mmap %d bytes of guest memory: %w", memSize, err)
 	}
@@ -143,7 +143,7 @@ func New(cfg Config) (*Machine, error) {
 		Slot:          0,
 		GuestPhysAddr: 0,
 		MemorySize:    memSize,
-		UserspaceAddr: uint64(uintptr(unsafe.Pointer(&m.mem[0]))),
+		UserspaceAddr: uint64(uintptr(unsafe.Pointer(&m.mem[0]))), // #nosec G103 -- KVM_SET_USER_MEMORY_REGION requires the host userspace address of the mmap'd guest-memory region; there is no non-unsafe way to obtain it
 	}); err != nil {
 		return nil, fmt.Errorf("hypervisor: %w", err)
 	}
@@ -241,7 +241,7 @@ func (m *Machine) loadGuest(img *boot.Image, initrdData []byte, cmdline string, 
 	if err != nil {
 		return fmt.Errorf("hypervisor: %w", err)
 	}
-	zp, err := img.BuildBootParams(uint32(boot.CmdlineAddr), uint32(initrdAddr), uint32(len(initrdData)), e820)
+	zp, err := img.BuildBootParams(uint32(boot.CmdlineAddr), uint32(initrdAddr), uint32(len(initrdData)), e820) // #nosec G115 -- CmdlineAddr/initrdAddr are low-memory boot-protocol addresses bounded by memSize, and len(initrdData) is bounded by the actual initrd file size; all fit comfortably in uint32 on real guest-memory sizes
 	if err != nil {
 		return fmt.Errorf("hypervisor: %w", err)
 	}

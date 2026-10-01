@@ -42,7 +42,7 @@ func (m *Machine) registerMMIODevice(transport *virtio.Transport, onNotify func(
 	}
 	idx := len(m.mmioDevices)
 	base := boot.MMIOBaseAddr + uint64(idx)*boot.MMIODeviceSize
-	gsi = 16 + uint32(idx)
+	gsi = 16 + uint32(idx) // #nosec G115 -- idx is bounded to [0, maxDevices) by the check above
 	m.mmioDevices = append(m.mmioDevices, &mmioDevice{
 		base: base, size: boot.MMIODeviceSize, transport: transport, gsi: gsi, onNotify: onNotify,
 	})
