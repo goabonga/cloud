@@ -14,7 +14,6 @@ type E820Type uint32
 const (
 	E820TypeRAM   E820Type = 1
 	e820EntrySize          = 20 // addr u64 + size u64 + type u32, packed
-	ebdaStart              = 0x9fc00
 )
 
 // E820Entry mirrors struct boot_e820_entry.
@@ -31,12 +30,13 @@ func (e E820Entry) marshal(b []byte) {
 }
 
 // BuildE820 maps memSize bytes of guest RAM starting at address 0 into the
-// two-region layout minimal x86-64 VMMs conventionally use: [0, 0x9fc00)
+// two-region layout minimal x86-64 VMMs conventionally use: [0, MPTableAddr)
 // (conventional low memory, below the EBDA/VGA/option-ROM area) and
 // [1 MiB, memSize) (where the kernel, initrd and every structure this
-// package builds are actually placed). The [0x9fc00, 1 MiB) gap is left
-// out of the map entirely (implicitly reserved) rather than marked
-// reserved, matching how real BIOS/UEFI E820 maps treat it.
+// package builds are actually placed). The [MPTableAddr, 1 MiB) gap — where
+// mptable.go writes the MP table — is left out of the map entirely
+// (implicitly reserved) rather than marked reserved, matching how real
+// BIOS/UEFI E820 maps treat it.
 //
 // memSize must be greater than KernelLoadAddr (1 MiB) — there is nowhere
 // to put the kernel otherwise.
@@ -45,7 +45,7 @@ func BuildE820(memSize uint64) ([]E820Entry, error) {
 		return nil, fmt.Errorf("boot: %d bytes of memory is not enough to load a kernel at 0x%x", memSize, KernelLoadAddr)
 	}
 	return []E820Entry{
-		{Addr: 0, Size: ebdaStart, Type: E820TypeRAM},
+		{Addr: 0, Size: MPTableAddr, Type: E820TypeRAM},
 		{Addr: KernelLoadAddr, Size: memSize - KernelLoadAddr, Type: E820TypeRAM},
 	}, nil
 }
