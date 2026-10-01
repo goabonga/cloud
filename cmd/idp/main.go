@@ -8,7 +8,10 @@ package main
 import (
 	"crypto/ecdsa"
 	"flag"
+	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -25,19 +28,45 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		log.Fatalf("infra-idp: %v", err)
 	}
 }
 
-func run() error {
-	addr := flag.String("addr", envOr("GOA_IDP_ADDR", ":8081"), "listen address")
-	issuerURL := flag.String("issuer", envOr("GOA_IDP_ISSUER", "http://localhost:8081"), "issuer URL")
-	ttl := flag.Duration("ttl", time.Hour, "token lifetime")
-	stateDir := flag.String("state-dir", envOr("GOA_IDP_STATE_DIR", "./idp-state"), "state directory")
-	stateDSN := flag.String("state-dsn", envOr("GOA_IDP_STATE_DSN", ""), "PostgreSQL DSN (enables the HA backend)")
-	consoleURL := flag.String("console-url", envOr("GOA_WWW_URL", "http://localhost:8088"), "console URL where a human approves a device authorization")
-	flag.Parse()
+// config holds the parsed command-line flags (each defaulting to its
+// environment variable, then a hardcoded fallback).
+type config struct {
+	addr       string
+	issuerURL  string
+	ttl        time.Duration
+	stateDir   string
+	stateDSN   string
+	consoleURL string
+}
+
+// parseFlags parses args (excluding the program name) into a config. It uses
+// a dedicated FlagSet rather than the flag package's global state so it can
+// be exercised with arbitrary args in tests.
+func parseFlags(args []string) (*config, error) {
+	fs := flag.NewFlagSet("infra-idp", flag.ContinueOnError)
+	cfg := &config{}
+	fs.StringVar(&cfg.addr, "addr", envOr("GOA_IDP_ADDR", ":8081"), "listen address")
+	fs.StringVar(&cfg.issuerURL, "issuer", envOr("GOA_IDP_ISSUER", "http://localhost:8081"), "issuer URL")
+	fs.DurationVar(&cfg.ttl, "ttl", time.Hour, "token lifetime")
+	fs.StringVar(&cfg.stateDir, "state-dir", envOr("GOA_IDP_STATE_DIR", "./idp-state"), "state directory")
+	fs.StringVar(&cfg.stateDSN, "state-dsn", envOr("GOA_IDP_STATE_DSN", ""), "PostgreSQL DSN (enables the HA backend)")
+	fs.StringVar(&cfg.consoleURL, "console-url", envOr("GOA_WWW_URL", "http://localhost:8088"), "console URL where a human approves a device authorization")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func run(args []string) error {
+	cfg, err := parseFlags(args)
+	if err != nil {
+		return err
+	}
 
 	key, err := loadOrGenerateKey()
 	if err != nil {
@@ -52,7 +81,7 @@ func run() error {
 		}
 	}
 
-	store, err := state.Open(*stateDir, *stateDSN)
+	store, err := state.Open(cfg.stateDir, cfg.stateDSN)
 	if err != nil {
 		return err
 	}
@@ -62,16 +91,42 @@ func run() error {
 	}
 	accessTokens := accesstoken.NewService(registry.New[resource.AccessTokenSpec, resource.AccessTokenStatus](store, resource.KindAccessToken), users)
 
-	server := idp.NewServer(idp.NewIssuer(key, *issuerURL, *ttl), clients, users, accessTokens, &key.PublicKey, *issuerURL, *consoleURL)
+	server := idp.NewServer(idp.NewIssuer(key, cfg.issuerURL, cfg.ttl), clients, users, accessTokens, &key.PublicKey, cfg.issuerURL, cfg.consoleURL)
 
-	log.Printf("%s listening on %s (issuer %s)", meta.Line("infra-idp", Version), *addr, *issuerURL)
-	pub, err := idp.MarshalPublicKeyPEM(&key.PublicKey)
+	log.Printf("%s listening on %s (issuer %s)", meta.Line("infra-idp", Version), cfg.addr, cfg.issuerURL)
+	pub, err := marshalPublicKeyPEM(&key.PublicKey)
 	if err != nil {
 		return err
 	}
 	log.Printf("infra-idp: verification public key:\n%s", pub)
 
-	return server.ListenAndServe(*addr)
+	return serve(server, cfg.addr)
+}
+
+// netListen is net.Listen, overridable in tests so they can observe the
+// listener a successful serve call creates.
+var netListen = net.Listen
+
+// marshalPublicKeyPEM is idp.MarshalPublicKeyPEM, overridable in tests to
+// exercise run's error handling around it without a real key that can fail
+// to marshal.
+var marshalPublicKeyPEM = idp.MarshalPublicKeyPEM
+
+// serve listens on addr and serves the IdP until the listener errors or is
+// closed. Split out from serveListener so a test can inject its own
+// net.Listener (e.g. bound to an ephemeral port) instead of a fixed address.
+func serve(server *idp.Server, addr string) error {
+	ln, err := netListen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return serveListener(server, ln)
+}
+
+// serveListener runs server's handler on ln until serving stops.
+func serveListener(server *idp.Server, ln net.Listener) error {
+	httpServer := &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	return httpServer.Serve(ln)
 }
 
 // loadOrGenerateKey reads the signing key from GOA_IDP_KEY (PEM) or generates an
@@ -101,7 +156,7 @@ func bootstrapAdmin(users *identity.Service) error {
 	}
 	username, password, ok := strings.Cut(spec, ":")
 	if !ok || username == "" || password == "" {
-		log.Fatal("infra-idp: GOA_IDP_BOOTSTRAP_ADMIN must be \"username:password\"")
+		return fmt.Errorf("infra-idp: GOA_IDP_BOOTSTRAP_ADMIN must be \"username:password\"")
 	}
 	if _, err := users.Put(username, resource.UserSpec{Username: username, Password: password, Roles: []string{handler.AdminRole}}); err != nil {
 		return err
