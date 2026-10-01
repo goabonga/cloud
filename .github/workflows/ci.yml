@@ -1060,44 +1060,55 @@ jobs:
           body: Packaged the chart as artifact `infra-chart`.
 
   # ---------------------------------------------------------------------
-  # End-to-end and DAST. Both bring the control plane up on kind through the
-  # Helm chart, so they exercise what an operator installs rather than a
-  # bespoke test rig. Each job builds its own cluster: a shared one would make
-  # a ZAP failure and an e2e failure indistinguishable, and the runners are
-  # parallel anyway.
+  # End-to-end and DAST. Both bring the control plane up from source as plain
+  # processes against PostgreSQL - the same five binaries `deploy/ansible`
+  # installs as .debs, not a cluster nothing in this repo's own install path
+  # uses. Each job starts its own stack: a shared one would make a ZAP failure
+  # and an e2e failure indistinguishable, and the runners are parallel anyway.
   # ---------------------------------------------------------------------
 
   e2e:
     name: e2e
-    needs: [detect, grype, chart-package]
+    needs: detect
     if: >-
       !cancelled() && !failure()
       && needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: infra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/stack-up
         with:
-          fetch-depth: 0
-      - uses: ./.github/actions/e2e-stack
+          postgres-dsn: postgres://postgres:postgres@localhost:5432/infra?sslmode=disable
       - name: Run the end-to-end suite
         run: test/e2e/smoke.sh
-      # e2e-stack dumps on its own failure; this covers a failure of the suite
+      # stack-up dumps on its own failure; this covers a failure of the suite
       # itself, which runs after the stack is up.
-      - name: Dump cluster state on failure
+      - name: Dump logs on failure
         if: failure()
-        run: |
-          kubectl -n infra get pods -o wide || true
-          kubectl -n infra logs -l app.kubernetes.io/part-of=infra \
-            --tail=200 --all-containers || true
+        run: cat /tmp/stack-logs/*.log || true
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
         with:
           title: e2e
           body: |
-            `charts/infra` deployed to kind against PostgreSQL, then
+            infra-api, infra-controller-manager, infra-idp, infra-exporter and
+            infra-www built from source and run against PostgreSQL, then
             `test/e2e/smoke.sh` over the API, identity provider, exporter and
             dashboard.
 
@@ -1106,7 +1117,7 @@ jobs:
     needs: [detect, e2e]
     # has_package_changes is repeated from `e2e` on purpose: a skipped `needs`
     # does not skip the dependent job under `!cancelled() && !failure()`, so
-    # without this a docs-only push would build two kind clusters to scan a
+    # without this a docs-only push would stand up two stacks to scan a
     # control plane nothing had changed.
     if: >-
       !cancelled() && !failure()
@@ -1114,6 +1125,19 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: infra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     strategy:
       fail-fast: false
       matrix:
@@ -1124,9 +1148,9 @@ jobs:
             port: 8088
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/stack-up
         with:
-          fetch-depth: 0
-      - uses: ./.github/actions/e2e-stack
+          postgres-dsn: postgres://postgres:postgres@localhost:5432/infra?sslmode=disable
       - uses: ./.github/actions/owasp-scan
         with:
           target: http://127.0.0.1:${{ matrix.port }}
