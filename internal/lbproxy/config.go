@@ -60,6 +60,9 @@ type Listener struct {
 	Certificates       []Certificate `json:"certificates,omitempty"`
 	DefaultTargetGroup string        `json:"defaultTargetGroup"`
 	Rules              []Rule        `json:"rules,omitempty"`
+	// Egress is what an egress listener lets out (see egress.go); egress
+	// listeners have no target group.
+	Egress *EgressPolicy `json:"egress,omitempty"`
 }
 
 // Certificate is a PEM chain, leaf first, and its PEM private key.
@@ -262,6 +265,12 @@ func (l *Listener) validate(groups map[string]*TargetGroup) error {
 	if l.Port < 1 || l.Port > 65535 {
 		return fmt.Errorf("lbproxy: listener %q: port %d is out of range", l.Name, l.Port)
 	}
+	if isEgress(l.Protocol) {
+		return l.validateEgress()
+	}
+	if l.Egress != nil {
+		return fmt.Errorf("lbproxy: listener %q: only egress listeners take an egress policy", l.Name)
+	}
 	// The group protocols each listener protocol and mode can send to.
 	var accepts []string
 	switch {
@@ -321,6 +330,24 @@ func (l *Listener) validate(groups map[string]*TargetGroup) error {
 		if err := check(r.TargetGroup); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (l *Listener) validateEgress() error {
+	if l.Egress == nil {
+		return fmt.Errorf("lbproxy: listener %q: %s needs an egress policy", l.Name, l.Protocol)
+	}
+	if l.TLSMode != "" || len(l.Certificates) > 0 || l.DefaultTargetGroup != "" || len(l.Rules) > 0 {
+		return fmt.Errorf("lbproxy: listener %q: %s takes no tls mode, certificates, target group nor rules", l.Name, l.Protocol)
+	}
+	for _, d := range l.Egress.AllowedDomains {
+		if strings.TrimPrefix(d, "*.") == "" || strings.ContainsAny(d, "/: ") {
+			return fmt.Errorf("lbproxy: listener %q: allowed domain %q is not a domain", l.Name, d)
+		}
+	}
+	if _, err := compilePolicy(l.Egress); err != nil {
+		return fmt.Errorf("lbproxy: listener %q: %w", l.Name, err)
 	}
 	return nil
 }
