@@ -18,5 +18,5 @@ func main() {
 }
 
 func run(stdout io.Writer) {
-	fmt.Fprintln(stdout, meta.Line("infra-container-init", Version))
+	_, _ = fmt.Fprintln(stdout, meta.Line("infra-container-init", Version))
 }
