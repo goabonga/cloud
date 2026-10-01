@@ -6,16 +6,15 @@
 # End-to-end smoke suite against a running control plane.
 #
 # Expects the four listening components reachable on localhost - the CI
-# `e2e-stack` action deploys the Helm chart onto kind and port-forwards them.
-# Nothing here knows it is running under Kubernetes: point the env vars at any
+# `stack-up` action builds them from source and starts them as plain
+# processes. Nothing here is specific to that: point the env vars at any
 # deployment and it works.
 #
 # What this covers that the unit and integration suites cannot: the resource
-# round-trip crosses a real HTTP boundary into a container running as a
-# non-root user with a read-only root filesystem, against PostgreSQL rather
-# than the file store, with the dashboard proxying to the API over a Service.
-# Every one of those is a way for a change that passes `go test` to be broken
-# in the deployment that ships.
+# round-trip crosses a real HTTP boundary, against PostgreSQL rather than the
+# file store, with the dashboard proxying to the API over HTTP. Both are ways
+# for a change that passes `go test` to be broken in the deployment that
+# ships.
 #
 #   API=http://127.0.0.1:8080 test/e2e/smoke.sh
 
