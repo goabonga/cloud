@@ -80,6 +80,38 @@ groups it may send to:
 - **Forwarded headers**: the layer-7 listeners set `X-Forwarded-For`,
   `X-Forwarded-Proto` and `X-Forwarded-Host` and keep the client's `Host`.
 
+## Egress listeners
+
+Three more listeners make infra-lb a forward proxy, letting a network out only
+to allowed destinations. They have no target group: each takes an `egress`
+policy instead.
+
+```json
+{
+  "name": "proxy", "address": "10.20.1.254", "port": 13128, "protocol": "egress-proxy",
+  "egress": {
+    "allowedDomains": ["example.com", "*.ubuntu.com"],
+    "allowedCidrs": ["203.0.113.7"],
+    "resolver": "10.20.0.1:53"
+  }
+}
+```
+
+| Listener | Takes | Sends to |
+| --- | --- | --- |
+| `egress-http` | plain HTTP redirected to it | the host its `Host` header names |
+| `egress-tls` | TLS redirected to it, never decrypted | the host its ClientHello's SNI names, on 443 |
+| `egress-proxy` | an explicit proxy: `CONNECT host:port`, absolute `http://` URLs | that host |
+
+- **Allowed** is a name matching `allowedDomains` (`example.com` exactly,
+  `*.example.com` below it), or an address within `allowedCidrs`. A refused
+  HTTP request or CONNECT gets a 403; a refused TLS connection is closed.
+- **Resolution**: names are resolved through `resolver` (the host's own
+  without it), and only their public addresses are dialed. A name resolving to
+  a private, loopback, link-local, shared or multicast address is refused
+  unless that address is within `allowedCidrs` - and the address checked is
+  the one dialed, so a name cannot be made to point inside between the two.
+
 Defaults: a target's `weight` is 1 and its `id` is `address:port`; a health
 check uses the group's protocol, path `/`, every 5 s with a 2 s timeout, and
 thresholds of 2 and 3. Unknown fields are rejected.
