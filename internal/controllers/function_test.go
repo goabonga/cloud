@@ -6,6 +6,7 @@ package controllers_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ func (env *fnEnv) putFunction(t *testing.T, uid string, policy resource.WarmPool
 	t.Helper()
 	fn := &resource.Function{
 		Metadata: resource.ObjectMeta{UID: uid, Generation: 1},
-		Spec:     resource.FunctionSpec{SubnetID: "sn-1", Image: "example/fn:latest", WarmPool: policy},
+		Spec:     resource.FunctionSpec{SubnetID: "sn-1", Image: "example/fn:latest", Port: 8080, WarmPool: policy},
 	}
 	if err := env.functions.Put(fn); err != nil {
 		t.Fatalf("seed function: %v", err)
@@ -239,6 +240,61 @@ func TestFunctionController_EnforcesMaxWarmCap(t *testing.T) {
 	live := nonDeleting(env.instancesFor(t, "fn-1"))
 	if len(live) != 2 {
 		t.Fatalf("want MaxWarm=2 enforced, got %d live instances", len(live))
+	}
+}
+
+func TestFunctionController_AllocatesDistinctPortsAndMirrorsNodeName(t *testing.T) {
+	t.Parallel()
+	env := newFnEnv(t)
+	env.seedNetwork(t)
+	env.putFunction(t, "fn-1", resource.WarmPoolPolicy{MinWarm: 2})
+
+	env.reconcile(t)
+
+	insts := env.instancesFor(t, "fn-1")
+	if len(insts) != 2 {
+		t.Fatalf("want 2 instances, got %d", len(insts))
+	}
+	if insts[0].Status.Port == 0 || insts[1].Status.Port == 0 {
+		t.Fatalf("want both instances to have an allocated port, got %+v and %+v", insts[0].Status, insts[1].Status)
+	}
+	if insts[0].Status.Port == insts[1].Status.Port {
+		t.Fatalf("want distinct ports, both got %d", insts[0].Status.Port)
+	}
+	for _, inst := range insts {
+		cp, err := env.computes.Get(inst.Spec.ComputeID)
+		if err != nil {
+			t.Fatalf("get compute: %v", err)
+		}
+		want := fmt.Sprintf("%d:8080/tcp", inst.Status.Port)
+		if len(cp.Spec.Ports) != 1 || cp.Spec.Ports[0] != want {
+			t.Fatalf("compute ports = %v, want [%s]", cp.Spec.Ports, want)
+		}
+	}
+
+	// Simulate the scheduler placing the computes onto a node, then the agent
+	// realizing them - both reflected by the compute's own status fields.
+	for _, inst := range insts {
+		cp, err := env.computes.Get(inst.Spec.ComputeID)
+		if err != nil {
+			t.Fatalf("get compute: %v", err)
+		}
+		cp.Status.NodeName = "node-1"
+		cp.Status.SetPhase(resource.PhaseReady, "Running", "instance ready")
+		if err := env.computes.Put(cp); err != nil {
+			t.Fatalf("mark compute ready: %v", err)
+		}
+	}
+	env.reconcile(t)
+
+	for _, inst := range env.instancesFor(t, "fn-1") {
+		updated, err := env.instances.Get(inst.Metadata.UID)
+		if err != nil {
+			t.Fatalf("get instance: %v", err)
+		}
+		if updated.Status.NodeName != "node-1" {
+			t.Fatalf("want NodeName mirrored from the backing compute, got %q", updated.Status.NodeName)
+		}
 	}
 }
 
