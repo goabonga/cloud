@@ -3,6 +3,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Network } from "lucide-react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as generic from "../api/generic";
@@ -11,7 +12,7 @@ import ResourceTable from "./ResourceTable";
 
 vi.mock("../api/generic", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/generic")>();
-  return { ...actual, listResources: vi.fn(), createResource: vi.fn(), deleteResource: vi.fn() };
+  return { ...actual, listResources: vi.fn(), deleteResource: vi.fn() };
 });
 
 const vpcDef: ResourceDef = {
@@ -29,6 +30,18 @@ function resource(uid: string, cidr: string, phase = "Ready"): generic.GenericRe
   return { metadata: { uid, generation: 1, createdAt: "" }, spec: { cidr }, status: { phase } };
 }
 
+function renderTable() {
+  return render(
+    <MemoryRouter initialEntries={["/vpc"]}>
+      <Routes>
+        <Route path="/:kind" element={<ResourceTable def={vpcDef} />} />
+        <Route path="/:kind/new" element={<div>create page</div>} />
+        <Route path="/:kind/:uid/edit" element={<div>edit page</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
 describe("ResourceTable", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -37,7 +50,7 @@ describe("ResourceTable", () => {
   it("lists rows for the given kind", async () => {
     vi.mocked(generic.listResources).mockResolvedValue([resource("vpc-a", "10.0.0.0/16"), resource("vpc-b", "10.1.0.0/16")]);
 
-    render(<ResourceTable def={vpcDef} />);
+    renderTable();
 
     expect(generic.listResources).toHaveBeenCalledWith("vpc");
     await waitFor(() => screen.getByText("vpc-a"));
@@ -48,7 +61,7 @@ describe("ResourceTable", () => {
   it("filters rows via the search box", async () => {
     vi.mocked(generic.listResources).mockResolvedValue([resource("vpc-a", "10.0.0.0/16"), resource("vpc-b", "10.1.0.0/16")]);
 
-    render(<ResourceTable def={vpcDef} />);
+    renderTable();
     await waitFor(() => screen.getByText("vpc-a"));
 
     fireEvent.change(screen.getByPlaceholderText("Search vpcs…"), { target: { value: "vpc-b" } });
@@ -61,7 +74,7 @@ describe("ResourceTable", () => {
     const items = Array.from({ length: 12 }, (_, i) => resource(`vpc-${i}`, "10.0.0.0/16"));
     vi.mocked(generic.listResources).mockResolvedValue(items);
 
-    render(<ResourceTable def={vpcDef} />);
+    renderTable();
     await waitFor(() => screen.getByText("vpc-0"));
 
     screen.getByText("Page 1 of 2");
@@ -72,18 +85,26 @@ describe("ResourceTable", () => {
     screen.getByText("vpc-11");
   });
 
-  it("creates a resource from the UID + spec form", async () => {
+  it("navigates to the create page", async () => {
     vi.mocked(generic.listResources).mockResolvedValue([]);
-    vi.mocked(generic.createResource).mockResolvedValue(resource("vpc-new", "10.2.0.0/16"));
 
-    render(<ResourceTable def={vpcDef} />);
+    renderTable();
     await waitFor(() => expect(generic.listResources).toHaveBeenCalled());
 
-    fireEvent.change(screen.getByLabelText("UID"), { target: { value: "vpc-new" } });
-    fireEvent.change(screen.getByLabelText("Spec (JSON)"), { target: { value: '{"cidr":"10.2.0.0/16"}' } });
-    fireEvent.click(screen.getByText("Create"));
+    fireEvent.click(screen.getByText("Create vpc"));
 
-    await waitFor(() => expect(generic.createResource).toHaveBeenCalledWith("vpc", "vpc-new", { cidr: "10.2.0.0/16" }));
+    await waitFor(() => screen.getByText("create page"));
+  });
+
+  it("navigates to the edit page for a row", async () => {
+    vi.mocked(generic.listResources).mockResolvedValue([resource("vpc-a", "10.0.0.0/16")]);
+
+    renderTable();
+    await waitFor(() => screen.getByText("vpc-a"));
+
+    fireEvent.click(screen.getByText("Edit"));
+
+    await waitFor(() => screen.getByText("edit page"));
   });
 
   it("deletes a resource after confirmation", async () => {
@@ -91,7 +112,7 @@ describe("ResourceTable", () => {
     vi.mocked(generic.deleteResource).mockResolvedValue(undefined);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    render(<ResourceTable def={vpcDef} />);
+    renderTable();
     await waitFor(() => screen.getByText("vpc-a"));
 
     fireEvent.click(screen.getByText("Delete"));
@@ -103,7 +124,7 @@ describe("ResourceTable", () => {
     vi.mocked(generic.listResources).mockResolvedValue([resource("vpc-a", "10.0.0.0/16")]);
     vi.spyOn(window, "confirm").mockReturnValue(false);
 
-    render(<ResourceTable def={vpcDef} />);
+    renderTable();
     await waitFor(() => screen.getByText("vpc-a"));
 
     fireEvent.click(screen.getByText("Delete"));
