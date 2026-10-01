@@ -36,7 +36,6 @@ const (
 	regQueueNumMax       = 0x034 // R
 	regQueueNum          = 0x038 // W
 	regQueueReady        = 0x044 // RW
-	regQueueNotify       = 0x050 // W — handled by the caller (console.go-style dispatch), not Transport itself
 	regInterruptStatus   = 0x060 // R
 	regInterruptACK      = 0x064 // W
 	regStatus            = 0x070 // RW; writing 0 resets the device
@@ -51,7 +50,20 @@ const (
 	// ConfigSpaceOffset is where device-specific config (ReadConfig)
 	// starts; registers below it are the transport's own.
 	ConfigSpaceOffset = 0x100
+
+	// QueueNotifyOffset is where a guest write means "check virtqueue
+	// QueueNotifyData(data) for new requests" — the one transport
+	// register Transport itself doesn't handle (see Write's doc
+	// comment): the caller dispatches it to a device, which Transport
+	// has no notion of. Exported so that dispatcher can special-case it.
+	QueueNotifyOffset = 0x050
 )
+
+// QueueNotifyData decodes a QueueNotifyOffset write's payload: the index
+// of the virtqueue the driver wants checked.
+func QueueNotifyData(data []byte) uint32 {
+	return binary.LittleEndian.Uint32(data)
+}
 
 const (
 	magicValue = 0x74726976 // "virt", little-endian
