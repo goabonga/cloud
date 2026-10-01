@@ -35,4 +35,38 @@ underlying kernel resources.
 VPC, subnet, internet gateway, route, peering, security group (+ rule), IP
 address, compute, disk, disk file, DNS zone, DNS record, KMS keyring, KMS key,
 secret (+ version), SSL CA, SSL cert, WAF policy (+ rule), ACL policy (+ rule),
-load balancer (+ backend).
+load balancer (+ backend), load balancer target group (+ target) and listener.
+
+## Defaults
+
+A spec type may fill its own defaults (`Defaulter`). The API applies them
+before validating a write, so the stored spec - and what a client reads back -
+holds the effective values rather than empty fields.
+
+## Layer-7 load balancing
+
+A load balancer's `backend`s balance one port at layer 4. Listeners, target
+groups and targets describe layer-7 balancing on top of it:
+
+- **Target group** (`lb_target_group`) - a pool of targets in a VPC, with the
+  protocol towards them (`http` by default, `https` or `tcp`), their port, and
+  a health check (protocol, path, port, interval, timeout and thresholds, each
+  with a default). With `https`, `backendCaId` names the CA verifying the
+  targets' certificates; empty, the platform's global CAs. Its status lists
+  each target's health as reported by agents.
+- **Target** (`lb_target`) - a compute instance in a group, with an optional
+  port of its own and a weight (1 to 1000, 1 by default).
+- **Listener** (`lb_listener`) - a port of a load balancer and its protocol:
+  - `http`, routed by host and path prefix;
+  - `https`, terminating TLS with its `certificateIds` (picked by SNI) and
+    speaking HTTP to the targets (`terminate`, the default) or new TLS
+    connections (`reencrypt`);
+  - `tls`, passing TLS through untouched and routing on the SNI host only
+    (`passthrough`): the targets hold the certificates;
+  - `tcp`, forwarding connections as they are, without rules.
+
+  Requests no rule matches go to `defaultTargetGroupId`.
+
+The data plane realizing listeners is not implemented yet: the API stores and
+validates these resources, and the Terraform provider manages them, but no
+agent serves them.
