@@ -157,31 +157,10 @@ type FSDiskFileWriter struct{}
 
 // WriteFile implements DiskFileWriter.
 func (FSDiskFileWriter) WriteFile(root, path string, content []byte, mode os.FileMode) (bool, error) {
-	rel := strings.TrimPrefix(filepath.Clean("/"+path), "/")
-	if rel == "" {
-		return false, fmt.Errorf("manager: disk file path %q names the disk's root", path)
-	}
-	dirfd, err := unix.Open(root, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	file, err := openFileBeneath(root, path, unix.O_RDWR|unix.O_CREAT, mode)
 	if err != nil {
-		return false, fmt.Errorf("manager: open mount %s: %w", root, err)
+		return false, err
 	}
-	defer func() { _ = unix.Close(dirfd) }()
-
-	parts := strings.Split(rel, "/")
-	for _, dir := range parts[:len(parts)-1] {
-		next, err := openDirBeneath(dirfd, dir)
-		if err != nil {
-			return false, fmt.Errorf("manager: disk file %s: %w", path, err)
-		}
-		_ = unix.Close(dirfd)
-		dirfd = next
-	}
-
-	fd, err := unix.Openat(dirfd, parts[len(parts)-1], unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(mode.Perm()))
-	if err != nil {
-		return false, fmt.Errorf("manager: disk file %s: %w", path, err)
-	}
-	file := os.NewFile(uintptr(fd), filepath.Join(root, rel))
 	defer func() { _ = file.Close() }()
 
 	// The umask narrows the mode given at creation; set it explicitly.
@@ -202,6 +181,36 @@ func (FSDiskFileWriter) WriteFile(root, path string, content []byte, mode os.Fil
 		return false, fmt.Errorf("manager: disk file %s: write: %w", path, err)
 	}
 	return true, nil
+}
+
+// openFileBeneath opens root/path with flags, creating missing directories
+// along it, and refuses a symlink on any component of the path.
+func openFileBeneath(root, path string, flags int, mode os.FileMode) (*os.File, error) {
+	rel := strings.TrimPrefix(filepath.Clean("/"+path), "/")
+	if rel == "" {
+		return nil, fmt.Errorf("manager: disk file path %q names the disk's root", path)
+	}
+	dirfd, err := unix.Open(root, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("manager: open mount %s: %w", root, err)
+	}
+	defer func() { _ = unix.Close(dirfd) }()
+
+	parts := strings.Split(rel, "/")
+	for _, dir := range parts[:len(parts)-1] {
+		next, err := openDirBeneath(dirfd, dir)
+		if err != nil {
+			return nil, fmt.Errorf("manager: disk file %s: %w", path, err)
+		}
+		_ = unix.Close(dirfd)
+		dirfd = next
+	}
+
+	fd, err := unix.Openat(dirfd, parts[len(parts)-1], flags|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(mode.Perm()))
+	if err != nil {
+		return nil, fmt.Errorf("manager: disk file %s: %w", path, err)
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(root, rel)), nil
 }
 
 // openDirBeneath opens (creating if needed, 0755) the directory name directly
