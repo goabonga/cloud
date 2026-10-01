@@ -32,18 +32,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # multicz is installed with setup-uv directly rather than through
-      # goabonga/multicz-action, which leaves the uv cache on: this repo has
-      # no Python lock file for it to key on, so every job warned that the
-      # cache would never be invalidated.
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          enable-cache: false
-          python-version: "3.12"
-      - name: Install multicz
-        run: uv tool install multicz
-      - name: multicz validate --strict
-        run: multicz validate --strict
+      - uses: ./.github/actions/multicz-validate
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
@@ -237,13 +226,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Check SPDX license headers
-        run: |
-          python scripts/add_license_header.py --path cmd --types go --check
-          python scripts/add_license_header.py --path internal --types go --check
-          python scripts/add_license_header.py --path test --types go --check
-          python scripts/add_license_header.py --path scripts --types py,sh --check
-          python scripts/add_license_header.py --path .github --types yml,yaml --check
+      - uses: ./.github/actions/license-headers
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
@@ -258,13 +241,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: latest
+      - uses: ./.github/actions/golangci-lint
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
