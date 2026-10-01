@@ -5,7 +5,9 @@ package virtio
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
+	"math"
 )
 
 const (
@@ -64,7 +66,7 @@ type Blk struct {
 // GSI, the same role it plays for Net.
 func NewBlk(backend BlockBackend, capacityBytes int64, readonly bool, mem GuestMemory, onInterrupt func()) *Blk {
 	config := make([]byte, 8)
-	binary.LittleEndian.PutUint64(config, uint64(capacityBytes/sectorSize))
+	binary.LittleEndian.PutUint64(config, uint64(capacityBytes/sectorSize)) // #nosec G115 -- capacityBytes is a disk file's Stat().Size(), always non-negative
 
 	b := &Blk{backend: backend, readonly: readonly, mem: mem, onInterrupt: onInterrupt}
 	b.transport = NewTransport(blkDeviceID, 0, 1, 256, config)
@@ -137,7 +139,14 @@ func (b *Blk) handleRequest(chain *Chain) uint32 {
 	}
 	reqType := binary.LittleEndian.Uint32(header.Data[0:4])
 	sector := binary.LittleEndian.Uint64(header.Data[8:16])
-	offset := int64(sector) * sectorSize
+	// sector is guest-controlled (virtio 1.1 §5.2.6.2); reject one that
+	// would overflow int64 once converted to a byte offset rather than
+	// silently wrapping to a negative/bogus offset.
+	if sector > math.MaxInt64/sectorSize {
+		status.Data[0] = blkStatusIOErr
+		return 1 // the status byte itself
+	}
+	offset := int64(sector) * sectorSize // #nosec G115 -- bounded by the check above
 
 	statusCode, written := b.execute(reqType, offset, data)
 	status.Data[0] = statusCode
@@ -149,9 +158,9 @@ func (b *Blk) execute(reqType uint32, offset int64, data []Segment) (statusCode 
 	case blkTypeIn:
 		for _, s := range data {
 			n, err := b.backend.ReadAt(s.Data, offset)
-			written += uint32(n)
+			written += uint32(n) // #nosec G115 -- n is bounded by len(s.Data), itself a driver-allocated descriptor buffer (realistically well under 4GiB), never negative
 			offset += int64(n)
-			if err != nil && err != io.EOF {
+			if err != nil && !errors.Is(err, io.EOF) {
 				return blkStatusIOErr, written
 			}
 		}

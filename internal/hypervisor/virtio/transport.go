@@ -258,7 +258,11 @@ func (t *Transport) Write(offset uint64, data []byte) {
 	case regQueueSel:
 		t.queueSel = v
 	case regQueueNum:
-		if q := t.selectedQueue(); q != nil {
+		// A driver writing 0 or more than the advertised QueueNumMax is a
+		// spec violation (virtio 1.1 §4.2.2.3); ignored rather than stored,
+		// so a later NewVirtQueue never sees a size that over/underflows
+		// uint16 or divides-by-zero on vq.size.
+		if q := t.selectedQueue(); q != nil && v > 0 && v <= t.queueMaxSize {
 			q.Size = v
 		}
 	case regQueueReady:
