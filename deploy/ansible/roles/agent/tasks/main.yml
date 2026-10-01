@@ -44,6 +44,13 @@
   ansible.builtin.apt:
     deb: "/tmp/{{ item }}.deb"
   loop: "{{ agent_packages }}"
+  # A same-content config task further down is what normally notifies these,
+  # but a .deb install changes the binary a running service already loaded
+  # into memory regardless of whether its config did - so this notifies both
+  # unconditionally rather than relying on that coincidence.
+  notify:
+    - Restart infra-agent
+    - Restart infra-controller-manager
 
 - name: Ensure the infra-agent drop-in directory exists
   ansible.builtin.file:
