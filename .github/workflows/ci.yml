@@ -447,6 +447,16 @@ jobs:
           - terraform-provider-infra
           - infra-www
     steps:
+      # archlinux:base-devel ships no git (it is not actually part of the
+      # base-devel group, despite the name). Must run BEFORE checkout, not
+      # just before bump-preview: without git on PATH yet, checkout falls
+      # back to downloading a plain tarball over the GitHub REST API - no
+      # .git directory at all - and installing git afterwards would not
+      # retroactively give multicz (which needs real tag/log history) a
+      # repository to read.
+      - name: Install git
+        shell: bash
+        run: pacman -Sy --noconfirm --needed git
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
