@@ -72,6 +72,9 @@ type ObjectMeta struct {
 	// with status.observedGeneration to detect drift.
 	Generation int64 `json:"generation"`
 
+	// ResourceVersion identifies the stored revision for optimistic concurrency.
+	ResourceVersion string `json:"resourceVersion,omitempty"`
+
 	// DeletionTimestamp is set when a delete is requested. The resource stays
 	// in the store until all finalizers are removed.
 	DeletionTimestamp *time.Time `json:"deletionTimestamp,omitempty"`

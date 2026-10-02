@@ -80,6 +80,9 @@ func putVPC(t *testing.T, reg *manager.VPCRegistry, uid string, deleting bool) {
 		now := time.Now()
 		vpc.Metadata.DeletionTimestamp = &now
 	}
+	if old, err := reg.Get(uid); err == nil {
+		vpc.Metadata.ResourceVersion = old.Metadata.ResourceVersion
+	}
 	if err := reg.Put(vpc); err != nil {
 		t.Fatalf("seed vpc %s: %v", uid, err)
 	}

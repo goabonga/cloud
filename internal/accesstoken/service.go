@@ -60,6 +60,7 @@ func (s *Service) Put(uid, ownerUID string, spec resource.AccessTokenSpec) (*res
 	var plaintext string
 	switch err {
 	case nil:
+		at.Metadata.ResourceVersion = existing.Metadata.ResourceVersion
 		at.Metadata.CreatedAt = existing.Metadata.CreatedAt
 		at.Metadata.Generation = existing.Metadata.Generation + 1
 		at.Status = existing.Status

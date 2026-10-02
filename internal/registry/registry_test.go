@@ -157,7 +157,7 @@ func TestRegistryTryUpdateLosesRaceOnStaleRead(t *testing.T) {
 		if first {
 			first = false
 			if err := r.Put(&resource.Resource[vpcSpec, vpcStatus]{
-				Metadata: resource.ObjectMeta{UID: "vpc-1"},
+				Metadata: resource.ObjectMeta{UID: "vpc-1", ResourceVersion: res.Metadata.ResourceVersion},
 				Spec:     vpcSpec{CIDR: "10.0.0.0/16"},
 				Status:   vpcStatus{AssignedCIDR: "raced-in-first"},
 			}); err != nil {
