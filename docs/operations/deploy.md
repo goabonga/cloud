@@ -20,8 +20,8 @@ make deb VERSION=1.0.0           # all components, amd64
 ARCH=arm64 ./packaging/build-debs.sh 1.0.0 infra-api   # one component, arm64
 ```
 
-Releases attach the `.deb` packages (amd64 and arm64) to each component's GitHub
-Release alongside the raw binaries and checksums. Installing a service package
+The CI release publishes raw binaries and checksums. Build the `.deb` locally when
+a package deployment is required. Installing a service package
 drops the binary in `/usr/local/bin` and a systemd unit under
 `/lib/systemd/system`:
 
