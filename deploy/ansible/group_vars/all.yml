@@ -74,8 +74,8 @@ edge_asn: 65010
 
 # Micro-VMs under infra-hypervisor on the agent hosts (role: microvm),
 # shipped inside the infra-agent package itself - the lab's own base_image
-# converted to raw once per agent, consumed by the Terraform demo's
-# infra_microvm resources (see terraform/main.tf).
+# converted to raw once per agent, consumed by the Terraform examples'
+# infra_microvm resources (see terraform/vm/main.tf and terraform/k8s/main.tf).
 microvm_images_dir: "/var/lib/infra-microvm-images"
 microvm_base_image_name: "noble-base.raw"
 
@@ -154,9 +154,12 @@ grafana_admin_user: "admin"
 grafana_admin_password: "infra"
 
 # Terraform tooling on the control host (tooling role). The provider binary is
-# built beforehand with `make build-provider`; the demo in terraform/ is copied
-# into the lab user's home, next to the IdP client secret it logs in with.
+# built beforehand with `make build-provider`; the examples in terraform/ are
+# copied into the lab user's home, next to the IdP client secret it logs in
+# with. Each example is its own root module (see terraform/README.md) with
+# its own state, so the lab user picks one to `cd` into and `apply`.
 provider_binary: "{{ playbook_dir }}/../../build/terraform-provider-infra"
 tooling_provider_dir: "/home/{{ vm_user }}/.terraform.d/plugins/registry.terraform.io/goabonga/infra/{{ version }}/linux_{{ deb_arch }}"
 tooling_workspace: "/home/{{ vm_user }}/infra-demo"
 tooling_config_dir: "/home/{{ vm_user }}/.config/infra"
+tooling_examples: ["compute", "faas", "vm", "k8s"]

@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Chris <goabonga@pm.me>
 ---
-# Terraform, the locally built provider and a ready-to-run demo workspace for
-# the lab user on the control host, so the stack can be exercised end to end
-# from inside the lab: ssh in, `infra-login`, `terraform apply`.
+# Terraform, the locally built provider and 4 ready-to-run example workspaces
+# for the lab user on the control host, so the stack can be exercised end to
+# end from inside the lab: ssh in, `infra-login`, cd into one, `terraform
+# apply` - see terraform/README.md for what each one provisions.
 - name: Check the provider binary was built
   ansible.builtin.stat:
     path: "{{ provider_binary }}"
@@ -61,17 +62,33 @@
     - "{{ tooling_workspace }}"
     - "{{ tooling_config_dir }}"
 
-- name: Copy the Terraform demo into the workspace
+- name: Copy get-token.sh into the workspace
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/terraform/{{ item.name }}"
-    dest: "{{ tooling_workspace }}/{{ item.name }}"
+    src: "{{ playbook_dir }}/terraform/get-token.sh"
+    dest: "{{ tooling_workspace }}/get-token.sh"
     owner: "{{ vm_user }}"
     group: "{{ vm_user }}"
-    mode: "{{ item.mode }}"
-  loop:
-    - { name: main.tf, mode: "0644" }
-    - { name: provider.tf, mode: "0644" }
-    - { name: get-token.sh, mode: "0755" }
+    mode: "0755"
+
+# Each example (compute, faas, vm, k8s - see terraform/README.md) is its own
+# root module, with its own state, so applying one never touches another.
+- name: Create each example's directory in the workspace
+  ansible.builtin.file:
+    path: "{{ tooling_workspace }}/{{ item }}"
+    state: directory
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0700"
+  loop: "{{ tooling_examples }}"
+
+- name: Copy each example into its workspace directory
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/terraform/{{ item.0 }}/{{ item.1 }}"
+    dest: "{{ tooling_workspace }}/{{ item.0 }}/{{ item.1 }}"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0644"
+  loop: "{{ tooling_examples | product(['main.tf', 'provider.tf']) }}"
 
 - name: Deploy the Terraform IdP client secret
   ansible.builtin.copy:
@@ -94,34 +111,11 @@
     path: "/home/{{ vm_user }}/.bashrc"
     line: "[ -f {{ tooling_config_dir }}/env.sh ] && . {{ tooling_config_dir }}/env.sh"
 
-# Proves the mirror layout: init fails if Terraform cannot resolve the provider.
-# .terraform.lock.hcl pins the checksum of the provider binary installed at the
-# first init, so after a rebuild of the provider init fails on a mismatch, and
-# -upgrade does not help for the same version. The lock only covers this local
-# provider, so on failure it is dropped with the cached copy and init runs again.
-- name: Initialise the demo workspace
-  block:
-    - name: Initialise the demo workspace
-      ansible.builtin.command: terraform init -input=false -no-color
-      args:
-        chdir: "{{ tooling_workspace }}"
-      become: true
-      become_user: "{{ vm_user }}"
-      register: tooling_tf_init
-      changed_when: "'Installing goabonga/infra' in tooling_tf_init.stdout"
-  rescue:
-    - name: Drop the stale provider lock and cache
-      ansible.builtin.file:
-        path: "{{ tooling_workspace }}/{{ item }}"
-        state: absent
-      loop:
-        - .terraform.lock.hcl
-        - .terraform/providers
-
-    - name: Initialise the demo workspace against the current provider
-      ansible.builtin.command: terraform init -input=false -no-color
-      args:
-        chdir: "{{ tooling_workspace }}"
-      become: true
-      become_user: "{{ vm_user }}"
-      changed_when: true
+# Each example is initialised on its own (its own state, its own provider
+# lock) - see init-example.yml for why a failure is rescued rather than
+# fatal.
+- name: Initialise each example's workspace
+  ansible.builtin.include_tasks: init-example.yml
+  loop: "{{ tooling_examples }}"
+  loop_control:
+    loop_var: tooling_example
