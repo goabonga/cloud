@@ -42,8 +42,9 @@ func (p *infraProvider) Metadata(_ context.Context, _ provider.MetadataRequest, 
 }
 
 type providerModel struct {
-	Endpoint types.String `tfsdk:"endpoint"`
-	Token    types.String `tfsdk:"token"`
+	Endpoint  types.String `tfsdk:"endpoint"`
+	Token     types.String `tfsdk:"token"`
+	ProjectID types.String `tfsdk:"project_id"`
 }
 
 func (p *infraProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
@@ -54,6 +55,7 @@ func (p *infraProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp
 				Optional:            true,
 				MarkdownDescription: "Base URL of the API (default " + defaultEndpoint + ").",
 			},
+			"project_id": schema.StringAttribute{Optional: true, MarkdownDescription: "Project ID for resources created by this provider. Falls back to GOA_PROJECT_ID."},
 			"token": schema.StringAttribute{
 				Optional:            true,
 				Sensitive:           true,
@@ -77,7 +79,15 @@ func (p *infraProvider) Configure(ctx context.Context, req provider.ConfigureReq
 	if !cfg.Token.IsNull() && cfg.Token.ValueString() != "" {
 		token = cfg.Token.ValueString()
 	}
-	resp.ResourceData = resources.ProviderConfig{Endpoint: endpoint, Token: token}
+	if cfg.ProjectID.IsUnknown() {
+		resp.Diagnostics.AddError("Unknown project", "project_id must be known before the provider is configured.")
+		return
+	}
+	projectID := os.Getenv("GOA_PROJECT_ID")
+	if !cfg.ProjectID.IsNull() && !cfg.ProjectID.IsUnknown() {
+		projectID = cfg.ProjectID.ValueString()
+	}
+	resp.ResourceData = resources.ProviderConfig{Endpoint: endpoint, Token: token, ProjectID: projectID}
 }
 
 func (p *infraProvider) Resources(_ context.Context) []func() resource.Resource {

@@ -6,6 +6,7 @@ package resources
 // ProviderConfig is the data the provider passes to each resource via
 // ConfigureRequest.ProviderData.
 type ProviderConfig struct {
-	Endpoint string
-	Token    string
+	Endpoint  string
+	Token     string
+	ProjectID string
 }

@@ -38,8 +38,9 @@ type resourceDef[M any, S any, ST any] struct {
 }
 
 type genericResource[M any, S any, ST any] struct {
-	def    resourceDef[M, S, ST]
-	client *client.Client[S, ST]
+	def       resourceDef[M, S, ST]
+	client    *client.Client[S, ST]
+	projectID string
 }
 
 // newGeneric builds a Terraform resource from a definition.
@@ -69,6 +70,7 @@ func (r *genericResource[M, S, ST]) Configure(_ context.Context, req resource.Co
 		opts = append(opts, client.WithToken(cfg.Token))
 	}
 	r.client = client.New[S, ST](cfg.Endpoint, r.def.kind, opts...)
+	r.projectID = cfg.ProjectID
 }
 
 func (r *genericResource[M, S, ST]) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -83,7 +85,7 @@ func (r *genericResource[M, S, ST]) Create(ctx context.Context, req resource.Cre
 		return
 	}
 	id := newID(r.def.kind)
-	out, err := r.client.Put(ctx, &infra.Resource[S, ST]{Metadata: infra.ObjectMeta{UID: id}, Spec: spec})
+	out, err := r.client.Put(ctx, &infra.Resource[S, ST]{Metadata: infra.ObjectMeta{UID: id, ProjectID: r.projectID}, Spec: spec})
 	if err != nil {
 		resp.Diagnostics.AddError("Create "+r.def.kind, err.Error())
 		return
@@ -120,7 +122,16 @@ func (r *genericResource[M, S, ST]) Update(ctx context.Context, req resource.Upd
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.Put(ctx, &infra.Resource[S, ST]{Metadata: infra.ObjectMeta{UID: r.def.id(plan)}, Spec: spec})
+	existing, err := r.client.Get(ctx, r.def.id(plan))
+	if err != nil {
+		resp.Diagnostics.AddError("Read before update "+r.def.kind, err.Error())
+		return
+	}
+	if r.projectID != "" && existing.Metadata.ProjectID != r.projectID {
+		resp.Diagnostics.AddError("Project mismatch", "The existing resource belongs to a different project; moving resources is not supported.")
+		return
+	}
+	out, err := r.client.Put(ctx, &infra.Resource[S, ST]{Metadata: existing.Metadata, Spec: spec})
 	if err != nil {
 		resp.Diagnostics.AddError("Update "+r.def.kind, err.Error())
 		return
