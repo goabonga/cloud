@@ -52,9 +52,15 @@ jobs:
             echo "::warning::RELEASE_PAT is not configured; cannot label as a collaborator identity, skipping"
             exit 0
           fi
+          # workflow_run.pull_requests is empty whenever GitHub can no longer
+          # resolve an open PR for the run's head branch - notably once that
+          # PR has already been merged or closed by the time this handler
+          # runs (a `ci` run queued against a PR that auto-merge-signed.yml
+          # has since merged lands exactly here). That is a normal race, not
+          # a configuration error: nothing is left to label.
           if [ -z "$PR_NUMBER" ]; then
-            echo "::error::workflow_run carried no pull request"
-            exit 1
+            echo "workflow_run carried no open pull request (likely already merged/closed); nothing to label"
+            exit 0
           fi
           # gh pr view's author.login comes from the REST/GraphQL API, which
           # renders a bot author as "app/dependabot" - a different string
