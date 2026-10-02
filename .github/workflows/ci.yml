@@ -460,6 +460,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # checkout's own "detected dubious ownership" workaround is scoped to
+      # a temporary HOME it restores afterwards (see its "Temporarily
+      # overriding HOME ... before making global git config changes" log
+      # line), so the safe.directory exception it adds never reaches the
+      # real $HOME subsequent steps run with. multicz's own `git` calls hit
+      # that bare, since nothing else in this container-based job sets it.
+      - name: Trust the checkout for subsequent git commands
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # The .pkg.tar.zst carries the version in its PKGBUILD-rendered
       # filename, so it has to be the version the release will publish.
       - uses: ./.github/actions/bump-preview
