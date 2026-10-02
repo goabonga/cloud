@@ -106,6 +106,12 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           persist-credentials: true
+          # Without this, the checkout persists the default GITHUB_TOKEN, and
+          # a push authenticated with it never triggers further workflow runs
+          # (GitHub's anti-recursion rule) - so `ci.yml` would never re-run on
+          # the rewritten, signed commits below. RELEASE_PAT is a real user
+          # identity, so its push triggers `ci.yml` normally.
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
           path: pr
 
       - name: Configure GPG and git identity from the imported key
