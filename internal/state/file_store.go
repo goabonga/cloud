@@ -10,7 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
+
+	"golang.org/x/sys/unix"
 )
 
 // FileStore implements Store on the local filesystem. Keys map to file paths
@@ -19,7 +20,6 @@ import (
 // validated so they cannot escape baseDir.
 type FileStore struct {
 	baseDir string
-	casMu   sync.Mutex // serializes CompareAndSwap
 }
 
 // NewFileStore returns a file-backed Store rooted at baseDir.
@@ -59,6 +59,10 @@ func (fs *FileStore) Get(key string) ([]byte, error) {
 
 // Put atomically writes value at key, creating parent directories as needed.
 func (fs *FileStore) Put(key string, value []byte) error {
+	return fs.withWriteLock(func() error { return fs.putLocked(key, value) })
+}
+
+func (fs *FileStore) putLocked(key string, value []byte) error {
 	path, err := fs.resolve(key)
 	if err != nil {
 		return err
@@ -84,6 +88,11 @@ func (fs *FileStore) Put(key string, value []byte) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("state: put chmod %q: %w", key, err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("state: sync %q: %w", key, err)
+	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("state: put close %q: %w", key, err)
@@ -92,19 +101,26 @@ func (fs *FileStore) Put(key string, value []byte) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("state: put rename %q: %w", key, err)
 	}
-	return nil
+	return syncDirectory(dir)
 }
 
 // Delete removes the file at key. A missing key is not an error.
 func (fs *FileStore) Delete(key string) error {
+	return fs.withWriteLock(func() error { return fs.deleteLocked(key) })
+}
+
+func (fs *FileStore) deleteLocked(key string) error {
 	path, err := fs.resolve(key)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("state: delete %q: %w", key, err)
 	}
-	return nil
+	return syncDirectory(filepath.Dir(path))
 }
 
 // List returns the regular files directly under prefix as key-value pairs. Keys
@@ -144,23 +160,50 @@ func (fs *FileStore) List(prefix string) ([]KeyValue, error) {
 // CompareAndSwap replaces the value at key with newValue only if the current
 // value equals oldValue (nil oldValue means "expect absent").
 func (fs *FileStore) CompareAndSwap(key string, oldValue, newValue []byte) (bool, error) {
-	fs.casMu.Lock()
-	defer fs.casMu.Unlock()
-
-	current, err := fs.Get(key)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return false, err
-	}
-	if !bytes.Equal(current, oldValue) {
-		return false, nil
-	}
-	if err := fs.Put(key, newValue); err != nil {
-		return false, err
-	}
-	return true, nil
+	var swapped bool
+	err := fs.withWriteLock(func() error {
+		current, err := fs.Get(key)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if (oldValue == nil && !errors.Is(err, ErrNotFound)) || !bytes.Equal(current, oldValue) {
+			return nil
+		}
+		if err := fs.putLocked(key, newValue); err != nil {
+			return err
+		}
+		swapped = true
+		return nil
+	})
+	return swapped, err
 }
 
 // Close is a no-op for the file store; it satisfies the Store interface.
 func (fs *FileStore) Close() error {
 	return nil
+}
+
+// withWriteLock serializes every mutation across store instances and processes.
+func (fs *FileStore) withWriteLock(fn func() error) error {
+	if err := os.MkdirAll(fs.baseDir, 0700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(filepath.Join(fs.baseDir, ".store.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		return err
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+	return fn()
+}
+func syncDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
 }
