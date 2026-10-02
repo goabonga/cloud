@@ -21,7 +21,7 @@ runs:
         python-version: "3.12"
     - name: Install multicz
       shell: bash
-      run: uv tool install multicz
+      run: uv tool install multicz --with multicz-go-deps-plugin
     - name: multicz validate --strict
       shell: bash
       run: multicz validate --strict
