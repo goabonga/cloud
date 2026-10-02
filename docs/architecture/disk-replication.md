@@ -35,16 +35,21 @@ infra-agent (secondary)              infra-agent (primary)
   file before replacing the previous replica. A `.part.version` sidecar pins
   the snapshot; legacy partials, expired snapshots and unsatisfiable ranges
   restart the transfer instead of mixing disk versions.
-- **Auth**: every request but `/ping` is signed with an HMAC-SHA256 over
-  `method\npath\ntimestamp`, keyed by a subkey derived from the cluster's
-  shared `GOA_KMS_KEY` (`crypto.DeriveKey(master, "replication:transport",
-  32)`) - the same pre-shared material every node already holds, rather than
-  a new node-identity/PKI system. A node without `GOA_KMS_KEY` configured
-  runs the transport server off entirely rather than serve unauthenticated.
-  This is plain HTTP, not HTTPS: the signature stops an unkeyed sender from
-  pulling or probing anything, but the data itself is not encrypted in
-  transit. mTLS off the existing `internal/ssl` root CA machinery is a
-  possible later hardening, not required for this foundation.
+- **Transport authentication**: production listeners and clients use HTTPS with
+  TLS 1.3 and mutual certificate verification. `GOA_MANAGEMENT_TLS_CA`,
+  `GOA_MANAGEMENT_TLS_CERT` and `GOA_MANAGEMENT_TLS_KEY` point to a dedicated
+  management CA and node identity. Certificates must include each advertised
+  node address in their subject alternative names. This authority is independent
+  of the tenant/public root; tenant-issued certificates cannot authenticate nodes.
+  Even `/ping` requires a management certificate at the TLS layer. Redirects are
+  rejected and peer names are verified; there is no plaintext downgrade.
+- **Request authentication**: disk requests additionally retain the HMAC-SHA256
+  signature derived from `GOA_KMS_KEY`. Nodes without that key do not start disk
+  replication. With a KMS key, missing management credentials fail startup unless
+  replication is explicitly disabled with `GOA_REPLICATION_DISABLED=1`.
+
+See [deployment operations](../operations/deploy.md#management-transport-tls)
+for provisioning, migration and certificate rotation.
 
 ## Snapshot requirements
 

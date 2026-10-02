@@ -8,11 +8,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"sync"
 
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -53,18 +54,24 @@ type Server struct {
 	mux        *http.ServeMux
 	snapshotMu sync.Mutex
 	clone      func(*os.File, *os.File) error
+	tlsConfig  *tls.Config
 }
 
 // NewServer returns a Server serving disk backing files out of dir (the
 // same directory ExecDiskBackend manages, typically <stateDir>/disks). key
 // authenticates both directions: it must be the same key every other node
 // in the cluster was given.
-func NewServer(dir string, key []byte, nodeID string, logger *slog.Logger) *Server {
+func NewServer(dir string, key []byte, nodeID string, logger *slog.Logger, configs ...*tls.Config) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	s := &Server{dir: dir, key: key, nodeID: nodeID, logger: logger, mux: http.NewServeMux()}
 	s.clone = func(dst, src *os.File) error { return unix.IoctlFileClone(int(dst.Fd()), int(src.Fd())) }
+	if len(configs) > 0 && configs[0] != nil {
+		s.tlsConfig = configs[0].Clone()
+		s.tlsConfig.MinVersion = tls.VersionTLS13
+		s.tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
 	s.routes()
 	return s
 }
@@ -132,9 +139,13 @@ func (s *Server) handlePullDisk(w http.ResponseWriter, r *http.Request) {
 
 // ListenAndServe runs the replication server on addr until ctx is canceled.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
+	if s.tlsConfig == nil {
+		return fmt.Errorf("replication: management TLS credentials required")
+	}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           s.Handler(),
+		TLSConfig:         s.tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	// ctx is awaited below and then Done; the shutdown timeout deliberately
@@ -145,7 +156,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
-	err := srv.ListenAndServe()
+	err := srv.ListenAndServeTLS("", "")
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

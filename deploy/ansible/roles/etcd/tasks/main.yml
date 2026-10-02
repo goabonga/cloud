@@ -23,6 +23,27 @@
     group: etcd
     mode: "0700"
 
+- name: Create the private etcd TLS directory
+  ansible.builtin.file:
+    path: /etc/etcd/tls
+    state: directory
+    owner: etcd
+    group: etcd
+    mode: "0700"
+
+- name: Deploy etcd management credentials
+  ansible.builtin.copy:
+    src: "{{ management_pki_dir }}/{{ item.src }}"
+    dest: "/etc/etcd/tls/{{ item.dest }}"
+    owner: etcd
+    group: etcd
+    mode: "0600"
+  loop:
+    - {src: ca.crt, dest: ca.crt}
+    - {src: '{{ inventory_hostname }}.crt', dest: node.crt}
+    - {src: '{{ inventory_hostname }}.key', dest: node.key}
+  notify: Restart etcd
+
 - name: Download the etcd release tarball
   ansible.builtin.get_url:
     url: "https://github.com/etcd-io/etcd/releases/download/{{ etcd_version }}/etcd-{{ etcd_version }}-linux-{{ deb_arch }}.tar.gz"
@@ -62,7 +83,8 @@
 - name: Wait for every etcd member to be healthy
   ansible.builtin.command: >-
     /usr/local/bin/etcdctl --endpoints={{ state_dsn | regex_replace('^etcd://', '') }}
-    endpoint health
+    --cacert=/etc/etcd/tls/ca.crt --cert=/etc/etcd/tls/node.crt
+    --key=/etc/etcd/tls/node.key endpoint health
   register: etcd_health
   changed_when: false
   retries: 20

@@ -6,6 +6,7 @@ package replication
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -19,29 +20,34 @@ import (
 // Client pulls disk backing files from, and pings, other nodes' replication
 // servers. Requests are signed with key, which must match the target node's
 // Server key.
-//
-// This talks plain HTTP, not HTTPS: no node-to-node TLS/certificate
-// machinery exists anywhere in the codebase to build on (see the
-// disk-replication plan's scope note), and the signature already stops an
-// unkeyed sender from pulling or probing anything. Confidentiality and a
-// stronger identity than "holds the shared key" are a documented later
-// hardening, not required for this foundation.
 type Client struct {
 	key    []byte
 	nodeID string
 	http   *http.Client
+	scheme string
 }
 
 // NewClient returns a Client identifying itself as nodeID and signing every
 // request with key.
-func NewClient(key []byte, nodeID string) *Client {
-	return &Client{key: key, nodeID: nodeID, http: &http.Client{Timeout: 30 * time.Second}}
+func NewClient(key []byte, nodeID string, configs ...*tls.Config) *Client {
+	c := &Client{key: key, nodeID: nodeID, scheme: "http", http: &http.Client{Timeout: 30 * time.Second}}
+	if len(configs) > 0 && configs[0] != nil {
+		cfg := configs[0].Clone()
+		cfg.MinVersion = tls.VersionTLS13
+		c.scheme = "https"
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = cfg
+		transport.ResponseHeaderTimeout = 30 * time.Second
+		c.http = &http.Client{Transport: transport, Timeout: 15 * time.Minute}
+	}
+	c.http.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return c
 }
 
 // Ping reports whether addr's replication server answers. A nil error means
 // reachable; any error (including a non-200 response) means not.
 func (c *Client) Ping(ctx context.Context, addr string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/ping", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.scheme+"://"+addr+"/ping", nil)
 	if err != nil {
 		return err
 	}
@@ -68,7 +74,7 @@ func (c *Client) PullDisk(ctx context.Context, addr, uid, dest string) error {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/disks/"+uid, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.scheme+"://"+addr+"/disks/"+uid, nil)
 	if err != nil {
 		return err
 	}

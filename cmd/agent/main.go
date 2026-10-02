@@ -28,6 +28,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/replication"
 	"github.com/goabonga/infrastructure/internal/ssl"
 	"github.com/goabonga/infrastructure/internal/state"
+	"github.com/goabonga/infrastructure/internal/transporttls"
 )
 
 func main() {
@@ -122,12 +123,19 @@ func run() error {
 	// has; without GOA_KMS_KEY there is no key to authenticate with, so it
 	// stays off rather than serving (or pulling) unauthenticated.
 	var asyncReplicaReconciler *manager.AsyncDiskReplicaReconciler
-	if master != nil {
+	if master != nil && os.Getenv("GOA_REPLICATION_DISABLED") != "1" {
+		managementTLS, err := transporttls.FromEnvironment()
+		if err != nil {
+			return err
+		}
+		if managementTLS == nil {
+			return fmt.Errorf("replication requires management TLS credentials; set GOA_REPLICATION_DISABLED=1 to disable it")
+		}
 		repKey, err := crypto.DeriveKey(master, "replication:transport", 32)
 		if err != nil {
 			return err
 		}
-		repServer := replication.NewServer(filepath.Join(*stateDir, "disks"), repKey, nodeID, logger)
+		repServer := replication.NewServer(filepath.Join(*stateDir, "disks"), repKey, nodeID, logger, managementTLS)
 		go func() {
 			if err := repServer.ListenAndServe(ctx, *replicationAddr); err != nil {
 				logger.Error("replication server stopped", "err", err)
@@ -137,11 +145,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("replication-addr: %w", err)
 		}
-		repClient := replication.NewClient(repKey, nodeID)
+		repClient := replication.NewClient(repKey, nodeID, managementTLS)
 		asyncReplicaReconciler = manager.NewAsyncDiskReplicaReconciler(
 			asyncReplicas, disks, nodes, repClient, filepath.Join(*stateDir, "disk-replicas"), repPort, nodeID)
 	} else {
-		logger.Warn("GOA_KMS_KEY not set: disk-replication transport disabled")
+		logger.Warn("disk-replication transport disabled")
 	}
 
 	passes := []manager.ReconcilePass{

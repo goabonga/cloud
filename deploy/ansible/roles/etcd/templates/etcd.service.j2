@@ -12,11 +12,20 @@ Type=notify
 ExecStart=/usr/local/bin/etcd \
   --name {{ inventory_hostname }} \
   --data-dir {{ etcd_data_dir }} \
-  --listen-client-urls http://0.0.0.0:{{ etcd_client_port }} \
-  --advertise-client-urls http://{{ ansible_host }}:{{ etcd_client_port }} \
-  --listen-peer-urls http://{{ ansible_host }}:{{ etcd_peer_port }} \
-  --initial-advertise-peer-urls http://{{ ansible_host }}:{{ etcd_peer_port }} \
+  --listen-client-urls https://0.0.0.0:{{ etcd_client_port }} \
+  --advertise-client-urls https://{{ ansible_host }}:{{ etcd_client_port }} \
+  --listen-peer-urls https://{{ ansible_host }}:{{ etcd_peer_port }} \
+  --initial-advertise-peer-urls https://{{ ansible_host }}:{{ etcd_peer_port }} \
   --initial-cluster {{ etcd_initial_cluster }} \
+  --cert-file /etc/etcd/tls/node.crt \
+  --key-file /etc/etcd/tls/node.key \
+  --trusted-ca-file /etc/etcd/tls/ca.crt \
+  --client-cert-auth \
+  --peer-cert-file /etc/etcd/tls/node.crt \
+  --peer-key-file /etc/etcd/tls/node.key \
+  --peer-trusted-ca-file /etc/etcd/tls/ca.crt \
+  --peer-client-cert-auth \
+  --tls-min-version TLS1.3 \
   --initial-cluster-state new \
   --initial-cluster-token infra-etcd
 Restart=on-failure
