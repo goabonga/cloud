@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Chris <goabonga@pm.me>
+
 """Reject a green integration run that omitted required kernel tests."""
 import json
 import sys
