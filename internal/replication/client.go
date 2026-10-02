@@ -5,10 +5,14 @@ package replication
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -68,7 +72,12 @@ func (c *Client) PullDisk(ctx context.Context, addr, uid, dest string) error {
 	if err != nil {
 		return err
 	}
-	resuming := have > 0
+	version, _ := os.ReadFile(part + ".version") // #nosec G304 -- caller-owned transfer metadata
+	digest := strings.TrimSpace(string(version))
+	resuming := have > 0 && validDigest.MatchString(digest)
+	if resuming {
+		req.URL.RawQuery = "version=" + digest
+	}
 	if resuming {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", have))
 	}
@@ -84,11 +93,29 @@ func (c *Client) PullDisk(ctx context.Context, addr, uid, dest string) error {
 	case http.StatusOK:
 		resuming = false // the server ignored our Range; start over
 	case http.StatusPartialContent:
-		// continuing as requested
+		if !resuming {
+			return fmt.Errorf("replication: unexpected partial response")
+		}
+	case http.StatusNotFound, http.StatusRequestedRangeNotSatisfiable:
+		if resuming {
+			if err := os.Remove(part + ".version"); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			_ = resp.Body.Close()
+			return c.PullDisk(ctx, addr, uid, dest)
+		}
+		return fmt.Errorf("replication: disk not found")
 	default:
 		return fmt.Errorf("replication: pull %s/%s: status %d", addr, uid, resp.StatusCode)
 	}
 
+	expected := resp.Header.Get("X-Infra-SHA256")
+	if !validDigest.MatchString(expected) || (resuming && expected != digest) {
+		return fmt.Errorf("replication: invalid or changed snapshot digest")
+	}
+	if err := os.WriteFile(part+".version", []byte(expected), 0600); err != nil {
+		return err
+	}
 	flags := os.O_CREATE | os.O_WRONLY
 	if resuming {
 		flags |= os.O_APPEND
@@ -103,10 +130,37 @@ func (c *Client) PullDisk(ctx context.Context, addr, uid, dest string) error {
 		_ = f.Close()
 		return fmt.Errorf("replication: write %s: %w", part, err)
 	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(part, dest)
+	completed, err := os.Open(part) // #nosec G304 -- caller-owned transfer path
+	if err != nil {
+		return err
+	}
+	hash := sha256.New()
+	_, hashErr := io.Copy(hash, completed)
+	_ = completed.Close()
+	if hashErr != nil {
+		return hashErr
+	}
+	if hex.EncodeToString(hash.Sum(nil)) != expected {
+		_ = os.Remove(part + ".version")
+		return fmt.Errorf("replication: snapshot checksum mismatch")
+	}
+	if err := os.Rename(part, dest); err != nil {
+		return err
+	}
+	_ = os.Remove(part + ".version")
+	parent, err := os.Open(filepath.Dir(dest)) // #nosec G304 -- caller-owned destination directory
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	return parent.Sync()
 }
 
 // partSize returns the size of an in-progress transfer at path, or 0 if

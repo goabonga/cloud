@@ -19,7 +19,7 @@ channel for this:
 ```
 infra-agent (secondary)              infra-agent (primary)
       |  GET /disks/{uid}                    |
-      |  signed, Range-resumable  ----------->|  serves <stateDir>/disks/<uid>.img
+      |  signed, Range-resumable  ----------->|  serves an immutable snapshot
       |<----------------------- 200/206 ------|  via http.ServeContent
       |                                       |
       |  GET /ping (unauthenticated) -------->|  liveness probe
@@ -28,12 +28,13 @@ infra-agent (secondary)              infra-agent (primary)
 
 - **Server** (`replication.Server`, started by `infra-agent` on
   `GOA_REPLICATION_ADDR`, default `:7332`) serves a node's own disk backing
-  files read-only, and answers `/ping`.
+  files through immutable snapshots, and answers `/ping`.
 - **Client** (`replication.Client`) pulls a disk from another node, resuming
-  a prior partial pull by requesting `Range: bytes=<have>-` and appending;
-  the destination file is only ever renamed into place once the transfer is
-  complete, so a crash mid-pull leaves a `.part` file to resume from, never
-  a half-written disk.
+  a prior partial pull by requesting `Range: bytes=<have>-` for the stored
+  snapshot digest. A SHA-256 checksum is verified over the entire completed
+  file before replacing the previous replica. A `.part.version` sidecar pins
+  the snapshot; legacy partials, expired snapshots and unsatisfiable ranges
+  restart the transfer instead of mixing disk versions.
 - **Auth**: every request but `/ping` is signed with an HMAC-SHA256 over
   `method\npath\ntimestamp`, keyed by a subkey derived from the cluster's
   shared `GOA_KMS_KEY` (`crypto.DeriveKey(master, "replication:transport",
@@ -44,6 +45,21 @@ infra-agent (secondary)              infra-agent (primary)
   pulling or probing anything, but the data itself is not encrypted in
   transit. mTLS off the existing `internal/ssl` root CA machinery is a
   possible later hardening, not required for this foundation.
+
+## Snapshot requirements
+
+The primary captures each transfer using the filesystem's atomic `FICLONE`
+reflink operation. The disk backing directory must live on a filesystem that
+implements this operation. Unsupported filesystems return HTTP 503 and the
+replica reports a sync error; there is no fallback to copying a disk while it
+is being modified. Existing installations on unsupported filesystems must
+move the disk directory to a compatible volume before replication can work.
+
+Each disk retains its latest content-addressed snapshot under
+`<stateDir>/disks/.snapshots/<disk-uid>`. Existing transfers hold an immutable
+file descriptor, while later resumes of an evicted version restart. The hash
+and version identify one filesystem snapshot, not an application transaction:
+these are crash-consistent snapshots, without guest/application quiescing.
 
 ## Async replica (`infra_async_disk_replica`)
 

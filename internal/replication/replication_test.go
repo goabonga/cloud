@@ -32,7 +32,7 @@ func newTestServer(t *testing.T, key []byte, uid string, content []byte) string 
 	if err := os.WriteFile(filepath.Join(dir, uid+".img"), content, 0o600); err != nil {
 		t.Fatalf("seed disk file: %v", err)
 	}
-	srv := replication.NewServer(dir, key, "node-primary", nil)
+	srv := replication.NewFixtureServer(dir, key, "node-primary")
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts.Listener.Addr().String()
