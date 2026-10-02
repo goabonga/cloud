@@ -52,6 +52,10 @@ export interface GenericResource {
 }
 
 export interface ResourceMetadataInput {
+  name?: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  organizationId?: string;
   projectId?: string;
 }
 

@@ -279,4 +279,14 @@ describe("ResourceForm", () => {
 
     await waitFor(() => screen.getByText("list page"));
   });
+  it("preserves project metadata and fields outside the guided schema when editing", async () => {
+    vi.mocked(generic.getResource).mockResolvedValue({ metadata: { uid: "widget-1", generation: 2, createdAt: "", projectId: "project-1", name: "Display name" }, spec: { name: "Existing", extension: { keep: true } }, status: {} });
+    vi.mocked(generic.createResource).mockResolvedValue({ metadata: { uid: "widget-1", generation: 3, createdAt: "" }, spec: {}, status: {} });
+    renderForm("widget-1");
+    await waitFor(() => expect((screen.getByLabelText("Name *") as HTMLInputElement).value).toBe("Existing"));
+    fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "Changed" } });
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(generic.createResource).toHaveBeenCalledWith("widget", "widget-1", expect.objectContaining({ name: "Changed", extension: { keep: true } }), expect.objectContaining({ projectId: "project-1", name: "Display name" })));
+  });
+
 });

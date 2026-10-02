@@ -4,7 +4,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { createResource, getResource } from "../api/generic";
+import { createResource, getResource, type ResourceMetadataInput } from "../api/generic";
 import { getPath, setPath } from "../lib/path";
 import type { FieldSchema, ResourceDef } from "../registry";
 import FieldInput from "./fields/FieldInput";
@@ -57,6 +57,15 @@ function assembleSpec(fields: FieldSchema[], values: Record<string, unknown>): R
   return spec;
 }
 
+// Preserve fields outside the guided schema while allowing known fields to clear.
+function preserveSpec(original: Record<string, unknown>, fields: FieldSchema[], values: Record<string, unknown>): Record<string, unknown> {
+  let result = structuredClone(original);
+  for (const field of fields) result = setPath(result, field.key, undefined);
+  const guided = assembleSpec(fields, values);
+  for (const field of fields) result = setPath(result, field.key, getPath(guided, field.key));
+  return result;
+}
+
 // ResourceForm is the schema-driven create/edit form for one resource kind.
 // With no uid it creates a new resource; with one it loads and edits it. An
 // "Advanced" raw-JSON mode covers anything the schema doesn't model yet.
@@ -65,6 +74,8 @@ export default function ResourceForm({ def, uid }: { def: ResourceDef; uid?: str
   const isEdit = uid !== undefined;
   const [newUid, setNewUid] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [originalSpec, setOriginalSpec] = useState<Record<string, unknown>>({});
+  const [metadata, setMetadata] = useState<ResourceMetadataInput>({});
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(isEdit);
   const [error, setError] = useState("");
@@ -78,6 +89,9 @@ export default function ResourceForm({ def, uid }: { def: ResourceDef; uid?: str
     setError("");
     getResource(def.kind, uid)
       .then((resource) => {
+        setOriginalSpec(resource.spec);
+        setMetadata(resource.metadata);
+        setProjectId(resource.metadata.projectId ?? "");
         setValues(initialValues(def.fields, resource.spec));
         setAdvancedText(JSON.stringify(resource.spec, null, 2));
       })
@@ -89,12 +103,13 @@ export default function ResourceForm({ def, uid }: { def: ResourceDef; uid?: str
     if (useAdvanced) {
       try {
         const parsed = JSON.parse(advancedText) as Record<string, unknown>;
+        setOriginalSpec(parsed);
         setValues(initialValues(def.fields, parsed));
       } catch {
         // Leave the structured values as they were if the JSON is invalid.
       }
     } else {
-      setAdvancedText(JSON.stringify(assembleSpec(def.fields, values), null, 2));
+      setAdvancedText(JSON.stringify(preserveSpec(originalSpec, def.fields, values), null, 2));
     }
     setUseAdvanced((v) => !v);
   }
@@ -112,13 +127,15 @@ export default function ResourceForm({ def, uid }: { def: ResourceDef; uid?: str
         return;
       }
     } else {
-      spec = assembleSpec(def.fields, values);
+      spec = preserveSpec(originalSpec, def.fields, values);
     }
 
     const targetUid = uid ?? newUid;
     setSubmitting(true);
     try {
-      if (!isEdit && def.scoped !== false && projectId) {
+      if (isEdit) {
+        await createResource(def.kind, targetUid, spec, metadata);
+      } else if (def.scoped !== false && projectId) {
         await createResource(def.kind, targetUid, spec, { projectId });
       } else {
         await createResource(def.kind, targetUid, spec);
@@ -162,7 +179,7 @@ export default function ResourceForm({ def, uid }: { def: ResourceDef; uid?: str
             <Label htmlFor="field-projectId">Project</Label>
             <ReferenceField id="field-projectId" field={PROJECT_FIELD} value={projectId} onChange={setProjectId} />
             <p className="text-xs text-slate-500">
-              Leave blank to create it unscoped, visible only to you until shared or scoped later.
+              Leave blank to create it unscoped, visible only to you. Project scope cannot be changed later.
             </p>
           </div>
         )}
