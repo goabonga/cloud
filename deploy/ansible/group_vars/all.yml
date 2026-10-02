@@ -4,8 +4,10 @@
 # libvirt / cloud-image settings (used by create-vms.yml on the host).
 libvirt_uri: "qemu:///system"
 images_dir: "/var/lib/libvirt/images"
-# An Ubuntu 24.04 (noble) cloud image; download it once into images_dir (see README).
+# An Ubuntu 24.04 (noble) cloud image; create-vms.yml fetches it to this path
+# itself if missing, from base_image_url.
 base_image: "/var/lib/libvirt/images/noble-server-cloudimg-amd64.img"
+base_image_url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
 os_variant: "ubuntu24.04"
 network: "default"
 # 30G: an agent host's own disk holds its OS, the shared microvm image cache
