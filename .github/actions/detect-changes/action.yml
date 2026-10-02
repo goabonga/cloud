@@ -204,6 +204,8 @@ runs:
         echo "DEBUG BASE=$BASE resolved=$(git rev-parse "$BASE" 2>&1)"
         echo "DEBUG HEAD resolved=$(git rev-parse HEAD 2>&1)"
         echo "DEBUG git diff ci.yml: $(git diff --stat "$BASE" HEAD -- .github/workflows/ci.yml 2>&1)"
+        echo "DEBUG GITHUB_OUTPUT file contents:"
+        cat "$GITHUB_OUTPUT"
         {
           echo "## Detected changes"
           echo ""
@@ -213,3 +215,8 @@ runs:
           echo "| Reference | \`$REF\` |"
           echo "| Event | \`${{ github.event_name }}\` |"
         } >> "$GITHUB_STEP_SUMMARY"
+    - name: DEBUG step-output readback
+      shell: bash
+      run: |
+        echo "DEBUG steps.changed.outputs.packaging_changed=${{ steps.changed.outputs.packaging_changed }}"
+        echo "DEBUG steps.bypass.outputs.packaging_changed=${{ steps.bypass.outputs.packaging_changed }}"

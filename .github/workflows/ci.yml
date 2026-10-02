@@ -72,6 +72,8 @@ jobs:
           fetch-depth: 0
       - id: detect
         uses: ./.github/actions/detect-changes
+      - name: DEBUG job-output readback
+        run: echo "DEBUG steps.detect.outputs.packaging_changed=${{ steps.detect.outputs.packaging_changed }}"
 
   # Quality jobs run once over the whole Go module rather than per component:
   # the repo is a single `go` module, so `golangci-lint run`, `go vet` and
