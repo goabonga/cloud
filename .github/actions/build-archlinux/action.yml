@@ -19,6 +19,15 @@ runs:
     - name: Install Go
       shell: bash
       run: pacman -Sy --noconfirm --needed go
+    # infra-www's PKGBUILD stages a production SPA build before packaging
+    # (see build-archlinux.sh's own infra-www branch) - the same npm ci &&
+    # npm run build build-debs.sh's build-deb action runs via
+    # actions/setup-node for the .deb. Scoped to infra-www alone, same as
+    # that action, rather than installing Node for all nine legs.
+    - name: Install Node
+      if: inputs.component == 'infra-www'
+      shell: bash
+      run: pacman -Sy --noconfirm --needed nodejs npm
     - name: Build the ${{ inputs.component }} Arch package
       shell: bash
       env:
