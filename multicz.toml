@@ -29,13 +29,33 @@ state_file = ".multicz/state.json"
 # scripts/rewrite-dependabot-commit.sh types a Dependabot bump fix(deps) only
 # when it changes what the binaries link.
 #
-# CAUTION: this fans out the BUMP PLAN only. `multicz changed` does not honour
-# it - it attributes a shared file to a single component, and has been observed
-# to name components with no changed file at all. So never gate a per-component
-# build on `multicz changed` output while an overlap exists; CI builds every
-# package on any change for exactly this reason (see the `deb` job in
-# .github/workflows/ci.yml).
+# `multicz changed` (>= 1.6.1) honours this the same way the bump plan does:
+# a shared path like go.mod reports every component that claims it, not just
+# the first-declared one - safe to gate a per-component build on its output.
 overlap_policy = "all"
+
+# go list -deps closes the gap `paths` above can't: a hand-maintained glob
+# like infra-api's internal/handler, internal/httpsrv, internal/httpsec
+# silently misses new internal/ imports (go list -deps ./cmd/api reports 16
+# internal/ packages, including internal/auth, internal/crypto, internal/pki,
+# internal/secret, internal/ssl - not one of them a `paths` entry). affects()
+# is only ever consulted once plain `paths` matching has already missed a
+# changed file, so this never second-guesses a path that already matched.
+# REQUIRES go on PATH wherever `multicz changed`/`plan`/`bump` runs.
+[plugins.go-deps]
+[plugins.go-deps.packages]
+infra                       = "./cmd/cli"
+infra-api                   = "./cmd/api"
+infra-controller-manager    = "./cmd/controller-manager"
+terraform-provider-infra    = "./cmd/provider"
+infra-exporter              = "./cmd/exporter"
+infra-idp                   = "./cmd/idp"
+infra-container-init        = "./cmd/container-init"
+infra-www                   = "./cmd/www"
+# infra-agent ships two further binaries from packaging/components.sh's
+# EXTRA_BINARIES - all three share one release, so all three import graphs
+# matter for ownership.
+infra-agent                 = ["./cmd/agent", "./cmd/lb", "./cmd/hypervisor"]
 
 # Custom commit types layered on the conventional defaults. `deprecate:`
 # announces an upcoming removal; `remove:` performs it in a major release
