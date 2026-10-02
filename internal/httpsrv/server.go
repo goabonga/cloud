@@ -7,6 +7,7 @@ package httpsrv
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/auth"
@@ -181,7 +182,12 @@ func (s *Server) Handler() http.Handler {
 	if s.authn == nil {
 		return httpsec.Headers(s.mux)
 	}
-	guarded := auth.Middleware(s.authn, s.mux)
+	guarded := auth.Middleware(s.authn, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.authorizeSpecialized(w, r) {
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	}))
 	// The security headers wrap the auth check rather than sitting inside it,
 	// so a 401 carries them too - an error response is still a response a
 	// browser renders.
@@ -202,4 +208,40 @@ func (s *Server) ListenAndServe(addr string) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return srv.ListenAndServe()
+}
+
+// authorizeSpecialized protects operations outside the generic CRUD handler.
+// Encryption resources are platform-managed until they carry tenant ownership.
+func (s *Server) authorizeSpecialized(w http.ResponseWriter, r *http.Request) bool {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, APIBase+"/"), "/")
+	if len(parts) == 0 {
+		return true
+	}
+	id, ok := auth.IdentityFrom(r.Context())
+	switch parts[0] {
+	case resource.KindSecret, resource.KindSecretVersion, resource.KindSSLCA, resource.KindSSLCert:
+		if !ok || !id.HasRole(handler.AdminRole) {
+			http.Error(w, "admin role required", http.StatusForbidden)
+			return false
+		}
+	case resource.KindFunction:
+		if r.Method != http.MethodPost || len(parts) != 3 || parts[2] != "invoke" {
+			return true
+		}
+		fn, err := registry.New[resource.FunctionSpec, resource.FunctionStatus](s.store, resource.KindFunction).Get(parts[1])
+		if err != nil {
+			http.Error(w, "function unavailable", http.StatusForbidden)
+			return false
+		}
+		if !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+		allowed, err := s.az.Allowed(id.Subject, id.HasRole(handler.AdminRole), fn.Metadata.OwnerUID, fn.Metadata.ProjectID, iam.PermissionWrite)
+		if err != nil || !allowed {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
+	}
+	return true
 }
