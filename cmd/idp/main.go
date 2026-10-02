@@ -20,6 +20,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/auth"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/handler"
+	"github.com/goabonga/infrastructure/internal/httpsec"
 	"github.com/goabonga/infrastructure/internal/identity"
 	"github.com/goabonga/infrastructure/internal/idp"
 	"github.com/goabonga/infrastructure/internal/meta"
@@ -126,6 +127,7 @@ func serve(server *idp.Server, addr string) error {
 // serveListener runs server's handler on ln until serving stops.
 func serveListener(server *idp.Server, ln net.Listener) error {
 	httpServer := &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	httpsec.ConfigureServer(httpServer)
 	return httpServer.Serve(ln)
 }
 
