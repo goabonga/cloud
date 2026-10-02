@@ -38,7 +38,7 @@ help: ## Show this help
 # ── Build ──────────────────────────────────────────────────────────────────
 
 build: build-cli build-api build-agent build-controller-manager build-provider \
-       build-exporter build-idp build-container-init build-lb build-hypervisor ## Build every component
+       build-exporter build-idp build-container-init build-lb build-hypervisor build-www ## Build every component
 
 build-cli: ## Build the CLI (infra)
 	go build -o $(CLI_BIN) ./cmd/cli/
