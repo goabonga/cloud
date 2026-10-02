@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.6.1] - 2026-10-02
+
+### Dependencies
+
+- Track `infra-spa` `0.9.1`
+
 ## [0.6.0] - 2026-10-01
 
 ### Added

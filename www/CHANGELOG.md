@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.9.1] - 2026-10-02
+
+### Fixed
+
+- preserve project metadata and unknown fields in dashboard edits (`bf04b16`)
+
 ## [0.7.0] - 2026-10-01
 
 ### Added
