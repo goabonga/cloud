@@ -3,28 +3,15 @@
 
 name: publish component
 description: |
-  Cross-compile linux/amd64 + linux/arm64, package the .deb(s) and cut the
-  GitHub Release for one bumped component. Reuses the amd64 .deb the
-  deb-validate chain already installed, started and scored instead of
-  rebuilding it, then deletes the now-redundant CI artifact.
+  Cross-compile linux/amd64 + linux/arm64 and cut the GitHub Release for one
+  bumped component. The infra-spa component is published as a standalone
+  frontend tarball.
 
-  Also attaches the x86_64 .pkg.tar.zst archlinux-validate already installed
-  and ran namcap against. Unlike the .deb there is no rebuild-on-publish
-  fallback for it: makepkg only runs inside archlinux:base-devel, which this
-  action's plain ubuntu-24.04 job does not have, so the artifact is simply
-  required - `archlinux` builds all nine components every run under the same
-  has_package_changes gate `release` itself requires, so by the time a
-  component reaches here one always exists, same guarantee the .deb's own
-  probe relies on before falling back.
 
 inputs:
   component:
     required: true
     description: Component name, e.g. infra-api.
-
-outputs:
-  has_deb:
-    value: ${{ steps.has_deb.outputs.value }}
 
 runs:
   using: composite
@@ -47,46 +34,10 @@ runs:
     - name: Install multicz
       shell: bash
       run: uv tool install multicz
-    # Reuse the amd64 .deb the deb-validate chain already installed, started
-    # and scored, instead of rebuilding it here. Rebuilding would publish a
-    # package nothing had validated - identical in intent, unverified in
-    # fact. A component bumped purely by cascade has no artifact (its own
-    # paths did not change), so probe rather than assume.
-    - id: has_deb
-      name: Check for a validated .deb from this run
-      shell: bash
-      env:
-        GH_TOKEN: ${{ github.token }}
-        COMPONENT: ${{ inputs.component }}
-      run: |
-        set -euo pipefail
-        if gh api --paginate \
-             "/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
-             --jq '.artifacts[].name' | grep -qx "${COMPONENT}-deb"; then
-          echo "value=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "value=false" >> "$GITHUB_OUTPUT"
-          echo "no validated .deb for ${COMPONENT}; will build one"
-        fi
-    - uses: actions/download-artifact@v8
-      if: steps.has_deb.outputs.value == 'true'
-      with:
-        name: ${{ inputs.component }}-deb
-        path: dist
-    # infra-spa has no archlinux leg (it is not in packaging/components.sh -
-    # see the standalone-SPA-tarball branch below), so every other component
-    # always has one validated by archlinux-validate; see the description
-    # above for why this has no rebuild fallback.
-    - uses: actions/download-artifact@v8
-      if: inputs.component != 'infra-spa'
-      with:
-        name: ${{ inputs.component }}-archlinux
-        path: dist
     - name: Build release binaries
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-        HAS_VALIDATED_DEB: ${{ steps.has_deb.outputs.value }}
         COMPONENT: ${{ inputs.component }}
       run: |
         set -euo pipefail
@@ -122,39 +73,8 @@ runs:
           CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
             go build -ldflags='-s -w' -o "$out" "./cmd/${dir}/"
         done
-        # arm64 is always built here: deb-validate installs and starts the
-        # package on an amd64 runner, so an arm64 .deb cannot go through
-        # those gates and is published on the strength of the shared build
-        # script alone. amd64 is only rebuilt when the validated artifact is
-        # missing.
-        ARCH=arm64 ./packaging/build-debs.sh "$version" "$component"
-        if [ "$HAS_VALIDATED_DEB" = "true" ]; then
-          echo "publishing the validated amd64 .deb from deb-validate"
-          ls -l "dist/${component}_${version}_amd64.deb"
-        else
-          ARCH=amd64 ./packaging/build-debs.sh "$version" "$component"
-        fi
-        ( cd dist && sha256sum ${component}_${version}_* "${component}-${version}-"*.pkg.tar.zst \
-            > "${component}_${version}_checksums.txt" )
-        ls -l dist
         notes=$(multicz release-notes --tag "$tag" || echo "Release $tag")
         gh release create "$tag" \
           --title "$tag" \
           --notes "$notes" \
-          dist/${component}_${version}_* "dist/${component}-${version}-"*.pkg.tar.zst
-    # The .deb and .pkg.tar.zst are published and attested by deb-validate /
-    # archlinux-validate; keeping the run artifacts would leave a second,
-    # unreleased copy of each around for anyone reading the run page to pick
-    # up by mistake.
-    - name: Delete the consumed CI artifacts
-      if: steps.has_deb.outputs.value == 'true'
-      uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
-      with:
-        name: ${{ inputs.component }}-deb
-        failOnError: false
-    - name: Delete the consumed archlinux CI artifact
-      if: inputs.component != 'infra-spa'
-      uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
-      with:
-        name: ${{ inputs.component }}-archlinux
-        failOnError: false
+          dist/${component}_${version}_*

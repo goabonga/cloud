@@ -54,8 +54,8 @@ is hand-maintained.
 
 ## Downloads
 
-Every component except `infra-spa` ships as a `.deb` and an Arch
-`.pkg.tar.zst`, attached to its own
+Every component except `infra-spa` publishes raw `linux/amd64` and
+`linux/arm64` binaries with checksums in its
 [GitHub Release](https://github.com/goabonga/infrastructure/releases) tagged
-`<component>-v<version>`. Arch packages tracking a release automatically are
-also pushed to the [AUR](https://aur.archlinux.org/) when configured.
+`<component>-v<version>`. Debian and Arch packages remain available through the
+local packaging targets when a package deployment is required.
