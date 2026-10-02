@@ -1,3 +1,9 @@
+infra-api (0.13.6-1) unstable; urgency=medium
+
+  * fix: Authorize references across resource boundaries
+
+ -- Chris <goabonga@pm.me>  Fri, 02 Oct 2026 12:57:16 +0000
+
 infra-api (0.13.4-1) unstable; urgency=medium
 
   * fix: Report unavailable storage through readiness checks

@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.6] - 2026-10-02
+
+### Fixed
+
+- authorize references across resource boundaries (`8bc991c`)
+
 ## [0.13.4] - 2026-10-02
 
 ### Fixed
