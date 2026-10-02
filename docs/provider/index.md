@@ -33,6 +33,14 @@ Updates preserve the resource's existing owner, project and version metadata.
 Changing the provider's project does not move existing resources: an update
 with a different configured project returns an error.
 
+## Deletion
+
+When the API accepts an asynchronous deletion, Terraform waits until the
+resource returns HTTP 404. The wait is bounded by five minutes or the caller's
+earlier deadline. A timeout, cancellation or polling error is reported as a
+Terraform diagnostic so the resource remains in state for a later retry.
+Immediate HTTP 204 and already absent resources complete without polling.
+
 ## Resources
 
 The provider manages the full network and compute topology:
