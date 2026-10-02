@@ -18,7 +18,7 @@ import (
 // newProviderConfig builds a tfsdk.Config conforming to the provider schema,
 // with endpoint/token left null when the pointer is nil - the same shape
 // Terraform sends for an unset optional attribute.
-func newProviderConfig(t *testing.T, schemaResp fwprovider.SchemaResponse, endpoint, token *string) tfsdk.Config {
+func newProviderConfig(t *testing.T, schemaResp fwprovider.SchemaResponse, endpoint, token *string, projects ...*string) tfsdk.Config {
 	t.Helper()
 	ctx := context.Background()
 	objType := schemaResp.Schema.Type().TerraformType(ctx)
@@ -30,9 +30,14 @@ func newProviderConfig(t *testing.T, schemaResp fwprovider.SchemaResponse, endpo
 		return tftypes.NewValue(tftypes.String, *s)
 	}
 
+	var project *string
+	if len(projects) > 0 {
+		project = projects[0]
+	}
 	raw := tftypes.NewValue(objType, map[string]tftypes.Value{
-		"endpoint": toValue(endpoint),
-		"token":    toValue(token),
+		"endpoint":   toValue(endpoint),
+		"token":      toValue(token),
+		"project_id": toValue(project),
 	})
 	return tfsdk.Config{Raw: raw, Schema: schemaResp.Schema}
 }
@@ -163,3 +168,29 @@ func TestProviderConfigureEmptyConfigValuesDoNotOverrideDefaults(t *testing.T) {
 		t.Fatalf("Token = %q, want empty", cfg.Token)
 	}
 }
+
+func TestProviderProjectConfiguration(t *testing.T) {
+	t.Setenv("GOA_PROJECT_ID", "env-project")
+	for _, tc := range []struct {
+		name       string
+		configured *string
+		want       string
+	}{
+		{name: "environment", want: "env-project"},
+		{name: "explicit", configured: ptr("explicit-project"), want: "explicit-project"},
+		{name: "explicit empty", configured: ptr(""), want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := provider.New("")()
+			var resp fwprovider.ConfigureResponse
+			p.Configure(context.Background(), fwprovider.ConfigureRequest{Config: newProviderConfig(t, providerSchema(t, p), nil, nil, tc.configured)}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatal(resp.Diagnostics)
+			}
+			if got := resp.ResourceData.(resources.ProviderConfig).ProjectID; got != tc.want {
+				t.Fatalf("project: %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+func ptr(s string) *string { return &s }

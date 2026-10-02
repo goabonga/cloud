@@ -22,6 +22,17 @@ resource "infra_vpc" "prod" {
 }
 ```
 
+## Project scope
+
+Set `project_id` in the provider block, or set `GOA_PROJECT_ID`, to place
+new resources in an existing project. The authenticated identity must have
+write permission on that project. An explicit empty `project_id` overrides
+the environment variable and creates resources without a project.
+
+Updates preserve the resource's existing owner, project and version metadata.
+Changing the provider's project does not move existing resources: an update
+with a different configured project returns an error.
+
 ## Resources
 
 The provider manages the full network and compute topology:
