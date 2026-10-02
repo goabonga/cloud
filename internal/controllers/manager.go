@@ -5,6 +5,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 )
@@ -50,10 +51,49 @@ func (m *Manager) RunOnce(ctx context.Context) (bool, error) {
 	if !leader {
 		return false, nil
 	}
-	for _, c := range m.controllers {
-		if err := c.Reconcile(ctx); err != nil {
-			m.logger.ErrorContext(ctx, "controller reconcile", "controller", c.Name(), "err", err)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopped := make(chan struct{})
+	renewErr := make(chan error, 1)
+	go func() {
+		defer close(stopped)
+		period := m.lease.ttl / 3
+		if period <= 0 {
+			period = time.Nanosecond
 		}
+		ticker := time.NewTicker(period)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				ok, err := m.lease.Renew()
+				if err != nil || !ok {
+					if err == nil {
+						err = fmt.Errorf("controllers: leadership lost")
+					}
+					renewErr <- err
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	for _, c := range m.controllers {
+		if runCtx.Err() != nil {
+			break
+		}
+		if err := c.Reconcile(runCtx); err != nil {
+			m.logger.ErrorContext(runCtx, "controller reconcile", "controller", c.Name(), "err", err)
+		}
+	}
+	cancel()
+	<-stopped
+	select {
+	case err := <-renewErr:
+		return false, err
+	default:
 	}
 	return true, nil
 }

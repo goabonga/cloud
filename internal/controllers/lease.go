@@ -48,6 +48,9 @@ func NewLease(store state.Store, key, holder string, ttl time.Duration, clock Cl
 // already held by this holder). It reports whether the lease is held by this
 // holder afterwards.
 func (l *Lease) Acquire(_ context.Context) (bool, error) {
+	if l.ttl <= 0 {
+		return false, fmt.Errorf("controllers: lease TTL must be positive")
+	}
 	cur, err := l.store.Get(l.key)
 	if errors.Is(err, state.ErrNotFound) {
 		return l.swap(nil)
@@ -96,8 +99,28 @@ func (l *Lease) Release(_ context.Context) error {
 	if rec.Holder != l.holder {
 		return nil
 	}
-	if err := l.store.Delete(l.key); err != nil {
+	data, err := json.Marshal(leaseRecord{})
+	if err != nil {
+		return err
+	}
+	if _, err := l.store.CompareAndSwap(l.key, cur, data); err != nil {
 		return fmt.Errorf("controllers: release lease: %w", err)
 	}
 	return nil
+}
+
+// Renew extends an unexpired lease only while this holder still owns it.
+func (l *Lease) Renew() (bool, error) {
+	cur, err := l.store.Get(l.key)
+	if err != nil {
+		return false, err
+	}
+	var rec leaseRecord
+	if err := json.Unmarshal(cur, &rec); err != nil {
+		return false, err
+	}
+	if rec.Holder != l.holder || !rec.Expiry.After(l.now()) {
+		return false, nil
+	}
+	return l.swap(cur)
 }
