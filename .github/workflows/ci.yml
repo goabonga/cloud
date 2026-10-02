@@ -65,6 +65,7 @@ jobs:
       integration_changed: ${{ steps.detect.outputs.integration_changed }}
       www_changed: ${{ steps.detect.outputs.www_changed }}
       packaging_changed: ${{ steps.detect.outputs.packaging_changed }}
+      really_changed: ${{ steps.detect.outputs.really_changed }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -290,7 +291,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -328,7 +329,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-api')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -364,7 +365,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-idp')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -400,7 +401,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-exporter')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -436,7 +437,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-controller-manager')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -472,7 +473,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-agent')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -508,7 +509,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-container-init')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -544,7 +545,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'terraform-provider-infra')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -580,7 +581,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-www')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -864,7 +865,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -917,7 +918,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-api')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -960,7 +961,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-idp')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -1003,7 +1004,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-exporter')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -1046,7 +1047,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-controller-manager')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -1089,7 +1090,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-agent')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -1132,7 +1133,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-container-init')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -1175,7 +1176,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'terraform-provider-infra')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -1218,7 +1219,7 @@ jobs:
     if: >-
       always() && (
         (
-          needs.detect.outputs.has_package_changes == 'true'
+          contains(fromJson(needs.detect.outputs.really_changed), 'infra-www')
           && needs.lint.result == 'success'
           && needs.vet-build.result == 'success'
           && needs.test.result == 'success'
@@ -1654,17 +1655,21 @@ jobs:
       - e2e
       - owasp-api
       - owasp-www
-    # Every need below shares has_package_changes' own gate except `www`
-    # (gated independently on www_changed, legitimately skipped on a
-    # non-frontend push) - so every one of them is required to have actually
-    # SUCCEEDED, `www` alone excepted. This used to read
+    # Most needs below share has_package_changes' own gate, so skip is never
+    # legitimate for them and they are required to have actually SUCCEEDED.
+    # Two kinds of exception, each spelled out as its own OR: `www` (gated
+    # independently on www_changed, legitimately skipped on a non-frontend
+    # push), and each deb-validate-*/archlinux-validate-* pair (gated on
+    # `really_changed` now that deb/archlinux build per component rather
+    # than all nine every run - legitimately skipped for a component that
+    # really_changed does not name this run). This used to read
     # `!cancelled() && !failure()`, which tolerates ANY need coming back
-    # `skipped` for whatever reason, not just www's legitimate one - the
-    # same shape of gap that let test-pipelilne-multicz's release-bump fire
-    # once on a run cancelled before its validations had even dispatched,
-    # tagging a release with nothing published behind it. Checking each
-    # `result` directly closes that regardless of how GitHub happens to
-    # attribute a cancellation to the jobs underneath it.
+    # `skipped` for whatever reason, not just a legitimate one - the same
+    # shape of gap that let test-pipelilne-multicz's release-bump fire once
+    # on a run cancelled before its validations had even dispatched, tagging
+    # a release with nothing published behind it. Checking each `result`
+    # directly closes that regardless of how GitHub happens to attribute a
+    # cancellation to the jobs underneath it.
     #
     # always(): none of success()/failure()/cancelled()/always() appears
     # literally above, so without it GitHub silently ANDs an implicit
@@ -1686,24 +1691,24 @@ jobs:
       && needs.govulncheck.result == 'success'
       && needs.osv-scanner.result == 'success'
       && needs.integration.result == 'success'
-      && needs.deb-validate-infra.result == 'success'
-      && needs.deb-validate-infra-api.result == 'success'
-      && needs.deb-validate-infra-idp.result == 'success'
-      && needs.deb-validate-infra-exporter.result == 'success'
-      && needs.deb-validate-infra-controller-manager.result == 'success'
-      && needs.deb-validate-infra-agent.result == 'success'
-      && needs.deb-validate-infra-container-init.result == 'success'
-      && needs.deb-validate-terraform-provider-infra.result == 'success'
-      && needs.deb-validate-infra-www.result == 'success'
-      && needs.archlinux-validate-infra.result == 'success'
-      && needs.archlinux-validate-infra-api.result == 'success'
-      && needs.archlinux-validate-infra-idp.result == 'success'
-      && needs.archlinux-validate-infra-exporter.result == 'success'
-      && needs.archlinux-validate-infra-controller-manager.result == 'success'
-      && needs.archlinux-validate-infra-agent.result == 'success'
-      && needs.archlinux-validate-infra-container-init.result == 'success'
-      && needs.archlinux-validate-terraform-provider-infra.result == 'success'
-      && needs.archlinux-validate-infra-www.result == 'success'
+      && (needs.deb-validate-infra.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra'))
+      && (needs.deb-validate-infra-api.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-api'))
+      && (needs.deb-validate-infra-idp.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-idp'))
+      && (needs.deb-validate-infra-exporter.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-exporter'))
+      && (needs.deb-validate-infra-controller-manager.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-controller-manager'))
+      && (needs.deb-validate-infra-agent.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-agent'))
+      && (needs.deb-validate-infra-container-init.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-container-init'))
+      && (needs.deb-validate-terraform-provider-infra.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'terraform-provider-infra'))
+      && (needs.deb-validate-infra-www.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-www'))
+      && (needs.archlinux-validate-infra.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra'))
+      && (needs.archlinux-validate-infra-api.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-api'))
+      && (needs.archlinux-validate-infra-idp.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-idp'))
+      && (needs.archlinux-validate-infra-exporter.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-exporter'))
+      && (needs.archlinux-validate-infra-controller-manager.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-controller-manager'))
+      && (needs.archlinux-validate-infra-agent.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-agent'))
+      && (needs.archlinux-validate-infra-container-init.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-container-init'))
+      && (needs.archlinux-validate-terraform-provider-infra.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'terraform-provider-infra'))
+      && (needs.archlinux-validate-infra-www.result == 'success' || !contains(fromJson(needs.detect.outputs.really_changed), 'infra-www'))
       && needs.e2e.result == 'success'
       && needs.owasp-api.result == 'success'
       && needs.owasp-www.result == 'success'

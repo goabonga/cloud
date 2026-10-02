@@ -22,6 +22,24 @@ description: |
   because the PR touched no component's `paths`, so the scripts it added
   were never actually exercised by their own build chain).
 
+  `really_changed` is a SEPARATE, more conservative list used to gate each
+  named `deb-<component>`/`archlinux-<component>` job individually instead
+  of building all nine on every run. It is the union of `multicz changed`'s
+  own list (which correctly follows `depends_on` cascades - confirmed: an
+  infra-api-only change also lists terraform-provider-infra) with a plain
+  `git diff` against each component's own declared `paths`. The second half
+  exists because of multicz.toml's own documented caution: `multicz
+  changed` attributes an OVERLAPPING shared path (go.mod/go.sum, under
+  `overlap_policy = "all"`) to a single component rather than every one
+  that claims it - confirmed for real: touching only go.mod reported just
+  `infra-api` as changed, not the other eight that also depend on it. A
+  plain git diff against each component's own full path list has no such
+  cross-component arbitration - every component listing go.mod shows as
+  changed the moment go.mod differs, independently of the others. The union
+  deliberately prefers over- to under-inclusion: an extra unchanged-looking
+  package costs a few CI minutes; silently shipping one that needed a
+  dependency fix does not get noticed until it is wrong in production.
+
   Short-circuits to an empty change set for multicz's own chore(release)
   commit or a duplicate push-event delivery - both mean "nothing here needs
   acting on". REQUIRES the calling job to have run `actions/checkout` with
@@ -41,6 +59,8 @@ outputs:
     value: ${{ steps.bypass.outputs.www_changed || steps.changed.outputs.www_changed }}
   packaging_changed:
     value: ${{ steps.bypass.outputs.packaging_changed || steps.changed.outputs.packaging_changed }}
+  really_changed:
+    value: ${{ steps.bypass.outputs.really_changed || steps.changed.outputs.really_changed }}
 
 runs:
   using: composite
@@ -115,6 +135,7 @@ runs:
           echo "integration_changed=false"
           echo "www_changed=false"
           echo "packaging_changed=false"
+          echo "really_changed=[]"
         } >> "$GITHUB_OUTPUT"
         [ "$IS_RELEASE_COMMIT" = "true" ] || exit 0
         # multicz shapes the subject as
@@ -201,12 +222,27 @@ runs:
         else
           echo "packaging_changed=true" >> "$GITHUB_OUTPUT"
         fi
+        # really_changed: see this action's own description for why this is
+        # a union of $PACKAGES with a raw per-component git diff, rather
+        # than just $PACKAGES on its own.
+        REALLY_CHANGED="$PACKAGES"
+        CONFIG_JSON=$(multicz config --output json)
+        for comp in infra infra-api infra-idp infra-exporter \
+            infra-controller-manager infra-agent infra-container-init \
+            terraform-provider-infra infra-www; do
+          mapfile -t comp_paths < <(echo "$CONFIG_JSON" | jq -r --arg c "$comp" '.components[$c].paths[]')
+          if ! git diff --quiet "$BASE" HEAD -- "${comp_paths[@]}"; then
+            REALLY_CHANGED=$(echo "$REALLY_CHANGED" | jq -c --arg c "$comp" 'if index($c) then . else . + [$c] end')
+          fi
+        done
+        echo "really_changed=$REALLY_CHANGED" >> "$GITHUB_OUTPUT"
         {
           echo "## Detected changes"
           echo ""
           echo "| Field | Value |"
           echo "| --- | --- |"
           echo "| Packages | \`$PACKAGES\` |"
+          echo "| Really changed (deb/archlinux gate) | \`$REALLY_CHANGED\` |"
           echo "| Reference | \`$REF\` |"
           echo "| Event | \`${{ github.event_name }}\` |"
         } >> "$GITHUB_STEP_SUMMARY"
