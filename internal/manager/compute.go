@@ -480,7 +480,7 @@ func rootfsShell(rootfs string) string {
 // filesystems, pivot_roots into rootfs and execs the entrypoint.
 func buildEntryScript(req ComputeRequest, rootfs, entryCmd, shell, pidFile, cgroupProcs string, hasCgroup, hasContainerInit bool) string {
 	var s strings.Builder
-	s.WriteString("#!/bin/sh\n")
+	s.WriteString("#!/bin/sh\nset -eu\nmount --make-rprivate /\n")
 	fmt.Fprintf(&s, "echo $$ > %s\n", pidFile)
 	if hasCgroup {
 		fmt.Fprintf(&s, "echo $$ > %s 2>/dev/null\n", cgroupProcs)
@@ -500,8 +500,20 @@ func buildEntryScript(req ComputeRequest, rootfs, entryCmd, shell, pidFile, cgro
 	}
 	fmt.Fprintf(&s, "mkdir -p %s/proc %s/sys %s/dev 2>/dev/null\n", rootfs, rootfs, rootfs)
 	fmt.Fprintf(&s, "mount -t proc proc %s/proc 2>/dev/null\n", rootfs)
-	fmt.Fprintf(&s, "mount --rbind /sys %s/sys 2>/dev/null\n", rootfs)
-	fmt.Fprintf(&s, "mount --rbind /dev %s/dev 2>/dev/null\n", rootfs)
+	if req.Privileged {
+		fmt.Fprintf(&s, "mount --rbind /sys %s/sys\n", rootfs)
+		fmt.Fprintf(&s, "mount --rbind /dev %s/dev\n", rootfs)
+	} else {
+		fmt.Fprintf(&s, "mount -t sysfs -o ro,nosuid,nodev,noexec sysfs %s/sys\n", rootfs)
+		fmt.Fprintf(&s, "mount -t tmpfs -o nosuid,noexec,mode=755 tmpfs %s/dev\n", rootfs)
+		for _, dev := range []struct {
+			name         string
+			major, minor int
+		}{{"null", 1, 3}, {"zero", 1, 5}, {"full", 1, 7}, {"random", 1, 8}, {"urandom", 1, 9}, {"tty", 5, 0}} {
+			fmt.Fprintf(&s, "mknod -m 666 %s/dev/%s c %d %d\n", rootfs, dev.name, dev.major, dev.minor)
+		}
+		fmt.Fprintf(&s, "mkdir -p %s/dev/pts\nmount -t devpts -o newinstance,nosuid,noexec,mode=620,ptmxmode=666 devpts %s/dev/pts\nln -s pts/ptmx %s/dev/ptmx\n", rootfs, rootfs, rootfs)
+	}
 	if hasContainerInit {
 		fmt.Fprintf(&s, "mkdir -p %s/usr/local/bin 2>/dev/null\n", rootfs)
 		fmt.Fprintf(&s, "cp %s %s/usr/local/bin/infra-container-init 2>/dev/null\n", containerInitBin, rootfs)

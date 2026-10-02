@@ -133,6 +133,13 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	if compute, ok := any(res.Spec).(resource.ComputeSpec); ok && compute.Privileged {
+		id, authenticated := auth.IdentityFrom(r.Context())
+		if !authenticated || !id.HasRole(AdminRole) {
+			writeError(w, http.StatusForbidden, "admin role required for privileged compute")
+			return
+		}
+	}
 	uid := r.PathValue("uid")
 	res.Metadata.UID = uid
 
