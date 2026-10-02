@@ -347,7 +347,14 @@ jobs:
   deb-validate:
     name: deb-validate (${{ matrix.component }})
     needs: deb
-    if: needs.deb.result == 'success'
+    # always(): GitHub's implicit success() (added because this condition
+    # names none of success()/failure()/cancelled()/always() itself) checks
+    # `deb`'s whole TRANSITIVE chain, not just this job's own direct need -
+    # including lint/vet-build/test/gosec/govulncheck/osv-scanner, which
+    # `deb` can now legitimately leave `skipped` on the packaging_changed
+    # path. Without this, deb-validate silently skipped even though `deb`
+    # itself had just succeeded (confirmed on PR #127's run).
+    if: always() && needs.deb.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -487,7 +494,8 @@ jobs:
   archlinux-validate:
     name: archlinux-validate (${{ matrix.component }})
     needs: archlinux
-    if: needs.archlinux.result == 'success'
+    # See deb-validate's identical condition for why always() is needed.
+    if: always() && needs.archlinux.result == 'success'
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
     permissions:
