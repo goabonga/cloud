@@ -75,6 +75,25 @@ function (warmPool) ----> function controller ----> function_instance (Warm)
                                                    user-created instance)
 ```
 
+## Slot creation and cleanup
+
+Warm pools and cold starts use the same atomic creation path. A host port in
+30000–32767 is claimed by creating its canonical `function-compute-<port>`
+resource with compare-and-swap. The claim lives as long as that compute record,
+including during finalization. User-created compute mappings cannot use this
+reserved range; existing mappings are considered when selecting a free port.
+
+Child computes and function instances inherit the function's owner, project
+and organization. Pending warm instances count towards `minWarm`, so repeated
+passes do not duplicate instances still being provisioned. Failed creation is
+retired through finalizers, and the controller retires a labeled compute left
+without an instance after a two-minute grace period. Scoped agents also
+finalize deleting computes that were never scheduled.
+
+Eviction uses compare-and-swap to mark an instance deleting before its compute
+is retired. An instance claimed by an invoke in the meantime is kept until the
+response releases it; function deletion waits for these active claims.
+
 ## Invoking a function
 
 `POST /function/{uid}/invoke` with a request body invokes the function
@@ -87,7 +106,9 @@ synchronously and streams the response back. The call:
 2. If none are claimable and `allowColdStart` is true, creates a fresh
    compute + function instance directly in `Assigned` state (the same shape
    `createInstance` builds, bypassing the pool) and waits for it to become
-   `Ready`, bounded by a cold-start timeout. If `allowColdStart` is false,
+   `Ready`, bounded by a cold-start timeout. A failure or cancellation marks
+   both records for finalization instead of leaving an assigned orphan.
+   If `allowColdStart` is false,
    the call fails immediately rather than queuing.
 3. Proxies the request to `http://<node address>:<instance port>/` and
    streams the response back.
@@ -96,6 +117,11 @@ synchronously and streams the response back. The call:
    and the default `idleTtlSeconds: 0`, the pool controller's very next pass
    evicts it, so a "cold/cheap" tier does not accumulate instances; a tier
    with a longer TTL keeps it warm for a while, per its own policy.
+
+The invoke service keeps an instance `Assigned` for the entire response stream.
+It returns the instance to `Warm` when the body reaches EOF, fails, or is closed
+by the caller. Closing the response releases the claim exactly once; receiving
+response headers alone does not make the instance available to another invoke.
 
 An instance is reached on an allocated host port, DNAT'd to the function's
 `port` inside it, using the exact same mechanism a user-created compute's
@@ -119,8 +145,3 @@ not a new class of bug.
 HTTP-routed triggers (path/host-based, API-Gateway style - today's invoke
 endpoint must be called directly by UID), cron triggers, and event-driven
 (pub/sub) triggers are later work, not part of this foundation.
-
-The invoke service keeps an instance `Assigned` for the entire response stream.
-It returns the instance to `Warm` when the body reaches EOF, fails, or is closed
-by the caller. Closing the response releases the claim exactly once; receiving
-response headers alone does not make the instance available to another invoke.

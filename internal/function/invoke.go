@@ -14,12 +14,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
+	"github.com/goabonga/infrastructure/internal/functionpool"
 	"github.com/goabonga/infrastructure/internal/registry"
 	"github.com/goabonga/infrastructure/internal/state"
 )
@@ -42,8 +41,8 @@ var errAlreadyClaimed = errors.New("function: instance already claimed")
 // allocates, matching FunctionController's own range: both create compute
 // records that share one pool of host ports.
 const (
-	functionInstancePortRangeLo = 30000
-	functionInstancePortRangeHi = 32767
+	functionInstancePortRangeLo = resource.FunctionPortRangeLo
+	functionInstancePortRangeHi = resource.FunctionPortRangeHi
 )
 
 // Service realizes Invoke. It holds no isolation logic of its own: claiming
@@ -149,7 +148,7 @@ func (s *Service) claimWarmInstance(functionID string) (*resource.FunctionInstan
 		}
 
 		ok, err := s.instances.TryUpdate(inst.Metadata.UID, func(r *resource.Resource[resource.FunctionInstanceSpec, resource.FunctionInstanceStatus]) error {
-			if r.Status.State != resource.FunctionInstanceWarm {
+			if r.Metadata.IsDeleting() || r.Status.State != resource.FunctionInstanceWarm {
 				return errAlreadyClaimed
 			}
 			r.Status.State = resource.FunctionInstanceAssigned
@@ -170,57 +169,48 @@ func (s *Service) claimWarmInstance(functionID string) (*resource.FunctionInstan
 	return nil, nil
 }
 
-// coldStart creates a fresh compute and function instance directly in the
-// Assigned state, bypassing the pool, and waits for the compute to become
-// Ready. It mirrors FunctionController.createInstance's shape rather than
-// sharing code with it: the two live in different packages serving different
-// callers, and this codebase already prefers that kind of small duplication
-// over a premature shared abstraction (see the microvm scheduler controller,
-// which duplicates the compute scheduler rather than generalizing it).
+// coldStart atomically creates a function-owned compute slot, adds its assigned
+// instance and waits for readiness. Failed creation is retired through normal
+// cleanup finalizers, including when the caller cancels.
 func (s *Service) coldStart(ctx context.Context, fn *resource.Function) (*resource.FunctionInstance, error) {
-	computes, err := s.computes.List()
+	createCtx, cancel := context.WithTimeout(ctx, s.coldStartTimeout)
+	defer cancel()
+	cp, port, err := functionpool.CreateCompute(s.computes.WithContext(createCtx), fn, s.now())
 	if err != nil {
-		return nil, fmt.Errorf("function: list computes: %w", err)
-	}
-	port, err := allocatePort(computes)
-	if err != nil {
-		return nil, fmt.Errorf("function: allocate port: %w", err)
-	}
-
-	computeUID := newUID("compute")
-	cp := &resource.Compute{
-		Metadata: resource.ObjectMeta{UID: computeUID, Name: fn.Spec.Name, Generation: 1},
-		Spec: resource.ComputeSpec{
-			SubnetID:        fn.Spec.SubnetID,
-			SecurityGroupID: fn.Spec.SecurityGroupID,
-			NodePoolID:      fn.Spec.NodePoolID,
-			CPU:             fn.Spec.CPU,
-			MemoryMB:        fn.Spec.MemoryMB,
-			PidsMax:         fn.Spec.PidsMax,
-			Image:           fn.Spec.Image,
-			Command:         fn.Spec.Command,
-			Env:             fn.Spec.Env,
-			Ports:           []string{fmt.Sprintf("%d:%d/tcp", port, fn.Spec.Port)},
-		},
-	}
-	if err := s.computes.Put(cp); err != nil {
 		return nil, fmt.Errorf("function: create compute: %w", err)
 	}
+	computeUID := cp.Metadata.UID
 
 	inst := &resource.FunctionInstance{
-		Metadata: resource.ObjectMeta{UID: newUID("fninst"), Generation: 1},
+		Metadata: resource.ObjectMeta{UID: newUID("fninst"), Generation: 1, OwnerUID: fn.Metadata.OwnerUID, ProjectID: fn.Metadata.ProjectID, OrganizationID: fn.Metadata.OrganizationID, CreatedAt: s.now()},
 		Spec:     resource.FunctionInstanceSpec{FunctionID: fn.Metadata.UID, ComputeID: computeUID},
 	}
 	inst.Metadata.AddFinalizer(resource.FunctionInstanceFinalizer)
 	inst.Status.State = resource.FunctionInstanceAssigned
 	inst.Status.Port = port
 	inst.Status.SetPhase(resource.PhasePending, "ColdStart", "created for a cold invoke")
-	if err := s.instances.Put(inst); err != nil {
-		return nil, fmt.Errorf("function: create function instance: %w", err)
+	if err := s.instances.WithContext(createCtx).Put(inst); err != nil {
+		return nil, errors.Join(fmt.Errorf("function: create function instance: %w", err), functionpool.RetireCompute(s.computes, computeUID, s.now()))
 	}
 
-	if err := s.waitReady(ctx, inst); err != nil {
-		return nil, err
+	if err := s.waitReady(createCtx, inst); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		var cleanupErr error
+		for range 16 {
+			ok, updateErr := s.instances.WithContext(cleanupCtx).TryUpdate(inst.Metadata.UID, func(r *resource.FunctionInstance) error {
+				now := s.now()
+				r.Metadata.DeletionTimestamp = &now
+				r.Status.State = resource.FunctionInstanceWarm
+				return nil
+			})
+			cleanupErr = updateErr
+			if updateErr != nil || ok {
+				break
+			}
+			cleanupErr = state.ErrConflict
+		}
+		return nil, errors.Join(err, cleanupErr, functionpool.RetireCompute(s.computes.WithContext(cleanupCtx), computeUID, s.now()))
 	}
 	return inst, nil
 }
@@ -232,7 +222,7 @@ func (s *Service) waitReady(ctx context.Context, inst *resource.FunctionInstance
 	ticker := time.NewTicker(s.pollInterval)
 	defer ticker.Stop()
 	for {
-		cp, err := s.computes.Get(inst.Spec.ComputeID)
+		cp, err := s.computes.WithContext(ctx).Get(inst.Spec.ComputeID)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return fmt.Errorf("function: get compute %s: %w", inst.Spec.ComputeID, err)
 		}
@@ -291,41 +281,6 @@ func (s *Service) release(instanceID string) error {
 		}
 	}
 	return fmt.Errorf("too many concurrent writers")
-}
-
-// allocatePort picks a host port in the function-instance range not already
-// used by any compute's port mapping, so a cold-started instance never
-// collides with another compute (including one the pool controller just
-// created in the same instant).
-func allocatePort(computes []resource.Compute) (int, error) {
-	used := make(map[int]bool, len(computes))
-	for i := range computes {
-		for _, mapping := range computes[i].Spec.Ports {
-			if port, ok := hostPortOf(mapping); ok {
-				used[port] = true
-			}
-		}
-	}
-	for port := functionInstancePortRangeLo; port <= functionInstancePortRangeHi; port++ {
-		if !used[port] {
-			return port, nil
-		}
-	}
-	return 0, fmt.Errorf("no free port in %d-%d", functionInstancePortRangeLo, functionInstancePortRangeHi)
-}
-
-// hostPortOf extracts the host-side port from a "host:container/proto"
-// mapping, as used by ComputeSpec.Ports.
-func hostPortOf(mapping string) (int, bool) {
-	host, _, ok := strings.Cut(mapping, ":")
-	if !ok {
-		return 0, false
-	}
-	port, err := strconv.Atoi(host)
-	if err != nil {
-		return 0, false
-	}
-	return port, true
 }
 
 // newUID generates a short, kind-prefixed identifier, mirroring the

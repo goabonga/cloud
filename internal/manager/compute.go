@@ -658,7 +658,7 @@ func (r *ComputeReconciler) Reconcile(ctx context.Context, uid string) error {
 	if err != nil {
 		return fmt.Errorf("manager: load compute %q: %w", uid, err)
 	}
-	if r.nodeName != "" && c.Status.NodeName != r.nodeName {
+	if r.nodeName != "" && c.Status.NodeName != r.nodeName && (c.Status.NodeName != "" || !c.Metadata.IsDeleting()) {
 		// Scheduled to another node (or not yet scheduled); leave it alone.
 		return nil
 	}

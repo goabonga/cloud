@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
+	"github.com/goabonga/infrastructure/internal/functionpool"
 	"github.com/goabonga/infrastructure/internal/registry"
 	"github.com/goabonga/infrastructure/internal/state"
 )
@@ -317,7 +318,11 @@ func TestAllocatePort_SkipsPortsAlreadyInUse(t *testing.T) {
 		Metadata: resource.ObjectMeta{UID: "compute-1"},
 		Spec:     resource.ComputeSpec{Ports: []string{"30000:8080/tcp"}},
 	}
-	port, err := allocatePort([]resource.Compute{*used})
+	env := newInvokeEnv(t)
+	if err := env.computes.Put(used); err != nil {
+		t.Fatal(err)
+	}
+	_, port, err := functionpool.CreateCompute(env.computes, &resource.Function{}, time.Now())
 	if err != nil {
 		t.Fatalf("allocatePort: %v", err)
 	}
@@ -392,5 +397,32 @@ func TestResponseClaimReleasedOnceOnEOFAndClose(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("claim released %d times", calls)
+	}
+}
+
+func TestFailedColdStartIsRetiredAfterCancellation(t *testing.T) {
+	env := newInvokeEnv(t)
+	env.putFunction(t, "fn-timeout", true, true)
+	env.svc.coldStartTimeout = 100 * time.Millisecond
+	response, err := env.svc.Invoke(context.Background(), "fn-timeout", strings.NewReader(""), "")
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("expected cold-start timeout")
+	}
+	computes, err := env.computes.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(computes) != 1 || !computes[0].Metadata.IsDeleting() {
+		t.Fatal("failed cold-start compute remained active")
+	}
+	instances, err := env.instances.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(instances) != 1 || !instances[0].Metadata.IsDeleting() || instances[0].Status.State == resource.FunctionInstanceAssigned {
+		t.Fatal("failed cold-start instance remained assigned")
 	}
 }
