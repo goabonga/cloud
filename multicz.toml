@@ -79,6 +79,24 @@ bump_files = [
 changelog = "cmd/api/CHANGELOG.md"
 post_bump = ["go mod tidy"]
 
+[[components.infra-api.writers]]
+type            = "debian-changelog"
+file            = "cmd/api/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-api.artifacts]]
+type = "debian"
+ref  = "infra-api_{version}_amd64.deb"
+
+[[components.infra-api.artifacts]]
+type = "debian"
+ref  = "infra-api_{version}_arm64.deb"
+
+[[components.infra-api.artifacts]]
+type = "archlinux"
+ref  = "infra-api-{version}-1-x86_64.pkg.tar.zst"
+
 [components.infra-controller-manager]
 paths = ["cmd/controller-manager/**", "internal/controllers/**", "internal/scheduler/**", "go.mod", "go.sum", "deploy/systemd/infra-controller-manager.service"]
 bump_files = [
@@ -86,6 +104,24 @@ bump_files = [
 ]
 changelog = "cmd/controller-manager/CHANGELOG.md"
 post_bump = ["go mod tidy"]
+
+[[components.infra-controller-manager.writers]]
+type            = "debian-changelog"
+file            = "cmd/controller-manager/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-controller-manager.artifacts]]
+type = "debian"
+ref  = "infra-controller-manager_{version}_amd64.deb"
+
+[[components.infra-controller-manager.artifacts]]
+type = "debian"
+ref  = "infra-controller-manager_{version}_arm64.deb"
+
+[[components.infra-controller-manager.artifacts]]
+type = "archlinux"
+ref  = "infra-controller-manager-{version}-1-x86_64.pkg.tar.zst"
 
 # ── Data plane ────────────────────────────────────────────────────────────
 
@@ -100,6 +136,24 @@ bump_files = [
 changelog = "cmd/agent/CHANGELOG.md"
 post_bump = ["go mod tidy"]
 
+[[components.infra-agent.writers]]
+type            = "debian-changelog"
+file            = "cmd/agent/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-agent.artifacts]]
+type = "debian"
+ref  = "infra-agent_{version}_amd64.deb"
+
+[[components.infra-agent.artifacts]]
+type = "debian"
+ref  = "infra-agent_{version}_arm64.deb"
+
+[[components.infra-agent.artifacts]]
+type = "archlinux"
+ref  = "infra-agent-{version}-1-x86_64.pkg.tar.zst"
+
 # ── Clients ───────────────────────────────────────────────────────────────
 
 [components.infra]
@@ -110,6 +164,24 @@ bump_files = [
 changelog = "cmd/cli/CHANGELOG.md"
 post_bump = ["go mod tidy"]
 
+[[components.infra.writers]]
+type            = "debian-changelog"
+file            = "cmd/cli/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra.artifacts]]
+type = "debian"
+ref  = "infra_{version}_amd64.deb"
+
+[[components.infra.artifacts]]
+type = "debian"
+ref  = "infra_{version}_arm64.deb"
+
+[[components.infra.artifacts]]
+type = "archlinux"
+ref  = "infra-{version}-1-x86_64.pkg.tar.zst"
+
 [components.terraform-provider-infra]
 paths = ["cmd/provider/**", "internal/provider/**", "internal/resources/**", "go.mod", "go.sum"]
 bump_files = [
@@ -119,6 +191,24 @@ changelog = "cmd/provider/CHANGELOG.md"
 # The provider speaks to the API over HTTP and is version-coupled to it.
 depends_on = ["infra-api"]
 post_bump = ["go mod tidy"]
+
+[[components.terraform-provider-infra.writers]]
+type            = "debian-changelog"
+file            = "cmd/provider/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.terraform-provider-infra.artifacts]]
+type = "debian"
+ref  = "terraform-provider-infra_{version}_amd64.deb"
+
+[[components.terraform-provider-infra.artifacts]]
+type = "debian"
+ref  = "terraform-provider-infra_{version}_arm64.deb"
+
+[[components.terraform-provider-infra.artifacts]]
+type = "archlinux"
+ref  = "terraform-provider-infra-{version}-1-x86_64.pkg.tar.zst"
 
 # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -132,6 +222,24 @@ bump_files = [
 changelog = "cmd/idp/CHANGELOG.md"
 post_bump = ["go mod tidy"]
 
+[[components.infra-idp.writers]]
+type            = "debian-changelog"
+file            = "cmd/idp/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-idp.artifacts]]
+type = "debian"
+ref  = "infra-idp_{version}_amd64.deb"
+
+[[components.infra-idp.artifacts]]
+type = "debian"
+ref  = "infra-idp_{version}_arm64.deb"
+
+[[components.infra-idp.artifacts]]
+type = "archlinux"
+ref  = "infra-idp-{version}-1-x86_64.pkg.tar.zst"
+
 # ── Observability ─────────────────────────────────────────────────────────
 
 [components.infra-exporter]
@@ -142,6 +250,24 @@ bump_files = [
 changelog = "cmd/exporter/CHANGELOG.md"
 post_bump = ["go mod tidy"]
 
+[[components.infra-exporter.writers]]
+type            = "debian-changelog"
+file            = "cmd/exporter/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-exporter.artifacts]]
+type = "debian"
+ref  = "infra-exporter_{version}_amd64.deb"
+
+[[components.infra-exporter.artifacts]]
+type = "debian"
+ref  = "infra-exporter_{version}_arm64.deb"
+
+[[components.infra-exporter.artifacts]]
+type = "archlinux"
+ref  = "infra-exporter-{version}-1-x86_64.pkg.tar.zst"
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 [components.infra-container-init]
@@ -151,6 +277,24 @@ bump_files = [
 ]
 changelog = "cmd/container-init/CHANGELOG.md"
 post_bump = ["go mod tidy"]
+
+[[components.infra-container-init.writers]]
+type            = "debian-changelog"
+file            = "cmd/container-init/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-container-init.artifacts]]
+type = "debian"
+ref  = "infra-container-init_{version}_amd64.deb"
+
+[[components.infra-container-init.artifacts]]
+type = "debian"
+ref  = "infra-container-init_{version}_arm64.deb"
+
+[[components.infra-container-init.artifacts]]
+type = "archlinux"
+ref  = "infra-container-init-{version}-1-x86_64.pkg.tar.zst"
 
 # ── Web ───────────────────────────────────────────────────────────────────
 
@@ -173,3 +317,21 @@ bump_files = [
 changelog = "cmd/www/CHANGELOG.md"
 depends_on = ["infra-spa"]
 post_bump = ["go mod tidy"]
+
+[[components.infra-www.writers]]
+type            = "debian-changelog"
+file            = "cmd/www/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-www.artifacts]]
+type = "debian"
+ref  = "infra-www_{version}_amd64.deb"
+
+[[components.infra-www.artifacts]]
+type = "debian"
+ref  = "infra-www_{version}_arm64.deb"
+
+[[components.infra-www.artifacts]]
+type = "archlinux"
+ref  = "infra-www-{version}-1-x86_64.pkg.tar.zst"
