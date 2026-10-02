@@ -56,7 +56,7 @@ func TestExecPeeringLink(t *testing.T) {
 	if err := be.DeleteLink(ctx, veth1); err != nil {
 		t.Fatalf("delete link: %v", err)
 	}
-	if out, _ := exec.Command("ip", "link", "show", veth1).CombinedOutput(); strings.Contains(string(out), veth1) {
+	if out, err := exec.Command("ip", "link", "show", veth1).CombinedOutput(); err == nil {
 		t.Fatalf("veth %q not removed: %s", veth1, out)
 	}
 }
