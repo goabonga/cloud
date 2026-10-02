@@ -3,7 +3,7 @@
 [![CI](https://github.com/goabonga/infrastructure/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/goabonga/infrastructure/actions/workflows/ci.yml)
 [![Codecov](https://img.shields.io/codecov/c/github/goabonga/infrastructure?logo=codecov)](https://codecov.io/gh/goabonga/infrastructure)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/goabonga/infrastructure/blob/main/LICENSE)
-[![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg?logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg?logo=go)](https://go.dev/)
 
 A declarative, Linux-native cloud control plane. It provisions VPCs, compute,
 networking, DNS, KMS, secrets, SSL, WAF, ACL and load balancers using only
@@ -40,7 +40,8 @@ each independently versioned and released by
 
 ## Requirements
 
-- Go 1.25+
+- Go 1.26+
+- Node.js 22.22.2+, 24.15.0+, or 26+ and npm for the dashboard
 - `golangci-lint` for linting
 - [uv](https://docs.astral.sh/uv/) to run `multicz` and `zensical`
 
