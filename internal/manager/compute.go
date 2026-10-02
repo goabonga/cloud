@@ -476,6 +476,8 @@ func rootfsShell(rootfs string) string {
 	return ""
 }
 
+func shellArgument(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+
 // buildEntryScript assembles the shell wrapper that mounts the special
 // filesystems, pivot_roots into rootfs and execs the entrypoint.
 func buildEntryScript(req ComputeRequest, rootfs, entryCmd, shell, pidFile, cgroupProcs string, hasCgroup, hasContainerInit bool) string {
@@ -486,7 +488,7 @@ func buildEntryScript(req ComputeRequest, rootfs, entryCmd, shell, pidFile, cgro
 		fmt.Fprintf(&s, "echo $$ > %s 2>/dev/null\n", cgroupProcs)
 	}
 	if req.Hostname != "" {
-		fmt.Fprintf(&s, "hostname %s 2>/dev/null\n", req.Hostname)
+		fmt.Fprintf(&s, "hostname %s 2>/dev/null\n", shellArgument(req.Hostname))
 	}
 	if len(req.Env) > 0 {
 		keys := make([]string, 0, len(req.Env))
@@ -495,7 +497,7 @@ func buildEntryScript(req ComputeRequest, rootfs, entryCmd, shell, pidFile, cgro
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			fmt.Fprintf(&s, "export %s='%s'\n", k, strings.ReplaceAll(req.Env[k], "'", "'\\''"))
+			fmt.Fprintf(&s, "export %s=%s\n", shellArgument(k), shellArgument(req.Env[k]))
 		}
 	}
 	fmt.Fprintf(&s, "mkdir -p %s/proc %s/sys %s/dev 2>/dev/null\n", rootfs, rootfs, rootfs)
