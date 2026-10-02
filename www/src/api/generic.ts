@@ -61,10 +61,22 @@ export interface ResourceMetadataInput {
 
 interface List {
   items: GenericResource[];
+  continue?: string;
 }
 
 export async function listResources(kind: string): Promise<GenericResource[]> {
-  return (await apiRequest<List>("GET", `/${kind}`)).items ?? [];
+  const items: GenericResource[] = [];
+  const seen = new Set<string>();
+  let next = "";
+  do {
+    const path = next ? `/${kind}?continue=${encodeURIComponent(next)}` : `/${kind}`;
+    const out = await apiRequest<List>("GET", path);
+    items.push(...(out.items ?? []));
+    next = out.continue ?? "";
+    if (next && seen.has(next)) throw new Error("Repeated continuation token");
+    seen.add(next);
+  } while (next);
+  return items;
 }
 
 export async function getResource(kind: string, uid: string): Promise<GenericResource> {

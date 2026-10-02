@@ -84,3 +84,20 @@ describe("generic api", () => {
     expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
   });
 });
+
+describe("collection pagination", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("follows continuation pages", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: [{ metadata: { uid: "first" } }], continue: "next+page" }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: [{ metadata: { uid: "last" } }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const items = await listResources("vpc");
+    expect(items.map((item) => item.metadata.uid)).toEqual(["first", "last"]);
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/vpc?continue=next%2Bpage");
+  });
+  it("rejects repeated continuation tokens", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ items: [], continue: "same" }) }));
+    await expect(listResources("vpc")).rejects.toThrow("Repeated continuation token");
+  });
+});

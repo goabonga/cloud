@@ -47,17 +47,13 @@ func (h *AccessTokenHandler) requireAdmin(next http.HandlerFunc) http.HandlerFun
 	}
 }
 
-func (h *AccessTokenHandler) list(w http.ResponseWriter, _ *http.Request) {
+func (h *AccessTokenHandler) list(w http.ResponseWriter, r *http.Request) {
 	items, err := h.svc.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resource.List[resource.AccessTokenSpec, resource.AccessTokenStatus]{
-		APIVersion: resource.APIVersion,
-		Kind:       resource.KindAccessToken,
-		Items:      items,
-	})
+	writeList(w, r, resource.KindAccessToken, items)
 }
 
 func (h *AccessTokenHandler) get(w http.ResponseWriter, r *http.Request) {

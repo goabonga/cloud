@@ -97,6 +97,13 @@ func (h *Handler[S, ST]) withContext(ctx context.Context) *Handler[S, ST] {
 
 func (h *Handler[S, ST]) list(w http.ResponseWriter, r *http.Request) {
 	h = h.withContext(r.Context())
+	if _, _, err := pageParameters(r); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if h.az != nil {
+		h.az = h.az.ForRequest()
+	}
 	items, err := h.reg.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -111,11 +118,7 @@ func (h *Handler[S, ST]) list(w http.ResponseWriter, r *http.Request) {
 		}
 		items = visible
 	}
-	writeJSON(w, http.StatusOK, resource.List[S, ST]{
-		APIVersion: resource.APIVersion,
-		Kind:       h.kind,
-		Items:      items,
-	})
+	writeList(w, r, h.kind, items)
 }
 
 func (h *Handler[S, ST]) get(w http.ResponseWriter, r *http.Request) {

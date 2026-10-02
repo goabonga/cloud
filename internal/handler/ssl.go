@@ -42,17 +42,13 @@ func (h *SSLHandler) Register(mux *http.ServeMux, base string) {
 	mux.HandleFunc("DELETE "+c+"/{uid}", h.deleteCert)
 }
 
-func (h *SSLHandler) list(w http.ResponseWriter, _ *http.Request) {
+func (h *SSLHandler) list(w http.ResponseWriter, r *http.Request) {
 	items, err := h.svc.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resource.List[resource.SSLCASpec, resource.SSLCAStatus]{
-		APIVersion: resource.APIVersion,
-		Kind:       resource.KindSSLCA,
-		Items:      items,
-	})
+	writeList(w, r, resource.KindSSLCA, items)
 }
 
 func (h *SSLHandler) get(w http.ResponseWriter, r *http.Request) {
@@ -134,17 +130,13 @@ func (h *SSLHandler) issue(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *SSLHandler) listCerts(w http.ResponseWriter, _ *http.Request) {
+func (h *SSLHandler) listCerts(w http.ResponseWriter, r *http.Request) {
 	items, err := h.svc.ListCert()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resource.List[resource.SSLCertSpec, resource.SSLCertStatus]{
-		APIVersion: resource.APIVersion,
-		Kind:       resource.KindSSLCert,
-		Items:      items,
-	})
+	writeList(w, r, resource.KindSSLCert, items)
 }
 
 func (h *SSLHandler) getCert(w http.ResponseWriter, r *http.Request) {

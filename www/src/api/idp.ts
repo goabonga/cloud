@@ -72,8 +72,7 @@ export interface User {
 
 // listUsers returns every user (admin only).
 export async function listUsers(): Promise<User[]> {
-  const out = await idpRequest<{ items: User[] }>("/user", { authenticated: true });
-  return out.items;
+  return listAll<User>("/user");
 }
 
 // putUser creates or updates the user under uid (admin only). An empty
@@ -106,8 +105,7 @@ export interface AccessToken {
 // listAccessTokens returns every access token (admin only; never includes
 // plaintext - only the create/update response ever does, once).
 export async function listAccessTokens(): Promise<AccessToken[]> {
-  const out = await idpRequest<{ items: AccessToken[] }>("/access_token", { authenticated: true });
-  return out.items;
+  return listAll<AccessToken>("/access_token");
 }
 
 // putAccessToken creates or updates the access token under uid (admin only).
@@ -123,4 +121,19 @@ export async function putAccessToken(uid: string, spec: AccessTokenSpec): Promis
 // deleteAccessToken revokes the access token (admin only).
 export async function deleteAccessToken(uid: string): Promise<void> {
   await idpRequest<void>(`/access_token/${encodeURIComponent(uid)}`, { method: "DELETE", authenticated: true });
+}
+
+async function listAll<T>(path: string): Promise<T[]> {
+  const items: T[] = [];
+  const seen = new Set<string>();
+  let next = "";
+  do {
+    const endpoint = next ? `${path}?continue=${encodeURIComponent(next)}` : path;
+    const out = await idpRequest<{ items: T[]; continue?: string }>(endpoint, { authenticated: true });
+    items.push(...(out.items ?? []));
+    next = out.continue ?? "";
+    if (next && seen.has(next)) throw new Error("Repeated continuation token");
+    seen.add(next);
+  } while (next);
+  return items;
 }

@@ -52,17 +52,13 @@ func (h *UserHandler) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (h *UserHandler) list(w http.ResponseWriter, _ *http.Request) {
+func (h *UserHandler) list(w http.ResponseWriter, r *http.Request) {
 	items, err := h.svc.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resource.List[resource.UserSpec, resource.UserStatus]{
-		APIVersion: resource.APIVersion,
-		Kind:       resource.KindUser,
-		Items:      items,
-	})
+	writeList(w, r, resource.KindUser, items)
 }
 
 func (h *UserHandler) get(w http.ResponseWriter, r *http.Request) {

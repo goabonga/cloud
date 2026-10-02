@@ -42,17 +42,13 @@ func (h *SecretHandler) Register(mux *http.ServeMux, base string) {
 	mux.HandleFunc("DELETE "+v+"/{uid}", h.deleteVersion)
 }
 
-func (h *SecretHandler) list(w http.ResponseWriter, _ *http.Request) {
+func (h *SecretHandler) list(w http.ResponseWriter, r *http.Request) {
 	items, err := h.svc.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resource.List[resource.SecretSpec, resource.SecretStatus]{
-		APIVersion: resource.APIVersion,
-		Kind:       resource.KindSecret,
-		Items:      items,
-	})
+	writeList(w, r, resource.KindSecret, items)
 }
 
 func (h *SecretHandler) get(w http.ResponseWriter, r *http.Request) {
@@ -113,11 +109,7 @@ func (h *SecretHandler) listVersions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resource.List[resource.SecretVersionSpec, resource.SecretVersionStatus]{
-		APIVersion: resource.APIVersion,
-		Kind:       resource.KindSecretVersion,
-		Items:      items,
-	})
+	writeList(w, r, resource.KindSecretVersion, items)
 }
 
 func (h *SecretHandler) getVersion(w http.ResponseWriter, r *http.Request) {
