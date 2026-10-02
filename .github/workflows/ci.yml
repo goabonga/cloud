@@ -2,6 +2,7 @@
 # Copyright (c) 2026 Chris <goabonga@pm.me>
 
 name: ci
+# debug probe: no-op comment to test packaging_changed detection
 
 on:
   pull_request:
