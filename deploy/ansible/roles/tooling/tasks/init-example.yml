@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# Included once per example (tooling_example, from main.yml's loop).
+#
+# Proves the mirror layout: init fails if Terraform cannot resolve the
+# provider. .terraform.lock.hcl pins the checksum of the provider binary
+# installed at the first init, so after a rebuild of the provider init fails
+# on a mismatch, and -upgrade does not help for the same version. The lock
+# only covers this local provider, so on failure it is dropped with the
+# cached copy and init runs again.
+- name: Initialise the example workspace
+  block:
+    - name: Initialise the example workspace
+      ansible.builtin.command: terraform init -input=false -no-color
+      args:
+        chdir: "{{ tooling_workspace }}/{{ tooling_example }}"
+      become: true
+      become_user: "{{ vm_user }}"
+      register: tooling_tf_init
+      changed_when: "'Installing goabonga/infra' in tooling_tf_init.stdout"
+  rescue:
+    - name: Drop the stale provider lock and cache
+      ansible.builtin.file:
+        path: "{{ tooling_workspace }}/{{ tooling_example }}/{{ item }}"
+        state: absent
+      loop:
+        - .terraform.lock.hcl
+        - .terraform/providers
+
+    - name: Initialise the example workspace against the current provider
+      ansible.builtin.command: terraform init -input=false -no-color
+      args:
+        chdir: "{{ tooling_workspace }}/{{ tooling_example }}"
+      become: true
+      become_user: "{{ vm_user }}"
+      changed_when: true

@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+- name: Copy control-plane packages
+  ansible.builtin.copy:
+    src: "{{ deb_dir }}/{{ item }}_{{ version }}_{{ deb_arch }}.deb"
+    dest: "/tmp/{{ item }}.deb"
+    mode: "0644"
+  loop: "{{ control_packages }}"
+
+- name: Install control-plane packages
+  ansible.builtin.apt:
+    deb: "/tmp/{{ item }}.deb"
+  loop: "{{ control_packages }}"
+  # A same-content config task further down is what normally notifies these,
+  # but a .deb install changes the binary a running service already loaded
+  # into memory regardless of whether its config did - so this notifies
+  # every one of them unconditionally rather than relying on that coincidence.
+  notify:
+    - Restart infra-api
+    - Restart infra-exporter
+    - Restart infra-idp
+    - Restart infra-www
+
+- name: Ensure the control-plane drop-in directories exist
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    mode: "0755"
+  loop:
+    - infra-api
+    - infra-exporter
+
+- name: Deploy the JWT verification public key
+  ansible.builtin.copy:
+    src: "{{ jwt_pub_file }}"
+    dest: "{{ infra_conf_dir }}/jwt-es256.pub"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart infra-api
+
+- name: Write the API environment file
+  ansible.builtin.template:
+    src: api.env.j2
+    dest: "{{ infra_conf_dir }}/api.env"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart infra-api
+
+- name: Write the shared state environment file
+  ansible.builtin.template:
+    src: state.env.j2
+    dest: "{{ infra_conf_dir }}/state.env"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart infra-exporter
+
+- name: Install the infra-api systemd drop-in
+  ansible.builtin.template:
+    src: infra-api.override.conf.j2
+    dest: /etc/systemd/system/infra-api.service.d/override.conf
+    mode: "0644"
+  notify: Restart infra-api
+
+- name: Install the exporter drop-in
+  ansible.builtin.template:
+    src: state.override.conf.j2
+    dest: /etc/systemd/system/infra-exporter.service.d/override.conf
+    mode: "0644"
+  notify: Restart infra-exporter
+
+- name: Enable and start control-plane services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - infra-api
+    - infra-exporter

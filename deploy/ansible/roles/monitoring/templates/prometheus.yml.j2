@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: infra-exporter
+    static_configs:
+      - targets: ["127.0.0.1:{{ exporter_addr | regex_replace('^:', '') }}"]
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:{{ prometheus_port }}"]

@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: go test
+description: Run `go test -race` with coverage, uploaded to Codecov.
+
+inputs:
+  codecov-token:
+    required: false
+    default: ""
+    description: |
+      Codecov upload token (secrets.CODECOV_TOKEN from the calling
+      workflow) - a composite action can't read the secrets context
+      itself, so the caller must pass it through.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    - name: Run tests with coverage
+      shell: bash
+      run: |
+        go test -race -coverprofile=coverage.out -covermode=atomic ./...
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+      with:
+        files: coverage.out
+        flags: go
+        token: ${{ inputs.codecov-token }}
+        fail_ci_if_error: false
+        disable_search: true

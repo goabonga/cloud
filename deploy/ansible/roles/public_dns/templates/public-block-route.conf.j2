@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+# Managed by Ansible: reach the public block through upstream-sim, the way
+# traffic from the Internet does.
+[Route]
+Destination={{ eip_block }}
+Gateway={{ hostvars[groups['upstream'] | first].ansible_host }}

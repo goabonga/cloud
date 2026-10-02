@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Holds a network namespace for infra-agent: the load-balancer namespace of a
+# VPC, %i being its name (lb-<vpc>). The agent runs in a private mount
+# namespace, so a namespace it named under /run/netns itself would vanish with
+# it on restart; this unit keeps the namespace alive, as its main process's,
+# whatever happens to the agent. The agent starts it, enters the namespace
+# through /proc/<MainPID>/ns/net to plug and configure it, and stops it with
+# the VPC.
+[Unit]
+Description=infra network namespace %i
+Documentation=https://github.com/goabonga/infrastructure
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/sleep infinity
+PrivateNetwork=yes
+# A namespace that dies comes back empty; the agent plugs it in again on its
+# next pass.
+Restart=always
+RestartSec=1
+
+# --- Hardening --------------------------------------------------------------
+# The process only sleeps, holding no capability at all. It runs as the
+# agent's user and group, root:infra: the agent lacks CAP_SYS_PTRACE, so the
+# kernel only lets it open /proc/<pid>/ns/net of a process whose uid and gid
+# both match its own.
+Group=infra
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# golangci-lint v2 configuration. Mirrored locally by the pre-commit `golangci`
+# hook and enforced in CI by the `lint` job.
+version: "2"
+
+run:
+  timeout: 5m
+  build-tags:
+    - integration
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gocritic
+    - misspell
+    - revive
+    - unconvert
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+  exclusions:
+    generated: lax
+    paths:
+      # The frontend's node_modules ships unrelated Go example files (e.g.
+      # flatted); never lint anything under www/.
+      - www
+    rules:
+      # Test files may use dot-imports and skip some doc requirements.
+      - path: _test\.go
+        linters:
+          - revive
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    paths:
+      - www
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/goabonga/infrastructure

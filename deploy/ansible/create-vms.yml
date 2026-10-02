@@ -1,0 +1,179 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Provision the test VMs on the local libvirt host from a Debian cloud image
+# plus cloud-init. Run on the machine that hosts libvirtd:
+#
+#   ansible-playbook create-vms.yml
+---
+- name: Provision libvirt test VMs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    # Ubuntu's default sudo is now sudo-rs, which ignores the `-p` prompt Ansible
+    # passes and prints its own, so -K times out waiting for the expected
+    # prompt. Prefer the classic sudo it ships as sudo.ws when present. Scoped
+    # to this local play: the VMs have only the classic sudo.
+    ansible_become_exe: "{{ 'sudo.ws' if lookup('ansible.builtin.pipe', 'command -v sudo.ws || true') else 'sudo' }}"
+  tasks:
+    - name: Ensure required tools are installed
+      ansible.builtin.shell: "command -v {{ item }}"
+      changed_when: false
+      loop:
+        - qemu-img
+        - virt-install
+        - cloud-localds
+        - virsh
+
+    - name: Ensure the base cloud image exists
+      ansible.builtin.stat:
+        path: "{{ base_image }}"
+        get_checksum: false
+      register: base_image_stat
+
+    # Fetched straight into images_dir from base_image_url, the same place an
+    # operator who pre-seeds it manually (e.g. for an offline run, or a
+    # different release) would put it; the stat above skips this on every
+    # later run once it exists.
+    - name: Download the base cloud image if missing
+      ansible.builtin.get_url:
+        url: "{{ base_image_url }}"
+        dest: "{{ base_image }}"
+        mode: "0644"
+      when: not base_image_stat.stat.exists
+
+    - name: Look up the wan-sim transit network
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} net-info {{ wan_sim.network }}"
+      register: wan_sim_info
+      changed_when: false
+      failed_when: false
+
+    - name: Render the wan-sim network definition
+      ansible.builtin.template:
+        src: wan-sim-network.xml.j2
+        dest: "{{ images_dir }}/{{ wan_sim.network }}.xml"
+        mode: "0644"
+      when: wan_sim_info.rc != 0
+
+    - name: Define the wan-sim network
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} net-define {{ images_dir }}/{{ wan_sim.network }}.xml"
+      when: wan_sim_info.rc != 0
+      changed_when: true
+
+    - name: Start the wan-sim network and start it with libvirtd
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} {{ item }} {{ wan_sim.network }}"
+      loop:
+        - net-autostart
+        - net-start
+      when: "wan_sim_info.rc != 0 or wan_sim_info.stdout is search('Active:\\s+no')"
+      changed_when: true
+
+    - name: List existing domains
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} list --all --name"
+      register: existing_domains
+      changed_when: false
+
+    - name: Create a cloud-init working directory per VM
+      ansible.builtin.file:
+        path: "{{ images_dir }}/{{ item.name }}.ci"
+        state: directory
+        mode: "0755"
+      loop: "{{ vms }}"
+
+    - name: Render cloud-init user-data
+      ansible.builtin.template:
+        src: user-data.j2
+        dest: "{{ images_dir }}/{{ item.name }}.ci/user-data"
+        mode: "0644"
+      loop: "{{ vms }}"
+
+    - name: Render cloud-init network-config
+      ansible.builtin.template:
+        src: network-config.j2
+        dest: "{{ images_dir }}/{{ item.name }}.ci/network-config"
+        mode: "0644"
+      loop: "{{ vms }}"
+
+    - name: Create the boot overlay disk
+      ansible.builtin.command: >-
+        qemu-img create -f qcow2 -F qcow2 -b {{ base_image }}
+        {{ images_dir }}/{{ item.name }}.qcow2 {{ disk_size }}
+      args:
+        creates: "{{ images_dir }}/{{ item.name }}.qcow2"
+      loop: "{{ vms }}"
+      when: item.name not in existing_domains.stdout_lines
+
+    - name: Build the cloud-init seed ISO
+      ansible.builtin.command: >-
+        cloud-localds -N {{ images_dir }}/{{ item.name }}.ci/network-config
+        {{ images_dir }}/{{ item.name }}-seed.iso
+        {{ images_dir }}/{{ item.name }}.ci/user-data
+      args:
+        creates: "{{ images_dir }}/{{ item.name }}-seed.iso"
+      loop: "{{ vms }}"
+      when: item.name not in existing_domains.stdout_lines
+
+    - name: Define and start the domain
+      ansible.builtin.command: >-
+        virt-install --connect {{ libvirt_uri }} --name {{ item.name }}
+        --memory {{ item.memory_mb }} --vcpus {{ item.vcpus }}
+        --disk path={{ images_dir }}/{{ item.name }}.qcow2,format=qcow2,bus=virtio
+        --disk path={{ images_dir }}/{{ item.name }}-seed.iso,device=cdrom
+        --os-variant {{ os_variant }} --network network={{ network }},model=virtio
+        --graphics none --noautoconsole --import
+      loop: "{{ vms }}"
+      when: item.name not in existing_domains.stdout_lines
+
+    - name: Wait for SSH to come up
+      ansible.builtin.wait_for:
+        host: "{{ item.ip }}"
+        port: 22
+        timeout: 300
+      loop: "{{ vms }}"
+
+# cloud-init's netplan matches the primary interface by name ("e*"), so a NIC
+# hot-plugged later would be given the same static address as the first one.
+# Pin that definition to the primary NIC's MAC before any second NIC appears.
+- name: Pin each VM's primary interface to its MAC
+  hosts: all
+  become: true
+  tasks:
+    - name: Match the cloud-init interface by MAC instead of name
+      ansible.builtin.replace:
+        path: /etc/netplan/50-cloud-init.yaml
+        regexp: '^(\s+)name: "e\*"$'
+        replace: '\1macaddress: "{{ ansible_facts.default_ipv4.macaddress }}"'
+      notify: Apply netplan
+
+  handlers:
+    - name: Apply netplan
+      ansible.builtin.command: netplan apply
+      changed_when: true
+
+- name: Attach the wan-sim NICs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    ansible_become_exe: "{{ 'sudo.ws' if lookup('ansible.builtin.pipe', 'command -v sudo.ws || true') else 'sudo' }}"
+  tasks:
+    - name: List each VM's interfaces
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} domiflist {{ item.name }}"
+      register: vm_ifaces
+      changed_when: false
+      loop: "{{ vms | selectattr('wan_mac', 'defined') }}"
+
+    # --live plugs it into the running guest, --config keeps it across restarts.
+    - name: Plug each VM into wan-sim with its fixed MAC
+      ansible.builtin.command: >-
+        virsh --connect {{ libvirt_uri }} attach-interface {{ item.item.name }}
+        network {{ wan_sim.network }} --model virtio --mac {{ item.item.wan_mac }}
+        --config --live
+      loop: "{{ vm_ifaces.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.item.wan_mac not in item.stdout
+      changed_when: true

@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: Feature Request
+description: Suggest a new feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature. Please describe your idea below.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Target component
+      description: Which component(s) would this feature live in?
+      multiple: true
+      options:
+        - infra (CLI)
+        - infra-api
+        - infra-controller-manager
+        - infra-agent
+        - infra-idp
+        - infra-exporter
+        - infra-container-init
+        - infra-www (dashboard server)
+        - infra-spa (dashboard frontend)
+        - terraform-provider-infra
+        - shared core (internal/domain, internal/state)
+        - docs / CI tooling
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: >-
+        What are you trying to do that is currently hard or impossible? Please
+        describe the situation rather than the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >-
+        What should happen instead? For a new resource kind or API endpoint,
+        sketch the manifest or the request/response shape.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you try or rule out, and why?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Compatibility
+      description: >-
+        Removals and incompatible changes go through a deprecate -> remove
+        window of two minor releases (see docs/stability.md).
+      options:
+        - "Additive - no existing behaviour changes"
+        - "Changes existing behaviour"
+        - "Removes existing behaviour"
+        - "Not sure"
+    validations:
+      required: true

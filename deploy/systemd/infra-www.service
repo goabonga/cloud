@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+[Unit]
+Description=infra web dashboard (embedded SPA + API reverse proxy)
+After=network-online.target infra-api.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/infra-www
+Restart=on-failure
+RestartSec=5
+
+# --- Hardening -------------------------------------------------------------
+# Stateless: the dashboard holds no data of its own, only the SPA embedded in
+# the binary and a reverse proxy to infra-api, so it needs no StateDirectory
+# or writable path at all. `systemd-analyze security` scores this unit at 1.1
+# ("OK"), the same floor as infra-api and infra-exporter: PrivateNetwork=,
+# RestrictAddressFamilies=~AF_INET and IPAddressDeny= are the only remaining
+# exposure and none of the three can be applied to a daemon that listens on a
+# socket. CI gates on that score, so removing any directive below fails the
+# build rather than silently regressing.
+#
+# Runs as the `infra` system user created by the package's postinst, the same
+# as every other control-plane daemon.
+User=infra
+Group=infra
+UMask=0077
+
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateUsers=yes
+PrivateIPC=yes
+RemoveIPC=yes
+KeyringMode=private
+
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+
+SocketBindDeny=any
+SocketBindAllow=tcp:8088
+
+[Install]
+WantedBy=multi-user.target

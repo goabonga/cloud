@@ -1,0 +1,14 @@
+version: 2
+ethernets:
+  primary:
+    match:
+      name: "e*"
+    dhcp4: false
+    addresses:
+      - {{ item.ip }}/{{ netmask_prefix }}
+    routes:
+      - to: default
+        via: {{ gateway }}
+    nameservers:
+      addresses:
+        - {{ nameserver }}

@@ -1,0 +1,2 @@
+# Locally generated secrets (KMS key, IdP signing key, client secrets).
+.credentials/

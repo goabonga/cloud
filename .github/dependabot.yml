@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Dependabot v2 configuration.
+#
+# The commit messages Dependabot produces are placeholders - the
+# `dependabot-rewrite` workflow re-classifies each commit by the files it
+# touches and rewrites the prefix to the correct Conventional Commits scope:
+#
+#     .github/workflows/*.yml   -> ci:
+#     go.mod / go.sum           -> chore(deps):
+#
+# The rewrite also re-signs the commits with the maintainer's GPG key (via
+# `GPG_PRIVATE_KEY` + `GPG_PASSPHRASE`). When those secrets are unset, the PR
+# ships unmodified.
+
+version: 2
+
+updates:
+  # Go module dependencies.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Paris"
+    open-pull-requests-limit: 5
+    groups:
+      # Bundle routine Go dependency bumps into one weekly PR so the rewrite
+      # workflow runs once instead of many times.
+      go-deps:
+        applies-to: version-updates
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "go"
+
+  # Pinned versions of GitHub Actions in `.github/workflows/*.yml` and the
+  # composite actions under `.github/actions/`.
+  #
+  # Third-party actions are pinned by full commit SHA with the release tag in a
+  # trailing comment; first-party `actions/*` stay on their major tag. Dependabot
+  # understands both forms and rewrites the SHA and the comment together, so the
+  # pin never drifts from the version it claims to be.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Paris"
+    open-pull-requests-limit: 5
+    groups:
+      ci-actions:
+        applies-to: version-updates
+        patterns:
+          - "actions/*"
+          - "astral-sh/*"
+          - "google/*"
+          - "codecov/*"
+          - "golangci/*"
+          - "compilerla/*"
+          - "pre-commit/*"
+          - "goabonga/*"
+          - "geekyeggo/*"
+          - "getplumber/*"
+          - "zaproxy/*"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # Frontend dependencies for the Vite dashboard.
+  - package-ecosystem: "npm"
+    directory: "/www"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Paris"
+    open-pull-requests-limit: 5
+    # Split by whether the bump reaches the shipped bundle, so one PR never
+    # mixes a change that needs an infra-spa release with one that does not.
+    # A dependency joins the first group it matches, so www-bundler must stay
+    # ahead of www-tooling: vite and its plugins are devDependencies, but they
+    # decide the emitted assets.
+    groups:
+      www-runtime:
+        applies-to: version-updates
+        dependency-type: production
+      www-bundler:
+        applies-to: version-updates
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+      www-tooling:
+        applies-to: version-updates
+        dependency-type: development
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "javascript"

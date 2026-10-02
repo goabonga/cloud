@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: plumber
+
+# Plumber (getplumber.io) audits `.github/workflows/` and `.github/actions/`
+# for compliance and supply-chain issues: third-party actions pinned to a
+# mutable tag, unsafe triggers (`pull_request_target`, `workflow_run`),
+# template-injection sinks where an untrusted expression is interpolated into
+# a `run:` block, over-broad GITHUB_TOKEN permissions, debug toggles that leak
+# secrets, Docker-in-Docker. Findings upload as SARIF to the repo's Code
+# Scanning surface, so they land next to the code-level alerts instead of
+# only in a job log.
+#
+# This is the check that keeps the rest of the pipeline honest: nothing else
+# here notices when a new workflow reintroduces a floating action tag or hands
+# `contents: write` to a job that only reads.
+#
+# Fires on every pull request, regardless of what it touches - unfiltered so
+# `audit` always reports a status for the head SHA. `main-protection` (the
+# repo ruleset) requires it to pass before merging, and a required status
+# check that a path filter sometimes skips never gets reported at all, which
+# blocks the merge forever instead of just failing it.
+#
+# Also fires on every change to workflows or composite actions pushed
+# straight to main, and weekly on top of that - a freshly disclosed CVE in an
+# already-merged pinned action shows up on the next Monday sweep without
+# needing a code change to trigger it.
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+  schedule:
+    - cron: "0 5 * * 1" # Monday 06:00 Europe/Paris (07:00 during DST)
+  workflow_dispatch: {}
+
+# `security-events: write` lets the action push SARIF into Code Scanning.
+# `actions: read` lets Plumber introspect the triggering workflow's siblings -
+# it parses every yml under .github/, not just the one that fired. Everything
+# else stays read-only.
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: plumber-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned by full commit SHA: Plumber's own ruleset flags tag-pinned
+      # third-party actions, so anything looser here would be the first
+      # finding it reports against itself.
+      - name: Run Plumber compliance audit
+        uses: getplumber/plumber@d85d3b54f9be5b2a5de072e203209de865e6139c # v0.5.15
+        with:
+          # `min-points`, not the deprecated `threshold`: the action treats
+          # threshold: 100 as unset, so the strict bar we thought we were
+          # setting was never applied - the run failed against the default
+          # gate instead, which is how we found out.
+          #
+          # 100 of 100 is deliberate. A partial bar invites the score to drift
+          # down one accepted finding at a time; a full bar forces each finding
+          # to be either fixed or written down as a decision in .plumber.yaml.
+          min-points: "100"
+          # Every repo-specific policy decision - the action allowlist and the
+          # two suppressions - lives in .plumber.yaml next to the reason for
+          # it. Nothing is configured as a bare control name here, where the
+          # justification would have nowhere to go.
+          config-file: .plumber.yaml
+          # Authenticated reads for third-party-action resolution. Anonymous
+          # GitHub API access is capped at 60 req/h, which this repo's pinned
+          # actions exhaust in a single run - and a rate-limited check is
+          # *skipped*, which the min-points gate then counts as a failure.
+          # Dependabot PRs hit this hardest, since each introduces a batch of
+          # fresh SHAs to resolve at once. github.token is read-only on those
+          # PRs but still carries the 5000 req/h authenticated limit.
+          metadata-token: ${{ github.token }}
+          # On by default; kept explicit so the workflow's intent is legible
+          # without cross-referencing the action's defaults.
+          upload-sarif: true
+
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: plumber
+          body: |
+            Supply-chain and compliance audit of `.github/workflows/` and
+            `.github/actions/`. Findings are also published to Code Scanning
+            as SARIF.

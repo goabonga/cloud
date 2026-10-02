@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: bump preview
+description: |
+  Run `multicz bump` write-only so the workspace reflects the version the
+  next release will carry. Every `bump_files` target is rewritten in place -
+  `cmd/<component>/version.go`, `www/package.json` - with no commit, tag,
+  push, post_bump hook or CHANGELOG write.
+
+  Use at the start of any job whose output embeds the version: a Go binary
+  compiled from a patched `version.go`, an SPA built from a patched
+  `package.json`, a container image or `.deb` named after it. Without this
+  the artifact a pull request produces is stamped with the *previous*
+  release's version, so what CI exercises is not what `release` publishes.
+
+  Jobs whose result cannot depend on the version (lint, license headers,
+  vulnerability scanners) deliberately skip it - the rewrite would cost them
+  a full-history fetch for no observable difference.
+
+  REQUIRES the calling job to have run `actions/checkout` with
+  `fetch-depth: 0` beforehand: multicz reads the whole tag history to work
+  out the next version, and a shallow clone silently yields the wrong one.
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      with:
+        enable-cache: false
+        python-version: "3.12"
+    - name: Install multicz
+      shell: bash
+      run: uv tool install multicz --with multicz-go-deps-plugin
+    - name: Bump (write only - no commit / tag / push / hooks / CHANGELOG)
+      shell: bash
+      run: multicz bump --no-post-bump --no-changelog

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: owasp scan
+description: |
+  Run a ZAP baseline scan against a running target and fail on any rule marked
+  FAIL in `.zap/rules.tsv`.
+
+  Passive only - it crawls and inspects responses, it does not attack. That is
+  the right trade for a merge gate: an active scan against a control-plane API
+  would spend minutes writing resources, and the class of defect worth blocking
+  a merge on here is a missing security header or a permissive CORS policy,
+  which the passive pass finds.
+
+  `fail_action` stays false and the gate is applied from the rules file
+  instead. The action's own flag fails on *any* alert including informational
+  ones, which on a JSON API means every run is red and the signal is worthless.
+
+inputs:
+  target:
+    required: true
+    description: URL to scan, reachable from the runner.
+  name:
+    required: true
+    description: Short label for the scanned surface, e.g. api or www.
+
+runs:
+  using: composite
+  steps:
+    - uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+      with:
+        target: ${{ inputs.target }}
+        rules_file_name: .zap/rules.tsv
+        # -I: do not return failure on warnings. Rules escalated to FAIL in the
+        # rules file still fail the run, which is where the gate lives.
+        # -j: use the AJAX spider as well, so the dashboard's client-rendered
+        # routes are actually crawled rather than just its index document.
+        cmd_options: "-I -j"
+        fail_action: true
+        # An issue per scan would file a duplicate on every push. The report is
+        # uploaded as an artifact and summarised on the run instead.
+        allow_issue_writing: false
+        artifact_name: zap-${{ inputs.name }}

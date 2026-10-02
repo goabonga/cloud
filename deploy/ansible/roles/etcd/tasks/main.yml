@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+- name: Create the etcd system group
+  ansible.builtin.group:
+    name: etcd
+    system: true
+
+- name: Create the etcd system user
+  ansible.builtin.user:
+    name: etcd
+    group: etcd
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ etcd_data_dir }}"
+    create_home: false
+
+- name: Create the etcd data directory
+  ansible.builtin.file:
+    path: "{{ etcd_data_dir }}"
+    state: directory
+    owner: etcd
+    group: etcd
+    mode: "0700"
+
+- name: Create the private etcd TLS directory
+  ansible.builtin.file:
+    path: /etc/etcd/tls
+    state: directory
+    owner: etcd
+    group: etcd
+    mode: "0700"
+
+- name: Deploy etcd management credentials
+  ansible.builtin.copy:
+    src: "{{ management_pki_dir }}/{{ item.src }}"
+    dest: "/etc/etcd/tls/{{ item.dest }}"
+    owner: etcd
+    group: etcd
+    mode: "0600"
+  loop:
+    - {src: ca.crt, dest: ca.crt}
+    - {src: '{{ inventory_hostname }}.crt', dest: node.crt}
+    - {src: '{{ inventory_hostname }}.key', dest: node.key}
+  notify: Restart etcd
+
+- name: Download the etcd release tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/etcd-io/etcd/releases/download/{{ etcd_version }}/etcd-{{ etcd_version }}-linux-{{ deb_arch }}.tar.gz"
+    dest: "/tmp/etcd-{{ etcd_version }}-linux-{{ deb_arch }}.tar.gz"
+    mode: "0644"
+
+- name: Unpack the etcd binaries into /usr/local/bin
+  ansible.builtin.unarchive:
+    src: "/tmp/etcd-{{ etcd_version }}-linux-{{ deb_arch }}.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+      - --wildcards
+      - "*/etcd"
+      - "*/etcdctl"
+    creates: /usr/local/bin/etcd
+
+- name: Install the etcd systemd unit
+  ansible.builtin.template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    mode: "0644"
+  notify: Restart etcd
+
+# A new member only reports ready once it reaches quorum, so a blocking start
+# on the first host would wait on members not started yet. Start every member
+# without waiting, then wait for the whole cluster to be healthy.
+- name: Enable and start etcd
+  ansible.builtin.systemd_service:
+    name: etcd
+    enabled: true
+    state: started
+    daemon_reload: true
+    no_block: true
+
+- name: Wait for every etcd member to be healthy
+  ansible.builtin.command: >-
+    /usr/local/bin/etcdctl --endpoints={{ state_dsn | regex_replace('^etcd://', '') }}
+    --cacert=/etc/etcd/tls/ca.crt --cert=/etc/etcd/tls/node.crt
+    --key=/etc/etcd/tls/node.key endpoint health
+  register: etcd_health
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: etcd_health.rc == 0

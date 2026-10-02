@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# upstream-sim routes the public block to the edges, hosts the "inet" client
+# namespace, and NATs everything but the block towards the real LAN.
+# dig, for verify-upstream.yml to query the public DNS from the inet client.
+- name: Install the DNS tools
+  ansible.builtin.apt:
+    name: bind9-dnsutils
+    update_cache: true
+    cache_valid_time: 3600
+
+# `ip netns exec inet` bind-mounts this over /etc/resolv.conf: the inet client
+# resolves through the public DNS first, like a machine on the Internet, and
+# falls back to the LAN resolver, reached through the NAT, for other names.
+- name: Ensure the inet namespace's config directory exists
+  ansible.builtin.file:
+    path: /etc/netns/inet
+    state: directory
+    mode: "0755"
+
+- name: Point the inet client at the public DNS
+  ansible.builtin.template:
+    src: inet-resolv.conf.j2
+    dest: /etc/netns/inet/resolv.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable forwarding and L4 multipath hashing
+  ansible.builtin.template:
+    src: 60-upstream-sim.conf.j2
+    dest: /etc/sysctl.d/60-upstream-sim.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply sysctl
+
+- name: Install the upstream-sim setup script
+  ansible.builtin.template:
+    src: upstream-sim-up.j2
+    dest: /usr/local/sbin/upstream-sim-up
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart upstream-sim
+
+- name: Install the upstream-sim unit
+  ansible.builtin.template:
+    src: upstream-sim.service.j2
+    dest: /etc/systemd/system/upstream-sim.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart upstream-sim
+
+- name: Enable and start upstream-sim
+  ansible.builtin.systemd_service:
+    name: upstream-sim
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Install BIRD
+  ansible.builtin.apt:
+    name: bird2
+  when: upstream.route_mode == 'bgp'
+
+- name: Configure BIRD to peer with the edges
+  ansible.builtin.template:
+    src: bird.conf.j2
+    dest: /etc/bird/bird.conf
+    owner: bird
+    group: bird
+    mode: "0640"
+    validate: bird -p -c %s
+  when: upstream.route_mode == 'bgp'
+  notify: Reload BIRD
+
+- name: Enable and start BIRD
+  ansible.builtin.systemd_service:
+    name: bird
+    enabled: "{{ upstream.route_mode == 'bgp' }}"
+    state: "{{ 'started' if upstream.route_mode == 'bgp' else 'stopped' }}"
+  failed_when: false

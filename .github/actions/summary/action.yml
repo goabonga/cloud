@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: step summary
+description: |
+  Append a markdown block (`## title` + optional body) to
+  `$GITHUB_STEP_SUMMARY`, the per-run markdown panel rendered on the
+  workflow run page. Multiple calls in the same job concatenate.
+
+  Wire as the final step of every job, with `if: always()`, so the summary
+  surfaces whether the job passed or failed. The body stays neutral - the
+  verdict comes from GitHub's own job badge, so a body that asserted success
+  would contradict the badge on a red run.
+
+  `detect` is the one job that skips this: it already renders its own change
+  table, and a second heading above it would say the same thing twice.
+
+inputs:
+  title:
+    required: true
+    description: H2 heading - typically the job name.
+  body:
+    required: false
+    default: ""
+    description: |
+      Optional markdown body. Supports multiple lines via the `|` block
+      scalar. Inline backticks render as code.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+      run: |
+        {
+          printf '## %s\n' "$TITLE"
+          if [ -n "$BODY" ]; then
+            printf '\n%s\n' "$BODY"
+          fi
+          printf '\n'
+        } >> "$GITHUB_STEP_SUMMARY"

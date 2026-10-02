@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Plumber configuration. Only the controls that need a repo-specific decision
+# are set here; everything else keeps the default from the binary, so a control
+# added upstream starts applying without an edit.
+#
+# The audit runs in .github/workflows/plumber.yml.
+
+version: "2.0"
+
+github:
+  controls:
+    # Every third-party action must be named here. The default policy trusts
+    # actions/* and same-org actions and rejects the rest, which is the right
+    # default and means each publisher we depend on is a recorded decision
+    # rather than whatever a workflow happened to reference.
+    #
+    # `trustSameOrgActions` covers goabonga/multicz-action.
+    githubActionMustComeFromAuthorizedSources:
+      enabled: true
+      trustGithubOfficialActions: true
+      trustSameOrgActions: true
+      trustedGithubActions:
+        # Python and Node toolchain
+        - astral-sh/setup-uv # Astral, publisher of uv
+        # Go toolchain and quality gates
+        - golangci/golangci-lint-action # golangci-lint upstream
+        - codecov/codecov-action # Codecov
+        # DAST
+        - zaproxy/action-baseline # ZAP project
+        # Workflow plumbing
+        - geekyeggo/delete-artifact # de-facto standard for artifact cleanup
+        - getplumber/plumber # this audit
+
+    # osv-scanner is installed from a pinned release with a verified SHA-256
+    # rather than through a vendor action, which would curl its installer
+    # from a default branch. Left enabled so a reintroduction is caught.
+    actionsMustNotExecuteMutableRemoteCode:
+      enabled: true
+
+    # Both dependabot-rewrite.yml and auto-merge-signed.yml need a privileged
+    # trigger to exist at all:
+    #
+    #   dependabot-rewrite.yml - workflow_run. Rewriting and GPG-signing
+    #     Dependabot's commits needs both the signing key and a checkout of the
+    #     PR head, so the control is structurally incompatible with any
+    #     "rewrite and sign" workload.
+    #   auto-merge-signed.yml  - pull_request_target. Putting the maintainer's
+    #     key on a merge commit means creating that commit on a runner holding
+    #     the key.
+    #
+    # Both are defended by shape instead: the rewrite is reachable only through
+    # a secretless signal workflow, splits `trusted/` from `pr/` so PR code
+    # never executes, and pins to head_sha; auto-merge runs no PR-authored code
+    # at all and refuses fork branches.
+    workflowMustNotUseDangerousTriggers:
+      enabled: false
+
+    # auto-merge-signed.yml checks out the PR head under pull_request_target,
+    # which is the tj-actions / CVE-2025-30066 shape and normally indefensible.
+    # It is disabled here for one narrow reason: putting the maintainer's GPG
+    # key on a merge commit requires creating that commit on a runner that
+    # holds the key, and rebasing the PR's commits requires having them.
+    #
+    # What makes it safe is that no PR-authored code executes - the job runs
+    # git plumbing only, with no build, install, test or hook - and fork
+    # branches are refused outright rather than sandboxed, so the commits being
+    # re-signed always come from a branch a write-access user pushed. The
+    # labeller's write access is re-verified server-side on top of that.
+    #
+    # Re-enable the moment Plumber can scope this control to a single file, or
+    # if that workflow ever grows a step that runs code from the checkout.
+    pullRequestTargetMustNotCheckoutHead:
+      enabled: false

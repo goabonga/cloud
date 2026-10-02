@@ -1,0 +1,255 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: dependabot-rewrite
+
+# Re-author and GPG-sign Dependabot commits with the Conventional Commits
+# scopes this repo's release tooling consumes (see
+# scripts/rewrite-dependabot-commit.sh for the routing table).
+#
+# Triggered by `workflow_run` on dependabot-rewrite-signal.yml rather than by
+# `pull_request_target`. Both give the job access to `GPG_PRIVATE_KEY`, but
+# `pull_request_target` puts that key one misconfigured `if:` away from a fork
+# PR, whereas `workflow_run` is not reachable from a fork at all - a fork can
+# only fire the signal workflow, which holds no secrets.
+#
+# Defence in depth on top of that: the rewrite script is checked out from
+# `main` into `trusted/` while the PR's commits land in `pr/`. The rebase runs
+# inside `pr/` but execs the script out of `trusted/`, so a PR cannot supply
+# the code that processes its own commits - not even by editing
+# `scripts/rewrite-dependabot-commit.sh` in the PR itself.
+
+on:
+  workflow_run:
+    workflows: [dependabot-rewrite-signal]
+    types: [completed]
+
+permissions:
+  contents: write # force-push the rewritten branch
+  pull-requests: write # comment on the PR
+  issues: write # file the tracking issue
+
+jobs:
+  rewrite:
+    name: rewrite dependabot commits
+    # Three gates. The signal run must have succeeded (which already required
+    # actor == dependabot[bot] through its own `if`), it must have come from a
+    # real pull_request event, and its actor must still be Dependabot. The
+    # last is redundant with the signal's own gate, and kept as a tripwire in
+    # case the signal workflow is ever edited to widen its actor check.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    concurrency:
+      # One slot per Dependabot branch, so a second push to the same PR
+      # cancels the rewrite still running for the previous one.
+      group: dependabot-rewrite-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: true
+    steps:
+      - name: Check GPG availability
+        id: gate
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ] || [ -z "$GPG_PASSPHRASE" ]; then
+            {
+              echo "## Dependabot rewrite: skipped"
+              echo ""
+              echo "GPG_PRIVATE_KEY and/or GPG_PASSPHRASE are not configured. "
+              echo "The Dependabot PR ships with bot-authored, web-signed commits."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::GPG secrets unset; leaving Dependabot commits as-is"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `workflow_run.pull_requests` is empty for fork-originated runs. The
+      # actor gate above should already have excluded those, so an empty array
+      # here means an assumption broke rather than an expected case - stop
+      # before the rewrite steps read a blank base ref and rebase onto
+      # something arbitrary.
+      - name: Resolve the pull request
+        id: pr
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          BASE_REF: ${{ github.event.workflow_run.pull_requests[0].base.ref }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PR_NUMBER" ] || [ -z "$BASE_REF" ]; then
+            echo "::error::workflow_run carried no pull request; refusing to rewrite"
+            exit 1
+          fi
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
+
+      # Trusted code: the rewrite script exactly as it lives on main. The
+      # rebase below execs THIS copy, never the PR's.
+      - name: Checkout main into trusted/
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: trusted
+
+      # PR commits: data to be rewritten, never executed.
+      - name: Checkout PR head into pr/
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/checkout@v7
+        with:
+          # head_sha, not head_branch: pins the rewrite to the exact commits
+          # the signal observed, so a Dependabot push landing between signal
+          # and rewrite cannot have its commits silently skipped by the
+          # force-push below.
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          # Without this, the checkout persists the default GITHUB_TOKEN, and
+          # a push authenticated with it never triggers further workflow runs
+          # (GitHub's anti-recursion rule) - so `ci.yml` would never re-run on
+          # the rewritten, signed commits below. RELEASE_PAT is a real user
+          # identity, so its push triggers `ci.yml` normally.
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+          path: pr
+
+      - name: Configure GPG and git identity from the imported key
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: pr
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          # Pre-cache the passphrase so the --amend inside the rebase loop
+          # signs without an interactive prompt.
+          echo test | gpg --batch --yes --passphrase "$GPG_PASSPHRASE" \
+            --pinentry-mode loopback --sign > /dev/null
+          KEY_ID=$(gpg --list-secret-keys --with-colons \
+            | awk -F: '/^sec/{print $5; exit}')
+          # Pull the maintainer's name + email from the key UID so the
+          # rewritten commits look identical to a manual local commit.
+          UID_LINE=$(gpg --list-keys --with-colons "$KEY_ID" \
+            | awk -F: '/^uid/{print $10; exit}')
+          NAME="${UID_LINE%% <*}"
+          EMAIL=$(printf '%s' "$UID_LINE" | sed -nE 's/.*<([^>]+)>.*/\1/p')
+          git config user.name  "$NAME"
+          git config user.email "$EMAIL"
+          git config user.signingkey "$KEY_ID"
+          git config commit.gpgsign true
+
+      # The rewrite script compares what the binaries link before and after
+      # a go.mod bump with `go list`, which only resolves the module graph:
+      # no PR code is built or run. Versioned from main's go.mod; a PR that
+      # raises the toolchain directive gets it through GOTOOLCHAIN=auto (set on
+      # the rewrite step, since setup-go exports GOTOOLCHAIN=local), which
+      # verifies the download against the checksum database. No cache: this
+      # job holds the signing key, so it restores nothing a PR could have
+      # written.
+      - name: Set up Go
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: trusted/go.mod
+          cache: false
+
+      - name: Rewrite commits with scope-aware messages
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: pr
+        env:
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          BASE_SHA=$(git merge-base "origin/$BASE_REF" HEAD)
+          # --exec runs the trusted copy from main. The absolute path via
+          # $GITHUB_WORKSPACE survives any chdir the rebase machinery does.
+          git rebase "$BASE_SHA" \
+            --exec "$GITHUB_WORKSPACE/trusted/scripts/rewrite-dependabot-commit.sh"
+
+      - name: Force-push rewritten branch
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: pr
+        env:
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          git push --force-with-lease origin "HEAD:$HEAD_REF"
+
+      # Mirror the bump onto the issue board so dependency work is visible
+      # where the rest of the backlog lives. Idempotent through a hidden
+      # marker in the PR body: Dependabot re-pushes retrigger this whole
+      # workflow, and without the marker each one would file a duplicate.
+      #
+      # The closing keyword goes into the PR's own body, not a comment on it
+      # or into the issue's body. GitHub only auto-closes an issue from a
+      # closing keyword in the referencing PR's description (or a commit
+      # message) - never from the reverse reference - so writing "closes #N"
+      # on the issue side closes nothing. Putting it in the PR body also means
+      # no extra comment on the thread: the body already shows the link.
+      - name: Open a tracking issue linked to the PR
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The repo is checked out into trusted/ and pr/, so the workspace
+          # root is not a git repo and gh cannot infer the remote. Pin it.
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          marker="<!-- dependabot-tracking -->"
+          body=$(gh pr view "$PR_NUMBER" --json body --jq '.body')
+          if printf '%s' "$body" | grep -qF "$marker"; then
+            echo "PR #$PR_NUMBER already has a tracking issue; nothing to do"
+            exit 0
+          fi
+          title=$(gh pr view "$PR_NUMBER" --json title --jq '.title')
+          # Scope = the Conventional Commits prefix the rewrite just assigned
+          # (`ci`, `fix(deps)` or `chore(deps)`); headline = the subject
+          # without it.
+          scope=$(printf '%s' "$title" | sed -nE 's/^([a-z]+(\([^)]*\))?)!?:.*/\1/p')
+          [ -z "$scope" ] && scope="deps"
+          headline=$(printf '%s' "$title" | sed -E 's/^[a-z]+(\([^)]*\))?!?:[[:space:]]*//')
+          # Grouped bumps carry a `| Package | From | To |` table in the PR
+          # body; lift those rows verbatim into a collapsed block.
+          table=$(printf '%s' "$body" | grep -E '^\|' | head -40 || true)
+          {
+            printf '## Dependabot update - `%s`\n\n' "$scope"
+            printf 'Filed by `dependabot-rewrite` for #%s. The PR commits were\n' "$PR_NUMBER"
+            printf 're-authored and GPG-signed as the maintainer with a\n'
+            printf 'Conventional Commits scope.\n\n'
+            printf '### Bump\n\n%s\n\n' "$headline"
+            if [ -n "$table" ]; then
+              printf '<details><summary>Packages</summary>\n\n%s\n\n</details>\n\n' "$table"
+            fi
+            printf -- '---\nCloses automatically when #%s merges.\n' "$PR_NUMBER"
+          } > /tmp/dependabot-issue.md
+          issue_url=$(gh issue create \
+            --title "track: $title" \
+            --label "dependencies" \
+            --body-file /tmp/dependabot-issue.md)
+          issue_number=$(printf '%s' "$issue_url" | grep -oE '[0-9]+$')
+          {
+            printf '%s\n\n' "$body"
+            printf '%s\n' "$marker"
+            printf 'Tracked by %s.\n\n' "$issue_url"
+            printf 'Closes #%s\n' "$issue_number"
+          } > /tmp/dependabot-pr-body.md
+          gh pr edit "$PR_NUMBER" --body-file /tmp/dependabot-pr-body.md
+          echo "opened tracking issue #$issue_number for PR #$PR_NUMBER"
+
+      - name: Summary
+        if: steps.gate.outputs.skip != 'true' && success()
+        working-directory: pr
+        env:
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          {
+            echo "## Dependabot rewrite: applied"
+            echo ""
+            echo "PR branch \`$HEAD_REF\` rewritten:"
+            echo ""
+            echo "- Conventional-commits scope inferred from changed files"
+            echo "- Authored and GPG-signed as \`$(git config user.name) <$(git config user.email)>\`"
+          } >> "$GITHUB_STEP_SUMMARY"

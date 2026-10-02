@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: www quality
+description: |
+  eslint, tsc, vitest with coverage (uploaded to Codecov) and a production
+  vite build of the SPA.
+
+inputs:
+  codecov-token:
+    required: false
+    default: ""
+    description: |
+      Codecov upload token (secrets.CODECOV_TOKEN from the calling
+      workflow) - a composite action can't read the secrets context
+      itself, so the caller must pass it through.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: www/package-lock.json
+    - run: npm ci
+      shell: bash
+      working-directory: www
+    - run: npm run lint
+      shell: bash
+      working-directory: www
+    - run: npm run typecheck
+      shell: bash
+      working-directory: www
+    - name: Run tests with coverage
+      shell: bash
+      working-directory: www
+      run: npm run test:coverage
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+      with:
+        # lcov.info records paths relative to www/ (vitest's cwd). Running
+        # the uploader from that same cwd finds the file, but its
+        # "network" section (the file listing it validates uploaded paths
+        # against) then defaults to that cwd too - so it computes bare
+        # src/... paths instead of the real www/src/... ones and Codecov
+        # rejects the whole report as "source code unavailability /
+        # path mismatch" (confirmed: the merged report for a www-only
+        # push had zero www/ files in it). network-prefix tells the CLI
+        # to prepend www/ to that network section so it matches reality.
+        working-directory: www
+        files: coverage/lcov.info
+        flags: www
+        network_prefix: www/
+        token: ${{ inputs.codecov-token }}
+        fail_ci_if_error: false
+        disable_search: true
+    - run: npm run build
+      shell: bash
+      working-directory: www

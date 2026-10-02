@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+[Service]
+EnvironmentFile={{ infra_conf_dir }}/api.env
+# The daemon runs as the unprivileged `infra` user, which cannot read
+# {{ infra_conf_dir }}. systemd reads the key as root and hands it over in the
+# unit's credentials directory (%d). The PEM is multi-line, so it is exported
+# from a wrapper rather than an EnvironmentFile, and `&&` makes a missing key
+# fail the start instead of launching the daemon without it.
+LoadCredential=jwt-es256.pub:{{ infra_conf_dir }}/jwt-es256.pub
+ExecStart=
+ExecStart=/bin/sh -c 'GOA_API_JWT_PUBKEY="$$(cat %d/jwt-es256.pub)" && export GOA_API_JWT_PUBKEY && exec /usr/bin/infra-api'

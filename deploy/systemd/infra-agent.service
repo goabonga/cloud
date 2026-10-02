@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+[Unit]
+Description=infra per-host agent (kernel reconciliation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# The agent drives network namespaces, nftables, cgroups v2 and dm-crypt on
+# the host, so it runs as root. It is deliberately NOT hardened to the level
+# of the control-plane daemons: ProtectSystem=strict, ProtectKernelTunables=,
+# ProtectControlGroups=, RestrictNamespaces= and an empty
+# CapabilityBoundingSet= would each block a reconciler outright. CI holds it
+# to a separate, looser score for that reason - see the deb-validate job.
+ExecStart=/usr/bin/infra-agent
+Restart=on-failure
+RestartSec=5
+Environment=GOA_STATE_DIR=/var/lib/infra
+StateDirectory=infra
+# root:infra rather than root:root. The reference deployment puts the agent on
+# its own hosts, so /var/lib/infra is not shared - but when it is co-located
+# with the control plane, this keeps the state group-readable by the `infra`
+# user those daemons run as instead of locking them out.
+Group=infra
+
+# --- Hardening (what survives needing the kernel) --------------------------
+# Capabilities are enumerated rather than left at the root default: the agent
+# needs network and mount administration, not the full set. The bounding set
+# also caps every workload the agent starts, since they are its children:
+# CAP_NET_BIND_SERVICE is here for them, so an image serving on port 80 or 443
+# (nginx, traefik/whoami, ...) can bind it.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_SYS_MODULE CAP_MKNOD CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN
+UMask=0077
+
+ProtectHome=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+
+PrivateTmp=yes
+RemoveIPC=yes
+KeyringMode=private
+
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

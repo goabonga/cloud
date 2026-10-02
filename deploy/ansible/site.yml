@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Full-stack deployment onto the provisioned VMs:
+#   - etcd as the shared state backend, one member on every host,
+#   - the control plane: infra-api and infra-exporter on the control host,
+#     infra-controller-manager on both agent hosts under leader election,
+#   - infra-idp issuing ES256 JWTs, verified by the API,
+#   - the infra-www dashboard (embedded SPA + API reverse proxy),
+#   - a native Prometheus + Grafana stack,
+#   - Terraform with the local provider and 4 example workspaces (control host),
+#   - infra-agent on every agent host, all sharing the etcd store
+#     (infra-hypervisor ships inside that same package),
+#   - a raw base image and the host's own kernel staged on every agent
+#     host, for the infra_microvm resources two of the Terraform examples use.
+#
+# Build the artifacts first (from the repository root):
+#   make deb VERSION=<version>   # the .deb packages (incl. infra-www), into dist/
+#   make build-provider         # the Terraform provider, into build/
+# Keep `version` in group_vars/all.yml in sync with VERSION.
+#
+# Then, as your normal user (not under sudo):
+#   ansible-playbook --ask-become-pass site.yml
+---
+# ansible.cfg turns become on for every play, which this one must not inherit:
+# it writes into the operator's checkout, where root-owned credentials would be
+# unreadable to the later lookups, and it would prompt for a sudo password it
+# has no use for.
+- name: Generate local credentials
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  roles:
+    - credentials
+
+# Every member has to be started in the same run for the cluster to form, so
+# etcd gets a play of its own across the whole inventory.
+- name: Shared state
+  hosts: infra
+  become: true
+  roles:
+    - common
+    - etcd
+
+- name: Transit links to the simulated provider
+  hosts: edges:upstream
+  become: true
+  roles:
+    - wan_link
+
+- name: Simulated provider
+  hosts: upstream
+  become: true
+  roles:
+    - upstream
+
+- name: Public DNS for every lab machine
+  hosts: infra:upstream
+  become: true
+  roles:
+    - public_dns
+
+- name: Control plane, identity, dashboard and monitoring
+  hosts: control
+  become: true
+  roles:
+    - control_plane
+    - idp
+    - dashboard
+    - monitoring
+    - tooling
+  post_tasks:
+    - name: Wait for the API to report healthy
+      ansible.builtin.uri:
+        url: "http://{{ control_ip }}:{{ api_addr | regex_replace('^:', '') }}/healthz"
+        status_code: 200
+      register: api_health
+      retries: 10
+      delay: 3
+      until: api_health.status == 200
+
+# The API creates the public root at its first start, so it is up by now.
+- name: Trust the platform's public root
+  hosts: infra:upstream
+  become: true
+  roles:
+    - public_trust
+
+- name: Agents
+  hosts: agents
+  become: true
+  roles:
+    - agent
+    - controller_manager
+    - microvm

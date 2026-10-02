@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# Terraform, the locally built provider and 4 ready-to-run example workspaces
+# for the lab user on the control host, so the stack can be exercised end to
+# end from inside the lab: ssh in, `infra-login`, cd into one, `terraform
+# apply` - see terraform/README.md for what each one provisions.
+- name: Check the provider binary was built
+  ansible.builtin.stat:
+    path: "{{ provider_binary }}"
+  delegate_to: localhost
+  become: false
+  register: tooling_provider_bin_stat
+
+- name: Fail when the provider binary is missing
+  ansible.builtin.fail:
+    msg: "Provider binary {{ provider_binary }} not found. Build it first with `make build-provider`."
+  when: not tooling_provider_bin_stat.stat.exists
+
+- name: Add the HashiCorp APT repository
+  ansible.builtin.deb822_repository:
+    name: hashicorp
+    types: deb
+    uris: https://apt.releases.hashicorp.com
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    signed_by: https://apt.releases.hashicorp.com/gpg
+
+- name: Install Terraform
+  ansible.builtin.apt:
+    name: terraform
+    update_cache: true
+
+# The provider is not published to a registry. Terraform searches
+# ~/.terraform.d/plugins as an implicit filesystem mirror, so a binary laid out
+# as <host>/<namespace>/<type>/<version>/<os_arch>/ is found by a plain
+# `terraform init`, without dev_overrides.
+- name: Create the provider mirror directory
+  ansible.builtin.file:
+    path: "{{ tooling_provider_dir }}"
+    state: directory
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0755"
+
+- name: Install the provider into the mirror
+  ansible.builtin.copy:
+    src: "{{ provider_binary }}"
+    dest: "{{ tooling_provider_dir }}/terraform-provider-infra_v{{ version }}"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0755"
+
+- name: Create the demo workspace and the infra config directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0700"
+  loop:
+    - "{{ tooling_workspace }}"
+    - "{{ tooling_config_dir }}"
+
+- name: Copy get-token.sh into the workspace
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/terraform/get-token.sh"
+    dest: "{{ tooling_workspace }}/get-token.sh"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0755"
+
+# Each example (compute, faas, vm, k8s - see terraform/README.md) is its own
+# root module, with its own state, so applying one never touches another.
+- name: Create each example's directory in the workspace
+  ansible.builtin.file:
+    path: "{{ tooling_workspace }}/{{ item }}"
+    state: directory
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0700"
+  loop: "{{ tooling_examples }}"
+
+- name: Copy each example into its workspace directory
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/terraform/{{ item.0 }}/{{ item.1 }}"
+    dest: "{{ tooling_workspace }}/{{ item.0 }}/{{ item.1 }}"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0644"
+  loop: "{{ tooling_examples | product(['main.tf', 'provider.tf']) }}"
+
+- name: Deploy the Terraform IdP client secret
+  ansible.builtin.copy:
+    src: "{{ idp_client_secret_file }}"
+    dest: "{{ tooling_config_dir }}/terraform-client.secret"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0600"
+
+- name: Write the infra shell environment
+  ansible.builtin.template:
+    src: env.sh.j2
+    dest: "{{ tooling_config_dir }}/env.sh"
+    owner: "{{ vm_user }}"
+    group: "{{ vm_user }}"
+    mode: "0644"
+
+- name: Source the infra shell environment from the lab user's bashrc
+  ansible.builtin.lineinfile:
+    path: "/home/{{ vm_user }}/.bashrc"
+    line: "[ -f {{ tooling_config_dir }}/env.sh ] && . {{ tooling_config_dir }}/env.sh"
+
+# Each example is initialised on its own (its own state, its own provider
+# lock) - see init-example.yml for why a failure is rescued rather than
+# fatal.
+- name: Initialise each example's workspace
+  ansible.builtin.include_tasks: init-example.yml
+  loop: "{{ tooling_examples }}"
+  loop_control:
+    loop_var: tooling_example

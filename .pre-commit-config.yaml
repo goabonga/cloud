@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Local pre-commit configuration. Mirrors the CI quality gates so the loop
+# "format / lint / vet / SPDX headers / commit-msg" runs before the commit
+# lands instead of after the push.
+#
+# Install once per clone: `pre-commit install` (installs the pre-commit AND
+# commit-msg hooks). Run on the full tree: `pre-commit run --all-files`.
+# The Go hooks expect `go` and `golangci-lint` on PATH.
+
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  # Generic hygiene.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+
+  # Go format / lint / vet via the local toolchain so the tools match CI.
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: gofmt -l -w
+        language: system
+        types: [go]
+        require_serial: true
+      - id: golangci-lint
+        name: golangci-lint
+        entry: golangci-lint run
+        language: system
+        types: [go]
+        pass_filenames: false
+        require_serial: true
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+        require_serial: true
+
+  # SPDX license headers - one hook per target path because the helper script
+  # takes a single --path. `pass_filenames: false` scans the whole scope.
+  - repo: local
+    hooks:
+      - id: spdx-go
+        name: SPDX headers (Go sources)
+        entry: bash -c 'python scripts/add_license_header.py --path cmd --types go --check && python scripts/add_license_header.py --path internal --types go --check && python scripts/add_license_header.py --path test --types go --check'
+        language: system
+        pass_filenames: false
+        files: \.go$
+      - id: spdx-scripts
+        name: SPDX headers (scripts/)
+        entry: python scripts/add_license_header.py --path scripts --types py,sh --check
+        language: system
+        pass_filenames: false
+        files: ^scripts/.*\.(py|sh)$
+      - id: spdx-workflows
+        name: SPDX headers (.github/)
+        entry: python scripts/add_license_header.py --path .github --types yml,yaml --check
+        language: system
+        pass_filenames: false
+        files: ^\.github/.*\.ya?ml$
+
+  # Conventional Commits validation on the commit message. `--strict` is NOT
+  # enabled so `fixup!` / `squash!` from `git commit --fixup=<sha>` are allowed.
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.6.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - feat
+          - fix
+          - perf
+          - refactor
+          - docs
+          - test
+          - chore
+          - ci
+          - build
+          - style
+          - deprecate
+          - remove

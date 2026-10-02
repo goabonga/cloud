@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# Addresses the host's NIC on the wan-sim transit network. create-vms.yml
+# attaches the NIC with the MAC listed in `vms`; netplan finds it by that MAC.
+- name: Configure the wan-sim interface
+  ansible.builtin.template:
+    src: 60-wan-sim.yaml.j2
+    dest: /etc/netplan/60-wan-sim.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Apply netplan
+
+# An edge routes between wan-sim and the VPCs, and only a forwarding host
+# answers a packet it cannot deliver - with the ICMP unreachable the edge
+# routes promise for the public block. The agent enables forwarding only once
+# a VPC has an internet gateway, so a fresh edge would drop the block silently.
+- name: Enable forwarding on the edges
+  ansible.builtin.template:
+    src: 60-edge-forwarding.conf.j2
+    dest: /etc/sysctl.d/60-edge-forwarding.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: inventory_hostname in groups['edges']
+  notify: Apply sysctl

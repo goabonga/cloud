@@ -1,0 +1,26 @@
+# Build / release artifacts
+build/
+/dist/
+site/
+
+# Go
+*.test
+*.out
+coverage.txt
+coverage.xml
+
+# Frontend
+www/node_modules/
+www/dist/
+www/coverage/
+
+# Embedded SPA output; keep the placeholder so go:embed compiles
+cmd/www/dist/*
+!cmd/www/dist/.gitkeep
+
+# Local state
+# NOTE: .multicz/state.json is deliberately NOT ignored. multicz stages it into
+# the chore(release) commit it authors (version, tag, source SHA, timestamp per
+# component), so ignoring it makes `multicz bump --commit` fail on `git add`.
+*.tfstate
+*.tfstate.*

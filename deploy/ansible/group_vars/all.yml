@@ -1,0 +1,171 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# libvirt / cloud-image settings (used by create-vms.yml on the host).
+libvirt_uri: "qemu:///system"
+images_dir: "/var/lib/libvirt/images"
+# An Ubuntu 24.04 (noble) cloud image; create-vms.yml fetches it to this path
+# itself if missing, from base_image_url.
+base_image: "/var/lib/libvirt/images/noble-server-cloudimg-amd64.img"
+base_image_url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+os_variant: "ubuntu24.04"
+network: "default"
+# 30G: an agent host's own disk holds its OS, the shared microvm image cache
+# and every micro-VM instance clone scheduled onto it - 10G was enough for
+# the demo alone but not alongside a real kubeadm install.
+disk_size: "30G"
+vm_user: "ubuntu"
+ssh_public_key: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_ed25519.pub') }}"
+
+# Test topology: one control-plane host and two agents.
+gateway: "192.168.122.1"
+netmask_prefix: 24
+nameserver: "192.168.122.1"
+# The control host carries etcd, the API, the IdP, the exporter, the dashboard,
+# Prometheus, Grafana and the Terraform tooling; the agents carry etcd, the
+# agent, the controller-manager and the workloads they are scheduled.
+# upstream-sim plays the provider's router. VMs with a wan_ip get a second NIC
+# on the wan-sim network, with a fixed MAC so the guest can find it.
+# The agents' memory_mb (6144) covers their own OS plus the micro-VMs the
+# microvm-scheduler places on them: the terraform demo's kubeadm nodes need
+# 2048MiB each (kubeadm's own preflight minimum is 1700MiB), and a host can
+# be picked for more than one of the three.
+vms:
+  - { name: "infra-control", ip: "192.168.122.10", memory_mb: 3072, vcpus: 2 }
+  - { name: "infra-agent-1", ip: "192.168.122.21", memory_mb: 6144, vcpus: 2, wan_ip: "10.99.0.1", wan_mac: "52:54:00:99:00:01" }
+  - { name: "infra-agent-2", ip: "192.168.122.22", memory_mb: 6144, vcpus: 2, wan_ip: "10.99.0.2", wan_mac: "52:54:00:99:00:02" }
+  - { name: "upstream-sim", ip: "192.168.122.30", memory_mb: 768, vcpus: 1, wan_ip: "10.99.0.100", wan_mac: "52:54:00:99:00:64" }
+
+# Simulated transit: an isolated libvirt network standing in for the link
+# between the lab's edges and an upstream provider (see upstream-sim).
+wan_sim:
+  network: "wan-sim"
+  bridge: "virbr-wansim"
+  prefix: 24
+
+# The block the lab treats as its public addresses: TEST-NET-3 (RFC 5737), never
+# routed on the Internet, so it cannot shadow a real address. 198.18.0.0/15
+# (RFC 2544) is the larger alternative for several blocks or upstreams.
+eip_block: "203.0.113.0/24"
+# The address of the block the edges answer public DNS zones on. Every edge
+# holds it, and upstream-sim's route spreads queries over them.
+dns_public_addr: "203.0.113.53"
+# Domains every lab machine resolves through that public DNS address, and
+# only those: everything else keeps the machine's own resolver.
+public_dns_domains: ["demo.test"]
+
+# upstream-sim, the provider's router. route_mode picks how it reaches the
+# block: "bgp" learns each public address the edges serve from them over BGP
+# (BIRD, with BFD) and spreads flows over the edges announcing it, dropping an
+# edge as soon as its routes go; "ecmp" routes the whole block statically over
+# every edge (L4 hash); "floating" sends it to floating_next_hop, which the
+# active edge must hold (nothing in the lab holds it yet). inet is a netns on
+# upstream-sim standing for an Internet client, on the far side of the
+# provider.
+upstream:
+  route_mode: "bgp"
+  asn: 65000
+  floating_next_hop: "10.99.0.254"
+  inet_cidr: "100.64.0.0/30"
+  inet_gateway: "100.64.0.1"
+  inet_client: "100.64.0.2"
+
+# The edges' own AS, the same on every edge so upstream-sim takes their
+# routes to an address as equal paths.
+edge_asn: 65010
+
+# Micro-VMs under infra-hypervisor on the agent hosts (role: microvm),
+# shipped inside the infra-agent package itself - the lab's own base_image
+# converted to raw once per agent, consumed by the Terraform examples'
+# infra_microvm resources (see terraform/vm/main.tf and terraform/k8s/main.tf).
+microvm_images_dir: "/var/lib/infra-microvm-images"
+microvm_base_image_name: "noble-base.raw"
+
+# Deployment: which .deb packages each role installs. Build them first with
+# `make deb VERSION=<version>` so they land in dist/. Bump this whenever the
+# lab needs to pick up new agent/controller-manager code (dpkg skips a
+# same-version .deb even if its content changed).
+version: "0.1.1"
+deb_arch: "amd64"
+deb_dir: "{{ playbook_dir }}/../../dist"
+control_packages: ["infra", "infra-api", "infra-idp", "infra-exporter", "infra-www"]
+control_services: ["infra-api", "infra-idp", "infra-exporter"]
+# infra-controller-manager runs on both agent hosts: one instance holds the
+# leader lease in etcd and the other takes over when it goes away.
+agent_packages: ["infra", "infra-container-init", "infra-agent", "infra-controller-manager"]
+agent_services: ["infra-agent", "infra-controller-manager"]
+
+# --- Full-stack deployment (site.yml) -------------------------------------
+# The control host that runs etcd, the control plane, the IdP, the dashboard
+# and the monitoring stack. Its address is taken from the inventory.
+control_host: "infra-control"
+control_ip: "{{ hostvars[control_host].ansible_host }}"
+
+# Shared configuration directory on every managed host.
+infra_conf_dir: "/etc/infra"
+
+# etcd: the shared state backend. Every component points at it through
+# GOA_STATE_DSN, so the API, controllers, exporter and agents see one store.
+# One member runs on every host in the `infra` group, so the cluster keeps its
+# quorum - and the control plane keeps working - with any one VM down.
+etcd_version: "v3.6.11"
+etcd_client_port: 2379
+etcd_peer_port: 2380
+etcd_data_dir: "/var/lib/etcd"
+etcd_hosts: "{{ groups['infra'] }}"
+etcd_initial_cluster: >-
+  {%- for h in etcd_hosts -%}
+  {{ h }}=https://{{ hostvars[h].ansible_host }}:{{ etcd_peer_port }}{{ '' if loop.last else ',' }}
+  {%- endfor -%}
+state_dsn: >-
+  etcd://
+  {%- for h in etcd_hosts -%}
+  https://{{ hostvars[h].ansible_host }}:{{ etcd_client_port }}{{ '' if loop.last else ',' }}
+  {%- endfor -%}
+
+# Credentials are generated once on the controller and reused across runs.
+# Keep this directory out of git (see .gitignore).
+cred_dir: "{{ playbook_dir }}/.credentials"
+kms_key_file: "{{ cred_dir }}/kms.key"
+idp_key_file: "{{ cred_dir }}/idp-es256.key"
+jwt_pub_file: "{{ cred_dir }}/jwt-es256.pub"
+idp_client_secret_file: "{{ cred_dir }}/terraform-client.secret"
+idp_admin_password_file: "{{ cred_dir }}/idp-admin.password"
+
+# Identity provider (JWT, ES256). The API verifies the IdP's tokens.
+idp_addr: ":8081"
+idp_issuer: "http://{{ control_ip }}:8081"
+idp_client_id: "terraform"
+# The first (and, from the playbook's side, only) administrator. Bootstrapped
+# once via a throwaway systemd drop-in (see roles/idp/tasks/main.yml) - the
+# password lives only in the generated credential file and the drop-in it
+# briefly appears in, never in this repo.
+idp_admin_username: "admin"
+
+# Listen addresses / ports.
+api_addr: ":8080"
+www_addr: ":8088"
+exporter_addr: ":9100"
+
+# Native monitoring stack (no Docker).
+prometheus_version: "2.55.1"
+prometheus_port: 9090
+prometheus_data_dir: "/var/lib/prometheus"
+grafana_port: 3000
+grafana_admin_user: "admin"
+grafana_admin_password: "infra"
+
+# Terraform tooling on the control host (tooling role). The provider binary is
+# built beforehand with `make build-provider`; the examples in terraform/ are
+# copied into the lab user's home, next to the IdP client secret it logs in
+# with. Each example is its own root module (see terraform/README.md) with
+# its own state, so the lab user picks one to `cd` into and `apply`.
+provider_binary: "{{ playbook_dir }}/../../build/terraform-provider-infra"
+tooling_provider_dir: "/home/{{ vm_user }}/.terraform.d/plugins/registry.terraform.io/goabonga/infra/{{ version }}/linux_{{ deb_arch }}"
+tooling_workspace: "/home/{{ vm_user }}/infra-demo"
+tooling_config_dir: "/home/{{ vm_user }}/.config/infra"
+tooling_examples: ["compute", "faas", "vm", "k8s"]
+
+# Management PKI is independent of the tenant/public SSL root.
+management_pki_dir: "{{ cred_dir }}/management-pki"
+management_tls_dir: /etc/infra-mtls

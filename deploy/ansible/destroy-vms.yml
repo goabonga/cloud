@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Tear down the test VMs and their disks. Run on the libvirt host:
+#
+#   ansible-playbook destroy-vms.yml
+---
+- name: Destroy libvirt test VMs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    # Ubuntu's default sudo is now sudo-rs, which ignores the `-p` prompt Ansible
+    # passes and prints its own, so -K times out waiting for the expected
+    # prompt. Prefer the classic sudo it ships as sudo.ws when present. Scoped
+    # to this local play: the VMs have only the classic sudo.
+    ansible_become_exe: "{{ 'sudo.ws' if lookup('ansible.builtin.pipe', 'command -v sudo.ws || true') else 'sudo' }}"
+  tasks:
+    - name: List existing domains
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} list --all --name"
+      register: existing_domains
+      changed_when: false
+
+    - name: Destroy running domains
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} destroy {{ item.name }}"
+      loop: "{{ vms }}"
+      when: item.name in existing_domains.stdout_lines
+      register: destroy_result
+      failed_when:
+        - destroy_result.rc != 0
+        - "'domain is not running' not in destroy_result.stderr"
+      changed_when: destroy_result.rc == 0
+
+    - name: Undefine domains and remove their storage
+      ansible.builtin.command: >-
+        virsh --connect {{ libvirt_uri }} undefine {{ item.name }} --remove-all-storage
+      loop: "{{ vms }}"
+      when: item.name in existing_domains.stdout_lines
+      changed_when: true
+
+    - name: Remove cloud-init seed ISOs
+      ansible.builtin.file:
+        path: "{{ images_dir }}/{{ item.name }}-seed.iso"
+        state: absent
+      loop: "{{ vms }}"
+
+    - name: Remove cloud-init working directories
+      ansible.builtin.file:
+        path: "{{ images_dir }}/{{ item.name }}.ci"
+        state: absent
+      loop: "{{ vms }}"
+
+    - name: Look up the wan-sim transit network
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} net-info {{ wan_sim.network }}"
+      register: wan_sim_info
+      changed_when: false
+      failed_when: false
+
+    - name: Stop and remove the wan-sim network
+      ansible.builtin.command: "virsh --connect {{ libvirt_uri }} {{ item }} {{ wan_sim.network }}"
+      loop:
+        - net-destroy
+        - net-undefine
+      when: wan_sim_info.rc == 0
+      register: wan_sim_removal
+      failed_when:
+        - wan_sim_removal.rc != 0
+        - "'network is not active' not in wan_sim_removal.stderr"
+      changed_when: wan_sim_removal.rc == 0
+
+    - name: Remove the wan-sim network definition file
+      ansible.builtin.file:
+        path: "{{ images_dir }}/{{ wan_sim.network }}.xml"
+        state: absent

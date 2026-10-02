@@ -1,0 +1,148 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Check the simulated provider end to end, from the inet client's side:
+#
+#   ansible-playbook verify-upstream.yml
+#
+# The inet namespace reaches its gateway and every edge over wan-sim; the
+# public block is routed to the edges - in BGP mode, every edge has a session
+# up and announces the public DNS address, which upstream-sim routes over all
+# of them; in ECMP mode, the whole block goes to every edge - with flows
+# spread over them by the L4 hash; a packet for an address nothing serves is
+# answered as unreachable; the public DNS the edges hold in the block answers
+# and refuses recursion; and the NAT towards the real LAN leaves the block
+# alone while inet can still reach the LAN through it.
+---
+- name: Simulated provider
+  hosts: upstream
+  gather_facts: false
+  become: true
+  vars:
+    edge_ips: "{{ vms | selectattr('name', 'in', groups['edges']) | map(attribute='wan_ip') | list }}"
+    # An address of the block nothing holds: public ip_addresses are handed
+    # out from .10 to .249, so .254 stays unassigned, e.g. 203.0.113.254.
+    probe: "{{ eip_block | regex_replace('\\.0/[0-9]+$', '.254') }}"
+    # What the flows are hashed towards: an address every edge serves.
+    flow_target: "{{ dns_public_addr if upstream.route_mode == 'bgp' else probe }}"
+  tasks:
+    - name: The inet client reaches its gateway
+      ansible.builtin.command: "ip netns exec inet ping -c1 -W2 {{ upstream.inet_gateway }}"
+      changed_when: false
+
+    - name: The inet client reaches every edge over wan-sim
+      ansible.builtin.command: "ip netns exec inet ping -c1 -W2 {{ item }}"
+      loop: "{{ edge_ips }}"
+      changed_when: false
+
+    - name: Read the BGP sessions
+      ansible.builtin.command: birdc show protocols
+      register: verify_bgp
+      changed_when: false
+      when: upstream.route_mode == 'bgp'
+
+    - name: Every edge has its BGP session up
+      ansible.builtin.assert:
+        that: verify_bgp.stdout_lines | select('search', 'BGP .* up .*Established') | list | length == groups['edges'] | length
+        fail_msg: "{{ verify_bgp.stdout }}"
+      when: upstream.route_mode == 'bgp'
+
+    - name: Read the route to the public block
+      ansible.builtin.command: "ip route show {{ eip_block if upstream.route_mode != 'bgp' else dns_public_addr }}"
+      register: verify_block_route
+      changed_when: false
+
+    - name: The block is routed as the route mode says
+      ansible.builtin.assert:
+        that: >-
+          (upstream.route_mode in ['ecmp', 'bgp'] and edge_ips | reject('in', verify_block_route.stdout) | list | length == 0)
+          or (upstream.route_mode == 'floating' and upstream.floating_next_hop in verify_block_route.stdout)
+        fail_msg: "route: {{ verify_block_route.stdout }}"
+
+    - name: Resolve the next hop for 64 TCP flows to the block
+      ansible.builtin.command: "ip route get {{ flow_target }} ipproto tcp sport {{ 10000 + item }} dport 443"
+      loop: "{{ range(64) | list }}"
+      register: verify_flows
+      changed_when: false
+      when: upstream.route_mode in ['ecmp', 'bgp']
+
+    - name: The L4 hash spreads flows over every edge
+      vars:
+        hops: >-
+          {{ verify_flows.results | map(attribute='stdout')
+             | map('regex_findall', 'via ([0-9.]+)') | map('first') | unique | list }}
+      ansible.builtin.assert:
+        that: hops | length == edge_ips | length
+        fail_msg: "flows only went through {{ hops }}"
+      when: upstream.route_mode in ['ecmp', 'bgp']
+
+    - name: Send a packet for the block from the inet client
+      ansible.builtin.command: "ip netns exec inet ping -c1 -W2 {{ probe }}"
+      register: verify_block_ping
+      changed_when: false
+      failed_when: false
+
+    # In BGP mode, upstream-sim routes only what the edges announce and answers
+    # for the rest of the block itself; otherwise an edge does.
+    - name: An address nothing serves is unreachable
+      vars:
+        answering: "{{ [upstream.inet_gateway] if upstream.route_mode == 'bgp' else edge_ips }}"
+      ansible.builtin.assert:
+        that: verify_block_ping.stdout is search('From (' ~ (answering | map('regex_escape') | join('|')) ~ ') .*[Uu]nreachable')
+        fail_msg: "no unreachable from {{ answering }}: {{ verify_block_ping.stdout }}"
+
+    # The zone need not exist: an authoritative server refuses a name outside
+    # its zones, and never recurses for the client.
+    - name: Ask the public DNS for a name outside its zones
+      ansible.builtin.command: "ip netns exec inet dig +time=2 +tries=2 @{{ dns_public_addr }} example.org A"
+      register: verify_public_dns
+      changed_when: false
+
+    - name: The public DNS answers on the block and is not an open resolver
+      ansible.builtin.assert:
+        that: "verify_public_dns.stdout is search('status: REFUSED')"
+        fail_msg: "{{ verify_public_dns.stdout }}"
+
+    - name: Read the NAT rules
+      ansible.builtin.command: iptables -t nat -S POSTROUTING
+      register: verify_nat
+      changed_when: false
+
+    - name: The block is exempted before anything is masqueraded
+      vars:
+        exempt_src: "-A POSTROUTING -s {{ eip_block }} -j RETURN"
+        exempt_dst: "-A POSTROUTING -d {{ eip_block }} -j RETURN"
+        first_masq: "{{ verify_nat.stdout_lines | select('search', 'MASQUERADE') | first | default('') }}"
+      ansible.builtin.assert:
+        that:
+          - exempt_src in verify_nat.stdout_lines
+          - exempt_dst in verify_nat.stdout_lines
+          - first_masq != ''
+          - verify_nat.stdout_lines.index(exempt_src) < verify_nat.stdout_lines.index(first_masq)
+          - verify_nat.stdout_lines.index(exempt_dst) < verify_nat.stdout_lines.index(first_masq)
+        fail_msg: "{{ verify_nat.stdout_lines }}"
+
+    - name: The inet client reaches the real LAN through the NAT
+      ansible.builtin.command: "ip netns exec inet ping -c1 -W2 {{ gateway }}"
+      changed_when: false
+
+    # Only once the Terraform demo is applied: it publishes www in the public
+    # zone and reserves that address for its load balancer.
+    - name: Resolve the demo's public name from the inet client
+      ansible.builtin.command: "ip netns exec inet dig +short +time=2 +tries=2 @{{ dns_public_addr }} www.{{ public_dns_domains | first }}"
+      register: verify_www
+      changed_when: false
+
+    # Without -k: the certificate is signed by the platform's public root,
+    # which upstream-sim trusts like any Internet host trusts a public CA.
+    - name: Reach the demo's load balancer by its public name over HTTPS
+      ansible.builtin.command: "ip netns exec inet curl -fsS -m 5 https://www.{{ public_dns_domains | first }}/"
+      register: verify_www_https
+      changed_when: false
+      when: verify_www.stdout | length > 0
+
+    - name: The load balancer answers on its public address with a trusted certificate
+      ansible.builtin.assert:
+        that: verify_www_https.stdout is search('Served by')
+        fail_msg: "{{ verify_www_https.stdout }}"
+      when: verify_www.stdout | length > 0

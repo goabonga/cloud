@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+[Service]
+EnvironmentFile={{ infra_conf_dir }}/idp.env
+# The daemon runs as the unprivileged `infra` user, which cannot read
+# {{ infra_conf_dir }}. systemd reads the key as root and hands it over in the
+# unit's credentials directory (%d). The PEM is multi-line, so it is exported
+# from a wrapper rather than an EnvironmentFile, and `&&` makes a missing key
+# fail the start instead of launching the daemon without it.
+LoadCredential=idp-es256.key:{{ infra_conf_dir }}/idp-es256.key
+ExecStart=
+ExecStart=/bin/sh -c 'GOA_IDP_KEY="$$(cat %d/idp-es256.key)" && export GOA_IDP_KEY && exec /usr/bin/infra-idp'

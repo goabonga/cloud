@@ -1,0 +1,260 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: auto-merge-signed
+
+# Merge a pull request into main with commits GPG-signed by the maintainer's
+# own key, instead of relying on GitHub's merge button.
+#
+# Why this exists
+# ---------------
+# None of GitHub's three merge buttons puts *your* key on main:
+#   - Squash merge  -> GitHub re-signs the new commit with its own web-flow
+#                      key (committer: GitHub <noreply@...>).
+#   - Merge commit  -> only the merge bubble is web-flow signed; the change
+#                      commits keep whatever signature they arrived with.
+#   - Rebase merge  -> commits are replayed unsigned.
+# GitHub never holds the private key, so the only way main's tip can be signed
+# by the maintainer is to create and push the commit from a runner that
+# imports it - which the release job already does. This generalises that to
+# ordinary pull requests.
+#
+# Flow
+# ----
+#   1. A maintainer applies the `auto-merge` label. Only users with write
+#      access can label, so the label itself is the authorisation.
+#   2. We wait for the PR's other checks to go green.
+#   3. We rebase the PR's commits onto the latest main, force-re-creating
+#      every commit so each is committed by the maintainer identity and signed
+#      with the imported key.
+#   4. We force-push those signed commits back onto the PR branch, then
+#      fast-forward main onto them. Because main's tip is then reachable from
+#      the PR head, GitHub marks the PR "Merged" rather than "Closed", and the
+#      commit on main is signed by the maintainer's key.
+#
+# Security notes
+# --------------
+# - `pull_request_target` runs in the base-repo context with secrets. No
+#   PR-authored code is executed here: no build, install, test or hook, only
+#   git plumbing (fetch, rebase, push). A malicious PR therefore cannot reach
+#   the GPG key. The CI that *does* run PR code is a separate workflow, and
+#   gates this merge through the checks wait below.
+# - Same-repository branches only. Re-signing third-party fork commits as the
+#   maintainer would attribute code she never reviewed to her key, so those
+#   are bounced with a comment.
+# - The labeller's write access is re-verified server-side. Label permissions
+#   are the authorisation, and a stale collaborator removal should not leave a
+#   previously applied label able to merge.
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+concurrency:
+  # One merge at a time per PR, and never cancel a merge already in flight -
+  # an interrupted rebase-and-push can leave the PR branch force-pushed but
+  # main un-advanced.
+  group: auto-merge-signed-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  MERGE_LABEL: auto-merge
+
+jobs:
+  merge:
+    name: rebase, sign and fast-forward into main
+    if: github.event.label.name == 'auto-merge'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Gate - same-repo PR, write-access labeller, GPG secrets set
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.repository.full_name }}
+          LABELLER: ${{ github.event.sender.login }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          # Every refusal below removes the label as well as commenting, so
+          # the PR returns to a state where re-labelling is the retry.
+          fail() {
+            gh pr comment "$PR" --body "auto-merge-signed: $1"
+            gh api -X DELETE \
+              "repos/$GH_REPO/issues/$PR/labels/$MERGE_LABEL" >/dev/null 2>&1 || true
+            exit 1
+          }
+          if [ -z "$GPG_PRIVATE_KEY" ] || [ -z "$GPG_PASSPHRASE" ]; then
+            fail "GPG_PRIVATE_KEY / GPG_PASSPHRASE are not configured, so commits cannot be signed with the maintainer key. Set the secrets and retry."
+          fi
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            fail "only same-repository branches are supported (got fork \`$HEAD_REPO\`). Re-signing third-party fork commits as the maintainer is intentionally not allowed."
+          fi
+          perm=$(gh api "repos/$GH_REPO/collaborators/$LABELLER/permission" \
+            --jq '.permission' 2>/dev/null || echo none)
+          case "$perm" in
+            admin|maintain|write) echo "labeller $LABELLER has '$perm' - authorised" ;;
+            *) fail "the \`$MERGE_LABEL\` label was applied by \`$LABELLER\`, who lacks write access ('$perm')." ;;
+          esac
+
+      - name: Wait for the PR's other checks to pass
+        env:
+          # This job's own check-run name on the PR head, excluded from the
+          # wait so the step cannot deadlock waiting on itself.
+          SELF_CHECK: rebase, sign and fast-forward into main
+        run: |
+          set -euo pipefail
+          # Poll the REST check-runs and commit-status APIs for the head SHA,
+          # not `gh pr view --json statusCheckRollup`. The GraphQL rollup
+          # resolves each check's app/team metadata, which needs `read:org`;
+          # a classic RELEASE_PAT scoped to repo + write:packages does not
+          # have it, so the query fails. REST check-runs only needs `repo`.
+          deadline=$(( SECONDS + 25*60 ))
+          while :; do
+            pending=0; failed=0
+            # --paginate streams one "<status>|<conclusion>" line per run
+            # across all pages, so aggregation happens in bash and stays
+            # correct when the repo has more check-runs than fit one page.
+            runs=$(gh api --paginate \
+              "repos/$GH_REPO/commits/$HEAD_SHA/check-runs?per_page=100" \
+              --jq '.check_runs[] | select(.name != env.SELF_CHECK) | "\(.status)|\(.conclusion // "")"')
+            while IFS='|' read -r status conclusion; do
+              [ -z "$status" ] && continue
+              if [ "$status" != "completed" ]; then
+                pending=$((pending+1))
+              else
+                case "$conclusion" in
+                  success|neutral|skipped) ;;
+                  *) failed=$((failed+1)) ;;
+                esac
+              fi
+            done <<< "$runs"
+            # Legacy commit statuses, for anything posting through the Status
+            # API rather than check-runs. Only consulted when some exist: the
+            # combined endpoint reports "pending" for an empty set, which
+            # would otherwise hang the loop until the deadline.
+            nstatus=$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/status" --jq '.statuses | length')
+            if [ "$nstatus" -gt 0 ]; then
+              sstate=$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/status" --jq '.state')
+              case "$sstate" in
+                success) ;;
+                failure|error) failed=$((failed+1)) ;;
+                *) pending=$((pending+1)) ;;
+              esac
+            fi
+            if [ "$failed" -gt 0 ]; then
+              gh pr comment "$PR" --body "auto-merge-signed: a required check failed; not merging. Fix CI and re-apply the \`$MERGE_LABEL\` label."
+              gh api -X DELETE "repos/$GH_REPO/issues/$PR/labels/$MERGE_LABEL" >/dev/null 2>&1 || true
+              exit 1
+            fi
+            if [ "$pending" -eq 0 ]; then
+              echo "All other checks green."
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              gh pr comment "$PR" --body "auto-merge-signed: timed out waiting for checks to finish. Re-apply the \`$MERGE_LABEL\` label once CI is green."
+              gh api -X DELETE "repos/$GH_REPO/issues/$PR/labels/$MERGE_LABEL" >/dev/null 2>&1 || true
+              exit 1
+            fi
+            echo "$pending check(s) still pending; re-checking in 30s"
+            sleep 30
+          done
+
+      - name: Checkout PR head with push credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Configure GPG and git identity from the imported key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo test | gpg --batch --yes --passphrase "$GPG_PASSPHRASE" \
+            --pinentry-mode loopback --sign > /dev/null
+          KEY_ID=$(gpg --list-secret-keys --with-colons \
+            | awk -F: '/^sec/{print $5; exit}')
+          UID_LINE=$(gpg --list-keys --with-colons "$KEY_ID" \
+            | awk -F: '/^uid/{print $10; exit}')
+          NAME="${UID_LINE%% <*}"
+          EMAIL=$(printf '%s' "$UID_LINE" | sed -nE 's/.*<([^>]+)>.*/\1/p')
+          git config user.name  "$NAME"
+          git config user.email "$EMAIL"
+          git config user.signingkey "$KEY_ID"
+          git config commit.gpgsign true
+          git config gpg.program gpg
+          # Loopback pinentry plus the test-sign above prime the gpg-agent
+          # passphrase cache, so `git rebase` signs every replayed commit
+          # non-interactively. Nothing is written to disk but the agent conf.
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          {
+            echo "allow-loopback-pinentry"
+            echo "default-cache-ttl 7200"
+            echo "max-cache-ttl 7200"
+          } >> ~/.gnupg/gpg-agent.conf
+          gpgconf --kill gpg-agent || true
+          # Re-prime the cache after the agent restarts with the new conf.
+          echo test | gpg --batch --yes --passphrase "$GPG_PASSPHRASE" \
+            --pinentry-mode loopback --sign > /dev/null
+
+      - name: Rebase onto main, re-signing every commit
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          # --force-rebase re-creates every commit in merge-base..HEAD even
+          # where a plain rebase could fast-forward, so each one is guaranteed
+          # to be re-committed under the maintainer identity and signed.
+          if ! git -c "gpg.program=gpg" rebase --force-rebase origin/main; then
+            git rebase --abort || true
+            gh pr comment "$PR" --body "auto-merge-signed: the PR does not rebase cleanly onto \`main\` (conflicts). Rebase locally, push, and re-apply the \`$MERGE_LABEL\` label."
+            gh api -X DELETE "repos/$GH_REPO/issues/$PR/labels/$MERGE_LABEL" >/dev/null 2>&1 || true
+            exit 1
+          fi
+          echo "Signature of new HEAD:"
+          git --no-pager log -1 --show-signature --pretty="%h %G? %GS" || true
+
+      - name: Push signed commits to the PR branch, then fast-forward main
+        run: |
+          set -euo pipefail
+          # 1. Update the PR branch in place with the signed commits, so
+          #    GitHub sees the head as reachable from main and marks the PR
+          #    merged rather than closed.
+          git push --force-with-lease origin "HEAD:$HEAD_REF"
+          # 2. Fast-forward main onto those exact commits. If main moved since
+          #    the fetch, this is rejected as non-fast-forward - surface that
+          #    and let the maintainer re-label to retry on the new base.
+          if ! git push origin HEAD:main; then
+            gh pr comment "$PR" --body "auto-merge-signed: \`main\` advanced during the merge; the fast-forward was rejected. Re-apply the \`$MERGE_LABEL\` label to retry on the new base."
+            gh api -X DELETE "repos/$GH_REPO/issues/$PR/labels/$MERGE_LABEL" >/dev/null 2>&1 || true
+            exit 1
+          fi
+
+      - name: Confirm the merge
+        run: |
+          set -euo pipefail
+          merged_sha=$(git rev-parse HEAD)
+          gh pr comment "$PR" --body "Merged into \`main\` as \`$merged_sha\`, GPG-signed with the maintainer key rather than GitHub's web-flow key. History stays linear (rebase + fast-forward)."
+          {
+            echo "## auto-merge-signed"
+            echo ""
+            echo "PR #$PR fast-forwarded into \`main\` at \`$merged_sha\`."
+            echo "All commits re-signed with the maintainer GPG key."
+          } >> "$GITHUB_STEP_SUMMARY"

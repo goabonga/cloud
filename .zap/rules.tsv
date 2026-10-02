@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+#
+# ZAP baseline rule configuration. Tab-separated: <ruleId><TAB><action><TAB><comment>
+# where action is one of IGNORE, WARN or FAIL.
+#
+# The baseline scan is a passive crawl, so most of what it reports on a JSON
+# API is the absence of headers a browser would act on. Those are downgraded
+# here, with a reason each, so that a genuine finding is not lost in a wall of
+# noise nobody reads. Anything not listed keeps its default action, which is
+# what makes a newly introduced class of finding show up rather than be
+# swallowed by a blanket ignore.
+#
+# 10015	Incomplete or No Cache-control Header
+10015	WARN	Applies to browser-cached documents; the API serves per-request JSON and the SPA is fingerprinted by Vite.
+# 10020	Anti-clickjacking Header missing
+10020	FAIL	The dashboard renders in a browser and must not be framable. Genuine finding on www.
+# 10021	X-Content-Type-Options header missing
+10021	FAIL	MIME sniffing on JSON responses is exploitable; cheap to fix and should never regress.
+# 10027	Suspicious comments
+10027	IGNORE	Fires on words like "select" and "from" in the embedded SPA bundle; no signal.
+# 10036	Server leaks version information
+10036	FAIL	Go's net/http does not leak a version by default, so this appearing means something was added that does.
+# 10038	Content Security Policy header not set
+10038	FAIL	Genuine finding for the dashboard.
+# 10049	Storable and Cacheable Content
+10049	WARN	Same reasoning as 10015.
+# 10063	Permissions Policy Header Not Set
+10063	WARN	Only meaningful for the dashboard; not a JSON API concern.
+# 10096	Timestamp Disclosure
+10096	IGNORE	Matches the RFC3339 timestamps in every resource envelope, which are part of the API contract.
+# 10098	Cross-Domain Misconfiguration
+10098	FAIL	A permissive CORS policy on the control-plane API would be a real problem.
+# 10109	Modern Web Application
+10109	IGNORE	Informational: reports that the target is a SPA. It is.
+# 90005	Sec-Fetch-* headers
+90005	IGNORE	Request-side headers ZAP does not send itself; not a property of the server.

@@ -1,0 +1,11 @@
+infra-idp (0.7.3-1) unstable; urgency=medium
+
+  * fix: Bound API and identity request admission
+
+ -- Chris <goabonga@pm.me>  Fri, 02 Oct 2026 14:42:21 +0000
+
+infra-idp (0.7.2-1) unstable; urgency=medium
+
+  * fix: Share and bound device authorization grants
+
+ -- Chris <goabonga@pm.me>  Fri, 02 Oct 2026 12:24:00 +0000

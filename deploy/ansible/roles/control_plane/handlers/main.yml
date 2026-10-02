@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+- name: Restart infra-api
+  ansible.builtin.systemd_service:
+    name: infra-api
+    state: restarted
+    daemon_reload: true
+
+- name: Restart infra-exporter
+  ansible.builtin.systemd_service:
+    name: infra-exporter
+    state: restarted
+    daemon_reload: true

@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# infra-www is already installed as part of control_packages; this configures
+# it (same pattern as roles/idp).
+- name: Ensure the infra-www drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/infra-www.service.d
+    state: directory
+    mode: "0755"
+
+- name: Write the dashboard environment file
+  ansible.builtin.template:
+    src: www.env.j2
+    dest: "{{ infra_conf_dir }}/www.env"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart infra-www
+
+- name: Install the infra-www systemd drop-in
+  ansible.builtin.template:
+    src: infra-www.override.conf.j2
+    dest: /etc/systemd/system/infra-www.service.d/override.conf
+    mode: "0644"
+  notify: Restart infra-www
+
+- name: Enable and start infra-www
+  ansible.builtin.systemd_service:
+    name: infra-www
+    enabled: true
+    state: started
+    daemon_reload: true

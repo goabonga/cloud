@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# The micro-VM hypervisor itself (infra-hypervisor) needs no install step
+# here: it ships inside the infra-agent package this role's host already
+# has (see packaging/build-debs.sh), at /usr/bin/infra-hypervisor, the way
+# infra-lb already does - unlike cloud-hypervisor before it, which this
+# role used to fetch as a separate static binary from GitHub Releases.
+# What this host does still need is /dev/kvm (provisioned by the kernel
+# itself, nothing to install) and the image/kernel staging below.
+
+# qemu-img only, to turn the lab's qcow2 base image into a raw one
+# infra-hypervisor can boot - no QEMU emulation involved, just the file
+# format conversion.
+- name: Install qemu-utils
+  ansible.builtin.apt:
+    name: qemu-utils
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the micro-VM image directory
+  ansible.builtin.file:
+    path: "{{ microvm_images_dir }}"
+    state: directory
+    mode: "0755"
+
+# Transferring the qcow2 (hundreds of MB, mostly compressed) rather than a
+# pre-converted raw image (several GB, mostly zero) keeps this copy small;
+# qemu-img does the conversion on the agent itself. Skipped once the raw
+# image already exists, so a re-run doesn't re-transfer or reconvert it.
+- name: Copy the base cloud image (qcow2)
+  ansible.builtin.copy:
+    src: "{{ base_image }}"
+    dest: "/tmp/microvm-base.qcow2"
+    mode: "0644"
+  when: not ((microvm_images_dir + '/' + microvm_base_image_name) is file)
+
+# -S 4k makes qemu-img skip runs of zeroes instead of writing them, so the
+# raw image stays sparse on a filesystem that supports holes (ext4 included) -
+# the same property internal/manager/vmimage.go's own clone preserves from
+# there on, through every instance's own copy.
+- name: Convert the base image to sparse raw
+  ansible.builtin.command: >-
+    qemu-img convert -f qcow2 -O raw -S 4k
+    /tmp/microvm-base.qcow2 {{ microvm_images_dir }}/{{ microvm_base_image_name }}
+  args:
+    creates: "{{ microvm_images_dir }}/{{ microvm_base_image_name }}"
+
+- name: Remove the transferred qcow2
+  ansible.builtin.file:
+    path: "/tmp/microvm-base.qcow2"
+    state: absent
+
+- name: Make the base image readable by infra-agent
+  ansible.builtin.file:
+    path: "{{ microvm_images_dir }}/{{ microvm_base_image_name }}"
+    mode: "0644"
+
+# infra-hypervisor boots the guest's own kernel directly rather than
+# through a bootloader, so it needs a kernel and initramfs it can read; the
+# agent's already-running one is the exact match for the rootfs cloned from
+# the same image. A fixed path survives a kernel upgrade (the symlink
+# moves, no Terraform resource needs editing); microvm.cmdLine still has to
+# carry `root=/dev/vda1` since there's no bootloader to default it.
+- name: Point a stable path at the running kernel
+  ansible.builtin.file:
+    src: "/boot/vmlinuz-{{ ansible_facts['kernel'] }}"
+    dest: "{{ microvm_images_dir }}/vmlinuz"
+    state: link
+    force: true
+
+- name: Point a stable path at the running initramfs
+  ansible.builtin.file:
+    src: "/boot/initrd.img-{{ ansible_facts['kernel'] }}"
+    dest: "{{ microvm_images_dir }}/initrd.img"
+    state: link
+    force: true

@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: integration test
+description: |
+  Run `go test -tags=integration` against a postgres service, with /dev/kvm
+  opened up for the hypervisor tests. Runs kernel-level bridge and firewall cases as root. Expects the caller's job to define a
+  `postgres` service reachable at postgres-dsn.
+
+inputs:
+  postgres-dsn:
+    required: true
+    description: DSN the integration suite connects to.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    # GitHub-hosted ubuntu-24.04 runners expose /dev/kvm (nested
+    # virtualization on the hosts behind them), but it's root:kvm, mode 660,
+    # and the runner user isn't in that group - TestKVMOpen fails with
+    # EACCES, not ENOENT, which is what says the device is there and this is
+    # a permissions problem rather than a missing-feature one. A
+    # world-writable udev rule sidesteps the group entirely rather than
+    # racing udev to re-chmod the node.
+    - name: Allow KVM access for the hypervisor tests
+      shell: bash
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+    - name: Install kernel test prerequisites
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y iproute2 iptables cryptsetup e2fsprogs dosfstools
+        if ! sudo modprobe vrf; then
+          sudo apt-get install -y "linux-modules-extra-$(uname -r)"
+          sudo modprobe vrf
+        fi
+    - name: Run privileged integration suite
+      shell: bash
+      env:
+        POSTGRES_DSN: ${{ inputs.postgres-dsn }}
+      run: |
+        set -euo pipefail
+        sudo env "PATH=$PATH" "POSTGRES_DSN=$POSTGRES_DSN" \
+          go test -json -tags=integration ./test/integration/... | tee integration-results.json
+        python3 scripts/check-kernel-tests.py integration-results.json

@@ -1,0 +1,17 @@
+# Terraform CLI config so it uses your locally built provider instead of a
+# registry (the provider is not published yet). Build the provider first:
+#
+#   make build-provider          # -> build/terraform-provider-infra
+#
+# Then point dev_overrides at the directory holding that binary and run
+# Terraform with this file active:
+#
+#   export TF_CLI_CONFIG_FILE="$PWD/terraform.tfrc"
+#
+# (copy this file to terraform.tfrc and edit the absolute path).
+provider_installation {
+  dev_overrides {
+    "goabonga/infra" = "/ABSOLUTE/PATH/TO/infrastructure/build"
+  }
+  direct {}
+}

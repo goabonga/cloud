@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: Bug Report
+description: Report a bug or unexpected behaviour
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please fill in the details below.
+
+        For security-sensitive issues (auth, tokens, sessions, secret
+        storage), do NOT open a public issue - use the private advisory link
+        on the issue chooser instead.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      description: Which component(s) of the monorepo are affected?
+      multiple: true
+      options:
+        - infra (CLI)
+        - infra-api
+        - infra-controller-manager
+        - infra-agent
+        - infra-idp
+        - infra-exporter
+        - infra-container-init
+        - infra-www (dashboard server)
+        - infra-spa (dashboard frontend)
+        - terraform-provider-infra
+        - shared core (internal/domain, internal/state)
+        - docs / CI tooling
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Component version
+      description: "Output of `<binary> --version`, or the `.deb` / release tag."
+      placeholder: "e.g. infra-api 0.4.2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >-
+        How can we reproduce this? Include the exact command line, HTTP
+        request, or resource manifest.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment surface
+      description: How is the component running?
+      options:
+        - "Debian package (.deb) under systemd"
+        - "Release binary run directly"
+        - "Built from source (go build / go run)"
+        - "Terraform provider"
+        - "Browser (dashboard)"
+        - "Other"
+    validations:
+      required: true
+
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel and distribution
+      description: >-
+        The control plane drives Linux primitives directly (netns, nftables,
+        cgroups v2, dm-crypt), so the kernel matters for most reports.
+        Output of `uname -sr` plus the distribution.
+      placeholder: "e.g. Linux 6.14.0-37-generic, Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: input
+    id: go-version
+    attributes:
+      label: Go version
+      description: "Output of `go version`. Leave as N/A unless you built from source."
+      placeholder: "e.g. go1.25.10, or N/A"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: privileged
+    attributes:
+      label: Privilege level
+      description: >-
+        Agent and container-init need root plus CAP_NET_ADMIN for the
+        kernel-level paths. Several failures reduce to running unprivileged.
+      options:
+        - "root"
+        - "unprivileged user"
+        - "not applicable"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stack trace
+      description: Relevant log output. Redact tokens and secrets first.
+      render: shell
+    validations:
+      required: false

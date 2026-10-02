@@ -1,0 +1,12 @@
+<!--
+  SPDX-License-Identifier: MIT
+  Copyright (c) 2026 Chris <goabonga@pm.me>
+
+  Managed by Ansible. The transit link between upstream-sim and the edges:
+  isolated (no <forward>, no <ip>), so the libvirt host neither routes nor
+  addresses it and only the VMs attached to it talk over it.
+-->
+<network>
+  <name>{{ wan_sim.network }}</name>
+  <bridge name="{{ wan_sim.bridge }}" stp="off" delay="0"/>
+</network>

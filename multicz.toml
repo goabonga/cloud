@@ -1,0 +1,367 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# multicz.toml - per-component versioning, changelogs and tags for the
+# infrastructure monorepo. Driven by Conventional Commits.
+# Docs: https://goabonga.github.io/multicz/
+#
+# This is a single Go module with several published binaries. Each binary is
+# a multicz component: its version lives in `cmd/<dir>/version.go` as
+# `const Version = "x.y.z"` and is patched on release. Shared packages under
+# internal/ (domain, state, meta) are the de-facto core; a change confined to
+# them maps to no component and ships no release (see PLAN.md, open decision 2).
+
+[project]
+commit_convention = "conventional"
+tag_format = "{component}-v{version}"
+initial_version = "0.0.0"
+# Regenerate go.sum / prune the module graph after a version bump so the
+# committed module metadata stays consistent.
+post_bump_policy = "allow"
+state_file = ".multicz/state.json"
+# go.mod and go.sum are claimed by every Go component: a dependency or
+# toolchain bump changes the binaries linked against it, so a fix touching
+# only them has to release each one. "all" is the intended reading of that
+# overlap. The default would reject the config outright; "first-match" would
+# release whichever component happens to be declared first and silently leave
+# the rest on a stale dependency. Whether a given bump ships at all is still
+# decided by its commit type: chore(deps) releases nothing, and
+# scripts/rewrite-dependabot-commit.sh types a Dependabot bump fix(deps) only
+# when it changes what the binaries link.
+#
+# `multicz changed` (>= 1.6.1) honours this the same way the bump plan does:
+# a shared path like go.mod reports every component that claims it, not just
+# the first-declared one - safe to gate a per-component build on its output.
+overlap_policy = "all"
+
+# go list -deps closes the gap `paths` above can't: a hand-maintained glob
+# like infra-api's internal/handler, internal/httpsrv, internal/httpsec
+# silently misses new internal/ imports (go list -deps ./cmd/api reports 16
+# internal/ packages, including internal/auth, internal/crypto, internal/pki,
+# internal/secret, internal/ssl - not one of them a `paths` entry). affects()
+# is only ever consulted once plain `paths` matching has already missed a
+# changed file, so this never second-guesses a path that already matched.
+# REQUIRES go on PATH wherever `multicz changed`/`plan`/`bump` runs.
+[plugins.go-deps]
+[plugins.go-deps.packages]
+infra                       = "./cmd/cli"
+infra-api                   = "./cmd/api"
+infra-controller-manager    = "./cmd/controller-manager"
+terraform-provider-infra    = "./cmd/provider"
+infra-exporter              = "./cmd/exporter"
+infra-idp                   = "./cmd/idp"
+infra-container-init        = "./cmd/container-init"
+infra-www                   = "./cmd/www"
+# infra-agent ships two further binaries from packaging/components.sh's
+# EXTRA_BINARIES - all three share one release, so all three import graphs
+# matter for ownership.
+infra-agent                 = ["./cmd/agent", "./cmd/lb", "./cmd/hypervisor"]
+
+# Custom commit types layered on the conventional defaults. `deprecate:`
+# announces an upcoming removal; `remove:` performs it in a major release
+# (see docs/stability.md). Keep these rules for historical commits.
+[project.bump_rules]
+feat = "minor"
+fix = "patch"
+perf = "patch"
+revert = "patch"
+deprecate = "minor"
+remove = "major"
+
+# CHANGELOG layout aligned on Keep-a-Changelog. Sections render in order.
+[[project.changelog_sections]]
+title = "Added"
+types = ["feat"]
+
+[[project.changelog_sections]]
+title = "Deprecated"
+types = ["deprecate"]
+
+[[project.changelog_sections]]
+title = "Removed"
+types = ["remove"]
+
+[[project.changelog_sections]]
+title = "Fixed"
+types = ["fix"]
+
+[[project.changelog_sections]]
+title = "Performance"
+types = ["perf"]
+
+# ── Control plane ─────────────────────────────────────────────────────────
+
+[components.infra-api]
+paths = ["cmd/api/**", "internal/handler/**", "internal/httpsrv/**", "internal/httpsec/**", "web/**", "go.mod", "go.sum", "deploy/systemd/infra-api.service"]
+bump_files = [
+    { file = "cmd/api/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_api" },
+]
+changelog = "cmd/api/CHANGELOG.md"
+post_bump = ["go mod tidy"]
+
+[[components.infra-api.writers]]
+type            = "debian-changelog"
+file            = "cmd/api/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-api.artifacts]]
+type = "debian"
+ref  = "infra-api_{version}_amd64.deb"
+
+[[components.infra-api.artifacts]]
+type = "debian"
+ref  = "infra-api_{version}_arm64.deb"
+
+[[components.infra-api.artifacts]]
+type = "archlinux"
+ref  = "infra-api-{version}-1-x86_64.pkg.tar.zst"
+
+[components.infra-controller-manager]
+paths = ["cmd/controller-manager/**", "internal/controllers/**", "internal/scheduler/**", "go.mod", "go.sum", "deploy/systemd/infra-controller-manager.service"]
+bump_files = [
+    { file = "cmd/controller-manager/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_controller_manager" },
+]
+changelog = "cmd/controller-manager/CHANGELOG.md"
+post_bump = ["go mod tidy"]
+
+[[components.infra-controller-manager.writers]]
+type            = "debian-changelog"
+file            = "cmd/controller-manager/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-controller-manager.artifacts]]
+type = "debian"
+ref  = "infra-controller-manager_{version}_amd64.deb"
+
+[[components.infra-controller-manager.artifacts]]
+type = "debian"
+ref  = "infra-controller-manager_{version}_arm64.deb"
+
+[[components.infra-controller-manager.artifacts]]
+type = "archlinux"
+ref  = "infra-controller-manager-{version}-1-x86_64.pkg.tar.zst"
+
+# ── Data plane ────────────────────────────────────────────────────────────
+
+# infra-agent ships infra-lb, the load balancers' data plane, which it runs:
+# they are released together, under the agent's version.
+[components.infra-agent]
+paths = ["cmd/agent/**", "internal/manager/**", "cmd/lb/**", "internal/lbproxy/**", "go.mod", "go.sum", "deploy/systemd/infra-agent.service", "deploy/systemd/infra-lb@.service", "deploy/systemd/infra-egress@.service"]
+bump_files = [
+    { file = "cmd/agent/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "cmd/lb/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_agent" },
+]
+changelog = "cmd/agent/CHANGELOG.md"
+post_bump = ["go mod tidy"]
+
+[[components.infra-agent.writers]]
+type            = "debian-changelog"
+file            = "cmd/agent/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-agent.artifacts]]
+type = "debian"
+ref  = "infra-agent_{version}_amd64.deb"
+
+[[components.infra-agent.artifacts]]
+type = "debian"
+ref  = "infra-agent_{version}_arm64.deb"
+
+[[components.infra-agent.artifacts]]
+type = "archlinux"
+ref  = "infra-agent-{version}-1-x86_64.pkg.tar.zst"
+
+# ── Clients ───────────────────────────────────────────────────────────────
+
+[components.infra]
+paths = ["cmd/cli/**", "internal/client/**", "go.mod", "go.sum"]
+bump_files = [
+    { file = "cmd/cli/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra" },
+]
+changelog = "cmd/cli/CHANGELOG.md"
+post_bump = ["go mod tidy"]
+
+[[components.infra.writers]]
+type            = "debian-changelog"
+file            = "cmd/cli/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra.artifacts]]
+type = "debian"
+ref  = "infra_{version}_amd64.deb"
+
+[[components.infra.artifacts]]
+type = "debian"
+ref  = "infra_{version}_arm64.deb"
+
+[[components.infra.artifacts]]
+type = "archlinux"
+ref  = "infra-{version}-1-x86_64.pkg.tar.zst"
+
+[components.terraform-provider-infra]
+paths = ["cmd/provider/**", "internal/provider/**", "internal/resources/**", "go.mod", "go.sum"]
+bump_files = [
+    { file = "cmd/provider/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.terraform_provider_infra" },
+]
+changelog = "cmd/provider/CHANGELOG.md"
+# The provider speaks to the API over HTTP and is version-coupled to it.
+depends_on = ["infra-api"]
+post_bump = ["go mod tidy"]
+
+[[components.terraform-provider-infra.writers]]
+type            = "debian-changelog"
+file            = "cmd/provider/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.terraform-provider-infra.artifacts]]
+type = "debian"
+ref  = "terraform-provider-infra_{version}_amd64.deb"
+
+[[components.terraform-provider-infra.artifacts]]
+type = "debian"
+ref  = "terraform-provider-infra_{version}_arm64.deb"
+
+[[components.terraform-provider-infra.artifacts]]
+type = "archlinux"
+ref  = "terraform-provider-infra-{version}-1-x86_64.pkg.tar.zst"
+
+# ── Identity ──────────────────────────────────────────────────────────────
+
+[components.infra-idp]
+# internal/auth is shared core (consumed by the API too), so it is intentionally
+# not owned here; it is added back when the IDP itself is built.
+paths = ["cmd/idp/**", "internal/idp/**", "go.mod", "go.sum", "deploy/systemd/infra-idp.service"]
+bump_files = [
+    { file = "cmd/idp/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_idp" },
+]
+changelog = "cmd/idp/CHANGELOG.md"
+post_bump = ["go mod tidy"]
+
+[[components.infra-idp.writers]]
+type            = "debian-changelog"
+file            = "cmd/idp/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-idp.artifacts]]
+type = "debian"
+ref  = "infra-idp_{version}_amd64.deb"
+
+[[components.infra-idp.artifacts]]
+type = "debian"
+ref  = "infra-idp_{version}_arm64.deb"
+
+[[components.infra-idp.artifacts]]
+type = "archlinux"
+ref  = "infra-idp-{version}-1-x86_64.pkg.tar.zst"
+
+# ── Observability ─────────────────────────────────────────────────────────
+
+[components.infra-exporter]
+paths = ["cmd/exporter/**", "internal/metrics/**", "go.mod", "go.sum", "deploy/systemd/infra-exporter.service"]
+bump_files = [
+    { file = "cmd/exporter/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_exporter" },
+]
+changelog = "cmd/exporter/CHANGELOG.md"
+post_bump = ["go mod tidy"]
+
+[[components.infra-exporter.writers]]
+type            = "debian-changelog"
+file            = "cmd/exporter/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-exporter.artifacts]]
+type = "debian"
+ref  = "infra-exporter_{version}_amd64.deb"
+
+[[components.infra-exporter.artifacts]]
+type = "debian"
+ref  = "infra-exporter_{version}_arm64.deb"
+
+[[components.infra-exporter.artifacts]]
+type = "archlinux"
+ref  = "infra-exporter-{version}-1-x86_64.pkg.tar.zst"
+
+# ── Helpers ───────────────────────────────────────────────────────────────
+
+[components.infra-container-init]
+paths = ["cmd/container-init/**", "go.mod", "go.sum"]
+bump_files = [
+    { file = "cmd/container-init/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_container_init" },
+]
+changelog = "cmd/container-init/CHANGELOG.md"
+post_bump = ["go mod tidy"]
+
+[[components.infra-container-init.writers]]
+type            = "debian-changelog"
+file            = "cmd/container-init/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-container-init.artifacts]]
+type = "debian"
+ref  = "infra-container-init_{version}_amd64.deb"
+
+[[components.infra-container-init.artifacts]]
+type = "debian"
+ref  = "infra-container-init_{version}_arm64.deb"
+
+[[components.infra-container-init.artifacts]]
+type = "archlinux"
+ref  = "infra-container-init-{version}-1-x86_64.pkg.tar.zst"
+
+# ── Web ───────────────────────────────────────────────────────────────────
+
+# The Vite SPA (www/) is versioned on its own: it ships as a standalone bundle
+# and is embedded into the infra-www binary via go:embed.
+[components.infra-spa]
+paths = ["www/**"]
+bump_files = [
+    { file = "www/package.json", key = "regex:\"version\"\\s*:\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_spa" },
+]
+changelog = "www/CHANGELOG.md"
+
+# The web dashboard server embeds the SPA, so it depends on infra-spa: a SPA
+# change bumps infra-spa and cascades a bump here, rebuilding the embedded binary.
+[components.infra-www]
+paths = ["cmd/www/**", "internal/web/**", "internal/httpsec/**", "deploy/systemd/infra-www.service", "go.mod", "go.sum"]
+bump_files = [
+    { file = "cmd/www/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_www" },
+]
+changelog = "cmd/www/CHANGELOG.md"
+depends_on = ["infra-spa"]
+post_bump = ["go mod tidy"]
+
+[[components.infra-www.writers]]
+type            = "debian-changelog"
+file            = "cmd/www/debian/changelog"
+distribution    = "unstable"
+maintainer      = "Chris <goabonga@pm.me>"
+
+[[components.infra-www.artifacts]]
+type = "debian"
+ref  = "infra-www_{version}_amd64.deb"
+
+[[components.infra-www.artifacts]]
+type = "debian"
+ref  = "infra-www_{version}_arm64.deb"
+
+[[components.infra-www.artifacts]]
+type = "archlinux"
+ref  = "infra-www-{version}-1-x86_64.pkg.tar.zst"

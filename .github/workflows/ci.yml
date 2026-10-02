@@ -1,0 +1,719 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancels superseded PR runs but never main-branch releases.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Config sanity ahead of everything else. `multicz validate --strict` catches
+  # a component whose `paths` match nothing, a `bump_files` entry pointing at a
+  # missing file or an unparseable version constant, a broken cascade edge, a
+  # tag_format collision. Its own job rather than a step inside `detect`: those
+  # are the failures that make `multicz changed` return a plausible-looking but
+  # wrong answer, and a distinct red job names the cause instead of burying it
+  # in the change-detection log.
+  validate:
+    name: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/multicz-validate
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: validate
+          body: "`multicz validate --strict` on `multicz.toml`."
+
+  # Detect which components changed since the comparison ref. On PR: vs the
+  # target branch. On main: vs each component's last tag (multicz default),
+  # which scopes the release matrix to bump-worthy work. multicz is
+  # language-agnostic: it reads multicz.toml `paths`, so it works on the Go
+  # module just as it does on a Python workspace.
+  #
+  # Docs and integration detection bypass multicz on purpose: neither carries
+  # a version of its own, so there is no tag for `multicz changed` to compare
+  # against. We use a plain `git diff` on their paths instead.
+  detect:
+    name: detect changed components
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # Only this job's own duplicate-push check reads run history; nothing
+      # else here needs more than the default contents:read.
+      actions: read
+    outputs:
+      packages: ${{ steps.detect.outputs.packages }}
+      has_package_changes: ${{ steps.detect.outputs.has_package_changes }}
+      docs_changed: ${{ steps.detect.outputs.docs_changed }}
+      integration_changed: ${{ steps.detect.outputs.integration_changed }}
+      www_changed: ${{ steps.detect.outputs.www_changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: detect
+        uses: ./.github/actions/detect-changes
+
+  # Quality jobs run once over the whole Go module rather than per component:
+  # the repo is a single `go` module, so `golangci-lint run`, `go vet` and
+  # `go test ./...` already operate package-by-package and per-component
+  # sharding would only add a brittle component->path lookup with no gain.
+  # They gate on `has_package_changes` so docs-only / chore-only pushes skip.
+
+  license-headers:
+    name: license-headers
+    needs: detect
+    if: needs.detect.outputs.has_package_changes == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/license-headers
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: license-headers
+          body: SPDX headers on `cmd/`, `internal/`, `test/`, `scripts/`, `.github/`.
+
+  lint:
+    name: lint
+    needs: detect
+    if: needs.detect.outputs.has_package_changes == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/golangci-lint
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: lint
+          body: "`golangci-lint run` over the Go module."
+
+  # Frontend quality gate (Node toolchain): lint, type-check, unit tests and a
+  # production build of the Vite SPA. Gated on changes under www/.
+  www:
+    name: www
+    needs: detect
+    # Gated on www_changed alone: `go build ./...` in vet-build embeds only
+    # cmd/www/dist/.gitkeep, never the real bundle; publish builds the SPA
+    # from the current www/ tree on every run regardless of this job - so this
+    # eslint/tsc/vitest gate has nothing to re-validate when www/ itself
+    # hasn't changed. `release` and `docs`, which need this job, already
+    # tolerate a skip.
+    if: needs.detect.outputs.www_changed == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      # fetch-depth: 0 + bump-preview: the production build below is stamped
+      # with www/package.json's version, so without the preview a pull request
+      # would validate a bundle carrying the previous release's number.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/www-quality
+        with:
+          codecov-token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: www
+          body: "`eslint`, `tsc`, `vitest` with coverage (uploaded to Codecov) and a production `vite build` of the SPA."
+
+  vet-build:
+    name: vet + build
+    needs: detect
+    if: needs.detect.outputs.has_package_changes == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Compile against the version the next release will ship, not the last
+      # one: `cmd/<component>/version.go` is a bump_files target.
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/go-vet-build
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: vet + build
+          body: "`go vet` (both build tags) and `go build ./...`."
+
+  test:
+    name: test
+    needs: detect
+    if: needs.detect.outputs.has_package_changes == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/go-test
+        with:
+          codecov-token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: test
+          body: "`go test -race` with coverage, uploaded to Codecov."
+
+  gosec:
+    name: gosec
+    needs: detect
+    if: needs.detect.outputs.has_package_changes == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/gosec
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: gosec
+          body: "`gosec` static security analysis over the Go module."
+
+  govulncheck:
+    name: govulncheck
+    needs: detect
+    if: needs.detect.outputs.has_package_changes == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/govulncheck
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: govulncheck
+          body: "`govulncheck` against the Go vulnerability database, less the entries `osv-scanner.toml` accepts."
+
+  osv-scanner:
+    name: osv-scanner
+    needs: detect
+    if: needs.detect.outputs.has_package_changes == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/osv-scanner
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: osv-scanner
+          body: "`osv-scanner` on the `go.mod` dependency closure."
+
+  # Privileged kernel-level integration suite (build tag `integration`). Runs
+  # when any component changed OR the suite itself changed. NOTE: the real
+  # netns / iptables / cgroups tests added from M3 need a privileged host
+  # (root + CAP_NET_ADMIN); wire a self-hosted or privileged runner here then.
+  # The M0 smoke test only proves the tag wires up, so a hosted runner suffices.
+  integration:
+    name: integration
+    needs: detect
+    if: >-
+      needs.detect.outputs.has_package_changes == 'true'
+      || needs.detect.outputs.integration_changed == 'true'
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: infra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/integration-test
+        with:
+          postgres-dsn: postgres://postgres:postgres@localhost:5432/infra?sslmode=disable
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: integration
+          body: |
+            `go test -tags=integration` against a postgres service, with
+            `/dev/kvm` opened up for the hypervisor tests. The kernel-level
+            cases (bridge, firewall) self-skip without root.
+
+  release:
+    name: release
+    needs:
+      - detect
+      - license-headers
+      - lint
+      - www
+      - vet-build
+      - test
+      - gosec
+      - govulncheck
+      - osv-scanner
+      - integration
+      - e2e
+      - owasp-api
+      - owasp-www
+    # Most needs below share has_package_changes' own gate, so skip is never
+    # legitimate for them and they are required to have actually SUCCEEDED.
+    # `www` is gated independently on www_changed and may legitimately skip
+    # on a non-frontend push. This used to read
+    # `!cancelled() && !failure()`, which tolerates ANY need coming back
+    # `skipped` for whatever reason, not just a legitimate one - the same
+    # shape of gap that let test-pipelilne-multicz's release-bump fire once
+    # on a run cancelled before its validations had even dispatched, tagging
+    # a release with nothing published behind it. Checking each `result`
+    # directly closes that regardless of how GitHub happens to attribute a
+    # cancellation to the jobs underneath it.
+    #
+    # always(): none of success()/failure()/cancelled()/always() appears
+    # literally above, so without it GitHub silently ANDs an implicit
+    # `success()` onto the whole expression - which would require `www` to
+    # have succeeded even when www_changed is false and it legitimately
+    # skipped, defeating that OR entirely.
+    if: >-
+      always()
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.detect.result == 'success'
+      && needs.detect.outputs.has_package_changes == 'true'
+      && needs.license-headers.result == 'success'
+      && needs.lint.result == 'success'
+      && (needs.www.result == 'success' || needs.detect.outputs.www_changed != 'true')
+      && needs.vet-build.result == 'success'
+      && needs.test.result == 'success'
+      && needs.gosec.result == 'success'
+      && needs.govulncheck.result == 'success'
+      && needs.osv-scanner.result == 'success'
+      && needs.integration.result == 'success'
+      && needs.e2e.result == 'success'
+      && needs.owasp-api.result == 'success'
+      && needs.owasp-www.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      no_bumps: ${{ steps.release.outputs.no_bumps }}
+      bumped: ${{ steps.release.outputs.bumped }}
+      bumped_json: ${{ steps.release.outputs.bumped_json }}
+    steps:
+      # `main-protection` (the repo ruleset) requires every change to main to
+      # go through a pull request; the default GITHUB_TOKEN authenticates as
+      # github-actions[bot], which has no bypass for it. RELEASE_PAT is the
+      # maintainer's own PAT, the same identity auto-merge-signed.yml already
+      # uses to push signed commits straight to main, and it does bypass the
+      # ruleset.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+      - id: release
+        uses: ./.github/actions/cut-release
+        with:
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: release
+          body: |
+            Bumped: `${{ steps.release.outputs.bumped || 'none' }}`. GPG
+            signing: `${{ steps.release.outputs.gpg_available }}`. `multicz
+            plan` and `multicz bump` append their own detail above.
+
+  # Build and publish the bumped components as cross-compiled binaries
+  # attached to per-component GitHub Releases. Named per component (one job
+  # per possible release, gated on whether it actually bumped) rather than a
+  # matrix over the dynamic bumped_json list - most runs bump zero or one
+  # component, so this mostly shows as a
+  # short list of skipped jobs plus the one or two that actually ran.
+  # ---------------------------------------------------------------------
+
+  publish-infra:
+    name: publish (infra)
+    needs: [detect, release]
+    # contains(): bumped_json lists only the components that actually bumped
+    # this run - everything else in this group skips, same as the matrix
+    # version's per-component `include` entries never ran for an untouched
+    # component.
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64` binaries and cut the GitHub Release.
+
+  publish-infra-api:
+    name: publish (infra-api)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-api')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-api
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-api)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64` binaries and cut the GitHub Release.
+
+  publish-infra-idp:
+    name: publish (infra-idp)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-idp')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-idp
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-idp)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64` binaries and cut the GitHub Release.
+
+  publish-infra-exporter:
+    name: publish (infra-exporter)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-exporter')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-exporter
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-exporter)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64` binaries and cut the GitHub Release.
+
+  publish-infra-controller-manager:
+    name: publish (infra-controller-manager)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-controller-manager')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-controller-manager
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-controller-manager)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64` binaries and cut the GitHub Release.
+
+  publish-infra-agent:
+    name: publish (infra-agent)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-agent')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-agent
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-agent)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64` binaries and cut the GitHub Release.
+
+  publish-infra-container-init:
+    name: publish (infra-container-init)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-container-init')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-container-init
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-container-init)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64` binaries and cut the GitHub Release.
+
+  publish-terraform-provider-infra:
+    name: publish (terraform-provider-infra)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'terraform-provider-infra')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: terraform-provider-infra
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (terraform-provider-infra)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64` binaries and cut the GitHub Release.
+
+  publish-infra-www:
+    name: publish (infra-www)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-www')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-www
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-www)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64` binaries and cut the GitHub Release.
+
+  publish-infra-spa:
+    name: publish (infra-spa)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-spa')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-spa
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-spa)
+          body: Standalone SPA tarball attached to the GitHub Release.
+  # Build the Zensical site and deploy to GitHub Pages. Runs on either signal
+  # that can change the published output: a direct edit under docs/ or
+  # zensical.toml (`docs_changed`), or a release bump (the site embeds
+  # version + changelog content, so every bump invalidates the rendered
+  # output even when no markdown changed). Gating on `release.result ==
+  # 'success'` alone, as this job used to, missed the first case entirely: a
+  # docs-only push has no package changes, so `release` is skipped rather
+  # than successful, and the site never rebuilt even though docs/ changed.
+  #
+  # `needs` repeats the quality-gate list `release` depends on rather than
+  # just depending on `release` itself, because a skipped `release` does not
+  # say whether those gates passed or never ran - and `docs_changed` must
+  # not bypass a real failure among them.
+  docs:
+    name: docs
+    needs:
+      - detect
+      - license-headers
+      - lint
+      - www
+      - vet-build
+      - test
+      - gosec
+      - govulncheck
+      - osv-scanner
+      - integration
+      - e2e
+      - owasp-api
+      - owasp-www
+      - release
+    # Unlike `release`, EVERY one of these may legitimately come back
+    # `skipped` here - a docs-only push skips every one of them, by design,
+    # and that must not block docs. What must still block it is any of them
+    # coming back `failure` or `cancelled`, so each is checked for those
+    # two explicitly rather than relying on the job-wide `!cancelled() &&
+    # !failure()`, whose blind spot is the same one `release` closed above:
+    # it cannot distinguish "skipped because not applicable" from "skipped
+    # because the run was cancelled before this had a chance to run".
+    #
+    # always(): none of success()/failure()/cancelled()/always() appears
+    # literally above, so without it GitHub silently ANDs an implicit
+    # `success()` onto the whole expression - which would require every one
+    # of these to have succeeded, breaking every `|| ... == 'skipped'` below
+    # and making a docs-only push (where all of them legitimately skip)
+    # never actually deploy.
+    if: >-
+      always()
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.detect.result == 'success'
+      && (
+        needs.detect.outputs.docs_changed == 'true'
+        || (needs.release.result == 'success' && needs.release.outputs.no_bumps == 'false')
+      )
+      && (needs.license-headers.result == 'success' || needs.license-headers.result == 'skipped')
+      && (needs.lint.result == 'success' || needs.lint.result == 'skipped')
+      && (needs.www.result == 'success' || needs.www.result == 'skipped')
+      && (needs.vet-build.result == 'success' || needs.vet-build.result == 'skipped')
+      && (needs.test.result == 'success' || needs.test.result == 'skipped')
+      && (needs.gosec.result == 'success' || needs.gosec.result == 'skipped')
+      && (needs.govulncheck.result == 'success' || needs.govulncheck.result == 'skipped')
+      && (needs.osv-scanner.result == 'success' || needs.osv-scanner.result == 'skipped')
+      && (needs.integration.result == 'success' || needs.integration.result == 'skipped')
+      && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped')
+      && (needs.owasp-api.result == 'success' || needs.owasp-api.result == 'skipped')
+      && (needs.owasp-www.result == 'success' || needs.owasp-www.result == 'skipped')
+      && (needs.release.result == 'success' || needs.release.result == 'skipped')
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.docs.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: docs
+        uses: ./.github/actions/build-docs
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: docs
+          body: |
+            `zensical build --clean` deployed to GitHub Pages:
+            ${{ steps.docs.outputs.page_url }}

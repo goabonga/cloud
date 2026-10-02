@@ -1,0 +1,205 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Check a deployed lab end to end, and optionally drill its redundancy:
+#
+#   ansible-playbook verify.yml                  # checks only
+#   ansible-playbook verify.yml -e failover=true # + freeze the leader host's
+#                                                #   controller-manager, stop its etcd
+#
+# The checks: the API is healthy and refuses unauthenticated calls, an IdP
+# client-credentials token is accepted, the bootstrapped admin can log in and
+# their token carries the admin role, every agent is registered as a node,
+# the etcd cluster has a healthy member on every host, and an agent host
+# holds the controller-manager lease.
+#
+# The drill simulates the lease holder hanging rather than shutting down: a
+# clean stop releases the lease, which would hide whether expiry works. It
+# freezes the holder's controller-manager (cgroup freezer: alive, but no
+# longer renewing) and stops its etcd member, then expects the other agent host
+# to take the lease once it expires and the API to keep serving from the
+# remaining quorum. After thawing, the old holder must find the lease taken
+# and stay on standby. Both services are restored afterwards.
+---
+- name: Control-plane API and identity
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    api_url: "http://{{ control_ip }}:{{ api_addr | regex_replace('^:', '') }}"
+  tasks:
+    - name: The API reports healthy
+      ansible.builtin.uri:
+        url: "{{ api_url }}/healthz"
+        status_code: 200
+
+    - name: The API refuses a call without a token
+      ansible.builtin.uri:
+        url: "{{ api_url }}/api/v1/node"
+        status_code: 401
+
+    - name: The IdP issues a token for the Terraform client
+      ansible.builtin.uri:
+        url: "{{ idp_issuer }}/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          grant_type: client_credentials
+          client_id: "{{ idp_client_id }}"
+          client_secret: "{{ lookup('file', idp_client_secret_file) | trim }}"
+        status_code: 200
+      register: verify_token
+
+    - name: The bootstrapped admin can log in
+      ansible.builtin.uri:
+        url: "{{ idp_issuer }}/login"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ idp_admin_username }}"
+          password: "{{ lookup('file', idp_admin_password_file) | trim }}"
+        status_code: 200
+      register: verify_admin_login
+
+    - name: The admin's token carries the admin role
+      ansible.builtin.uri:
+        url: "{{ idp_issuer }}/userinfo"
+        headers:
+          Authorization: "Bearer {{ verify_admin_login.json.access_token }}"
+        status_code: 200
+      register: verify_admin_userinfo
+
+    - name: Assert the admin role is present
+      ansible.builtin.assert:
+        that: "'admin' in verify_admin_userinfo.json.roles"
+        fail_msg: "Expected roles to include admin, got {{ verify_admin_userinfo.json.roles }}"
+
+    # Nodes are registered by the admin, and the API shows a caller only what
+    # it owns or is granted: an administrator sees them all.
+    - name: List the registered nodes as the admin
+      ansible.builtin.uri:
+        url: "{{ api_url }}/api/v1/node"
+        headers:
+          Authorization: "Bearer {{ verify_admin_login.json.access_token }}"
+        status_code: 200
+      register: verify_nodes
+
+    - name: Every agent host is registered as a node
+      ansible.builtin.assert:
+        that: groups['agents'] | difference(verify_nodes.json['items'] | map(attribute='metadata.uid')) | length == 0
+        fail_msg: "Missing nodes: {{ groups['agents'] | difference(verify_nodes.json['items'] | map(attribute='metadata.uid')) }}"
+
+- name: Shared state and leader election
+  hosts: control
+  gather_facts: false
+  become: true
+  vars:
+    etcd_endpoints: "{{ state_dsn | regex_replace('^etcd://', '') }}"
+    etcdctl: "/usr/local/bin/etcdctl --endpoints={{ etcd_endpoints }}"
+    api_url: "http://{{ control_ip }}:{{ api_addr | regex_replace('^:', '') }}"
+  tasks:
+    - name: Every etcd member is healthy
+      ansible.builtin.command: "{{ etcdctl }} endpoint health"
+      changed_when: false
+
+    - name: List the etcd members
+      ansible.builtin.command: "{{ etcdctl }} member list"
+      register: verify_members
+      changed_when: false
+
+    - name: The cluster has one member per host
+      ansible.builtin.assert:
+        that: verify_members.stdout_lines | length == groups['infra'] | length
+
+    - name: Read the controller-manager lease
+      ansible.builtin.command: "{{ etcdctl }} get leases/controller-manager --print-value-only"
+      register: verify_lease
+      changed_when: false
+
+    # The holder is "<hostname>-<pid>", and the lab hostnames are the
+    # inventory names (cloud-init sets them from `vms`).
+    - name: Resolve the lease holder's host
+      ansible.builtin.set_fact:
+        verify_leader: "{{ (verify_lease.stdout | from_json).holder | regex_replace('-[0-9]+$', '') }}"
+
+    - name: An agent host holds the lease
+      ansible.builtin.assert:
+        that: verify_leader in groups['agents']
+        success_msg: "controller-manager leader: {{ verify_leader }}"
+
+    - name: Drill the failover of the leader host
+      when: failover | default(false) | bool
+      block:
+        # The systemd module has no freeze action.
+        - name: Freeze the leader's controller-manager
+          ansible.builtin.command: systemctl freeze infra-controller-manager  # noqa: command-instead-of-module
+          delegate_to: "{{ verify_leader }}"
+          changed_when: true
+
+        - name: Stop the leader's etcd member
+          ansible.builtin.systemd_service:
+            name: etcd
+            state: stopped
+          delegate_to: "{{ verify_leader }}"
+
+        # The frozen holder's lease stays in place until its TTL (15s) runs
+        # out; only then can the standby take it.
+        - name: Wait for another agent host to take the lease
+          ansible.builtin.command: >-
+            /usr/local/bin/etcdctl
+            --endpoints={{ etcd_endpoints | split(',') | reject('equalto', hostvars[verify_leader].ansible_host ~ ':' ~ etcd_client_port) | join(',') }}
+            get leases/controller-manager --print-value-only
+          register: verify_new_lease
+          changed_when: false
+          retries: 20
+          delay: 3
+          until: >-
+            verify_new_lease.rc == 0 and verify_new_lease.stdout | length > 0
+            and (verify_new_lease.stdout | from_json).holder | regex_replace('-[0-9]+$', '') != verify_leader
+
+        - name: The API keeps serving from the remaining quorum
+          ansible.builtin.uri:
+            url: "{{ api_url }}/api/v1/node"
+            headers:
+              Authorization: "Bearer {{ hostvars['localhost'].verify_token.json.access_token }}"
+            status_code: 200
+
+        - name: Report the new leader
+          ansible.builtin.debug:
+            msg: >-
+              controller-manager leadership moved from {{ verify_leader }} to
+              {{ (verify_new_lease.stdout | from_json).holder | regex_replace('-[0-9]+$', '') }}
+
+        - name: Restore the old leader's etcd member and thaw its controller-manager
+          ansible.builtin.command: "{{ item }}"
+          delegate_to: "{{ verify_leader }}"
+          loop:
+            - systemctl start etcd
+            - systemctl thaw infra-controller-manager
+          changed_when: true
+
+        # Three reconcile intervals (5s each) give the thawed instance time to
+        # attempt a renewal and find the lease held by someone else.
+        - name: Let the thawed instance run its lease check
+          ansible.builtin.pause:
+            seconds: 15
+
+        - name: Read the lease after the thaw
+          ansible.builtin.command: "{{ etcdctl }} get leases/controller-manager --print-value-only"
+          register: verify_after_thaw
+          changed_when: false
+
+        - name: The thawed instance stays on standby
+          ansible.builtin.assert:
+            that: (verify_after_thaw.stdout | from_json).holder == (verify_new_lease.stdout | from_json).holder
+            fail_msg: "Lease moved back to {{ (verify_after_thaw.stdout | from_json).holder }} after the thaw"
+      always:
+        - name: Make sure the old leader's services are running again
+          ansible.builtin.command: "{{ item }}"
+          delegate_to: "{{ verify_leader }}"
+          loop:
+            - systemctl start etcd
+            - systemctl thaw infra-controller-manager
+          changed_when: false
+          failed_when: false

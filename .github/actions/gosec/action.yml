@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: gosec
+description: Run gosec static security analysis over the Go module.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    - name: Install gosec
+      shell: bash
+      run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+    - name: Run gosec
+      shell: bash
+      run: gosec ./...

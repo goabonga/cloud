@@ -1,0 +1,11 @@
+infra-exporter (0.5.3-1) unstable; urgency=medium
+
+  * No notable changes.
+
+ -- Chris <goabonga@pm.me>  Fri, 02 Oct 2026 15:02:19 +0000
+
+infra-exporter (0.5.2-1) unstable; urgency=medium
+
+  * fix: Expose collection failures instead of empty resource counts
+
+ -- Chris <goabonga@pm.me>  Fri, 02 Oct 2026 12:15:12 +0000

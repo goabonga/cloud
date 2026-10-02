@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+---
+# The reconcilers shell out to these, and the infra-agent package does not
+# depend on them.
+- name: Install the host tools the agent drives
+  ansible.builtin.apt:
+    name:
+      - iproute2
+      - iptables
+      - conntrack
+      - cryptsetup-bin
+      - ipvsadm
+      - e2fsprogs
+      - util-linux
+    update_cache: true
+    cache_valid_time: 3600
+
+# Each VPC routes in a VRF of its own. The vrf module ships in the kernel's
+# extra modules, which Ubuntu's cloud images leave out; loading it at boot
+# keeps the first agent pass from depending on module autoload.
+- name: Install the kernel's extra modules
+  ansible.builtin.apt:
+    name: "linux-modules-extra-{{ ansible_facts['kernel'] }}"
+
+- name: Load the vrf module at boot
+  ansible.builtin.copy:
+    content: "vrf\n"
+    dest: /etc/modules-load.d/infra-vrf.conf
+    mode: "0644"
+
+- name: Load the vrf module now
+  ansible.builtin.command: modprobe vrf
+  changed_when: false
+
+- name: Copy agent packages
+  ansible.builtin.copy:
+    src: "{{ deb_dir }}/{{ item }}_{{ version }}_{{ deb_arch }}.deb"
+    dest: "/tmp/{{ item }}.deb"
+    mode: "0644"
+  loop: "{{ agent_packages }}"
+
+- name: Install agent packages
+  ansible.builtin.apt:
+    deb: "/tmp/{{ item }}.deb"
+  loop: "{{ agent_packages }}"
+  # A same-content config task further down is what normally notifies these,
+  # but a .deb install changes the binary a running service already loaded
+  # into memory regardless of whether its config did - so this notifies both
+  # unconditionally rather than relying on that coincidence.
+  notify:
+    - Restart infra-agent
+    - Restart infra-controller-manager
+
+- name: Ensure the infra-agent drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/infra-agent.service.d
+    state: directory
+    mode: "0755"
+
+- name: Write the agent environment file
+  ansible.builtin.template:
+    src: agent.env.j2
+    dest: "{{ infra_conf_dir }}/agent.env"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart infra-agent
+
+- name: Install the infra-agent systemd drop-in
+  ansible.builtin.template:
+    src: infra-agent.override.conf.j2
+    dest: /etc/systemd/system/infra-agent.service.d/override.conf
+    mode: "0644"
+  notify: Restart infra-agent
+
+- name: Enable and start infra-agent
+  ansible.builtin.systemd_service:
+    name: infra-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# Register this host as a schedulable node (UID == GOA_NODE_ID), so the
+# controller-manager's scheduler can place compute onto it. The node id is the
+# inventory hostname, which the agent reports via GOA_NODE_ID.
+# Registering a node is the platform's business, not a tenant's: the API only
+# lets an administrator write a node it does not own, so the playbook logs in
+# as the bootstrapped admin rather than with the Terraform client.
+- name: Obtain an admin access token for node registration
+  ansible.builtin.uri:
+    url: "{{ idp_issuer }}/login"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ idp_admin_username }}"
+      password: "{{ lookup('file', idp_admin_password_file) | trim }}"
+    status_code: 200
+  delegate_to: localhost
+  become: false
+  register: agent_node_token
+  no_log: true
+
+- name: Register this host as a node
+  ansible.builtin.uri:
+    url: "http://{{ control_ip }}:{{ api_addr | regex_replace('^:', '') }}/api/v1/node/{{ inventory_hostname }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ agent_node_token.json.access_token }}"
+    body_format: json
+    body:
+      metadata:
+        uid: "{{ inventory_hostname }}"
+      spec:
+        hostname: "{{ inventory_hostname }}"
+        address: "{{ ansible_host }}"
+        labels:
+          role: agent
+        capacity:
+          cpus: "{{ (vms | selectattr('name', 'equalto', inventory_hostname) | first).vcpus | int }}"
+          memoryMb: "{{ (vms | selectattr('name', 'equalto', inventory_hostname) | first).memory_mb | int }}"
+          maxPods: 32
+    status_code: [200, 201]
+  delegate_to: localhost
+  become: false

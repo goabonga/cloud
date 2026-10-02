@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: validate deb
+description: |
+  Install a freshly built .deb on the runner and put it through three
+  independent gates:
+
+    1. lintian - packaging QA. Errors fail; warnings are reported.
+    2. test/install/validate.sh - the package actually works: file list is
+       real, binary loads, unit parses, service starts and answers /healthz.
+    3. systemd-analyze security - the unit's hardening has not regressed.
+
+  On any failure the upstream `<component>-deb` artifact is deleted, so a
+  package proven broken cannot be picked up afterwards by a human reading the
+  run page or by anything that downloads CI artifacts. The caller MUST
+  therefore grant `actions: write`.
+
+inputs:
+  component:
+    required: true
+    description: Package name, e.g. infra-api.
+  security-threshold:
+    required: false
+    default: "11"
+    description: |
+      Ceiling for `systemd-analyze security`, as the percentage the tool
+      expects: it reads --threshold as internal exposure, which is the
+      displayed score times ten. The default 11 means "fail if the displayed
+      score exceeds 1.1", which is where the four control-plane daemons sit
+      and is the floor for a service that has to reach the network.
+
+      Pass a looser value for a unit that cannot reach it, and say why at the
+      call site rather than here.
+  has-unit:
+    required: false
+    default: "true"
+    description: >-
+      Set to "false" for a package that ships no systemd unit (the CLI, the
+      Terraform provider, container-init), which skips gate 3.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: ${{ inputs.component }}-deb
+        path: /tmp/deb
+
+    - name: Install lintian and the package
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends lintian
+        # apt, not dpkg -i: the daemon packages depend on adduser and systemd,
+        # and apt resolves those rather than leaving the package half-configured.
+        sudo apt-get install -y --no-install-recommends \
+          "/tmp/deb/${COMPONENT}_"*_amd64.deb
+        sudo systemctl daemon-reload
+
+    - name: lintian - packaging QA
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+      run: |
+        set -euo pipefail
+        # Report everything, then gate on errors only. Warnings that are
+        # accepted for this project (no-manual-page,
+        # maintainer-script-calls-systemctl) stay visible without failing.
+        lintian "/tmp/deb/${COMPONENT}_"*_amd64.deb || true
+        lintian --fail-on error "/tmp/deb/${COMPONENT}_"*_amd64.deb
+
+    - name: Install validation suite
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+      run: sudo test/install/validate.sh "$COMPONENT"
+
+    - name: systemd-analyze security
+      if: inputs.has-unit == 'true'
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+        THRESHOLD: ${{ inputs.security-threshold }}
+      run: |
+        set -euo pipefail
+        systemd-analyze security --no-pager "${COMPONENT}.service" || true
+        systemd-analyze security --no-pager \
+          --threshold="$THRESHOLD" "${COMPONENT}.service"
+
+    # Runs on failure only. A .deb that failed any gate above must not remain
+    # downloadable from the run: the release path picks packages up by
+    # artifact name, and a human debugging the run is the other consumer.
+    - name: Delete the artifact for a package that failed validation
+      if: failure()
+      uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
+      with:
+        name: ${{ inputs.component }}-deb
+        failOnError: false

@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: multicz validate
+description: |
+  Install multicz and run `multicz validate --strict` against multicz.toml:
+  catches a component whose `paths` match nothing, a `bump_files` entry
+  pointing at a missing file or an unparseable version constant, a broken
+  cascade edge, a tag_format collision.
+
+runs:
+  using: composite
+  steps:
+    # multicz is installed with setup-uv directly rather than through
+    # goabonga/multicz-action, which leaves the uv cache on: this repo has no
+    # Python lock file for it to key on, so every job warned that the cache
+    # would never be invalidated.
+    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        enable-cache: false
+        python-version: "3.12"
+    - name: Install multicz
+      shell: bash
+      run: uv tool install multicz --with multicz-go-deps-plugin
+    - name: multicz validate --strict
+      shell: bash
+      run: multicz validate --strict
