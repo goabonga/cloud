@@ -6,6 +6,7 @@ package manager
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -13,10 +14,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/registry"
@@ -132,11 +135,10 @@ func NewExecComputeBackendWithRunner(stateDir, netnsDir, cgroupBase string, run 
 	}
 }
 
-// EnsureCompute creates the instance the first time and only keeps its
-// firewall rules in place afterwards. An instance is taken as created once
-// its namespace exists, so a creation that fails part-way tears down what it
-// made: the next pass then creates the instance again, rather than finding
-// its namespace and taking it as running.
+// EnsureCompute keeps the applied instance only while its configuration and
+// host launcher identity match. Drift, an exited workload or missing runtime
+// state causes a teardown and recreation. Failed creation is cleaned up so a
+// namespace left behind is never treated as a running workload.
 func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeRequest) (res ComputeResult, err error) {
 	ns, vethHost, vethNS := computeNames(req.UID)
 	res = ComputeResult{Namespace: ns, VethHost: vethHost}
@@ -149,9 +151,17 @@ func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeReque
 		return res, err
 	}
 	if exists {
-		// Every pass, so an instance an older agent created gets the rules
-		// this one writes.
-		return res, b.ensureFirewall(ctx, req)
+		snapshot, loadErr := b.loadComputeState(req.UID)
+		if loadErr == nil && reflect.DeepEqual(snapshot.Request, req) && (req.Image == "" || processMatches(snapshot.PID, snapshot.StartTime)) {
+			return res, b.ensureFirewall(ctx, req)
+		}
+		previous := req
+		if loadErr == nil {
+			previous = snapshot.Request
+		}
+		if err := b.DeleteCompute(ctx, teardownOf(previous, res.Rootfs)); err != nil {
+			return res, err
+		}
 	}
 
 	defer func() {
@@ -197,13 +207,24 @@ func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeReque
 			cmd = joinEntrypoint(cfg)
 		}
 	}
-	if cmd != "" && res.Rootfs != "" {
+	snapshot := computeState{Request: req}
+	if res.Rootfs != "" {
+		if cmd == "" {
+			return res, fmt.Errorf("manager: image has no entrypoint")
+		}
 		if !req.Privileged {
 			if _, err := os.Stat(containerInitBin); err != nil {
 				return res, fmt.Errorf("manager: container-init is required for unprivileged compute: %w", err)
 			}
 		}
-		b.startEntrypoint(req, ns, res.Rootfs, cmd)
+		pid, start, startErr := b.startEntrypoint(req, ns, res.Rootfs, cmd)
+		if startErr != nil {
+			return res, startErr
+		}
+		snapshot.PID, snapshot.StartTime = pid, start
+	}
+	if err := b.saveComputeState(req.UID, snapshot); err != nil {
+		return res, err
 	}
 	return res, nil
 }
@@ -410,6 +431,7 @@ func (b *ExecComputeBackend) DeleteCompute(ctx context.Context, td ComputeTeardo
 
 	_ = os.Remove(filepath.Join(b.stateDir, "compute", td.UID+".entry.sh"))
 	_ = os.Remove(filepath.Join(b.stateDir, "compute", td.UID+".entry.pid"))
+	_ = os.Remove(filepath.Join(b.stateDir, "compute", td.UID+".runtime.json"))
 	if matches, _ := filepath.Glob(filepath.Join(b.stateDir, "compute", td.UID+"*.entry.log")); matches != nil {
 		for _, m := range matches {
 			_ = os.Remove(m)
@@ -421,9 +443,11 @@ func (b *ExecComputeBackend) DeleteCompute(ctx context.Context, td ComputeTeardo
 // startEntrypoint launches the image's process inside the namespace with
 // pivot_root isolation in its own mount and PID namespaces, placed in the
 // instance cgroup. It runs detached so it survives the agent.
-func (b *ExecComputeBackend) startEntrypoint(req ComputeRequest, ns, rootfs, entryCmd string) {
+func (b *ExecComputeBackend) startEntrypoint(req ComputeRequest, ns, rootfs, entryCmd string) (int, string, error) {
 	dir := filepath.Join(b.stateDir, "compute")
-	_ = os.MkdirAll(dir, 0o750)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return 0, "", err
+	}
 	scriptPath := filepath.Join(dir, req.UID+".entry.sh")
 	pidFile := filepath.Join(dir, req.UID+".entry.pid")
 	logName := req.UID + ".entry"
@@ -433,6 +457,9 @@ func (b *ExecComputeBackend) startEntrypoint(req ComputeRequest, ns, rootfs, ent
 	logFile := filepath.Join(dir, logName+".log")
 
 	shell := rootfsShell(rootfs)
+	if shell == "" {
+		return 0, "", fmt.Errorf("manager: rootfs has no shell")
+	}
 	_, hasInit := os.Stat(containerInitBin)
 	hasContainerInit := hasInit == nil
 	cgroupProcs := b.cgroups.procsFile(req.UID)
@@ -442,7 +469,7 @@ func (b *ExecComputeBackend) startEntrypoint(req ComputeRequest, ns, rootfs, ent
 	script := buildEntryScript(req, rootfs, entryCmd, shell, pidFile, cgroupProcs, hasCgroup, hasContainerInit)
 	// #nosec G306 -- the entry wrapper must be executable to be run by `ip netns exec ... sh`
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
-		return
+		return 0, "", err
 	}
 
 	args := []string{"netns", "exec", ns, "unshare", "--mount", "--pid", "--fork"}
@@ -466,9 +493,28 @@ func (b *ExecComputeBackend) startEntrypoint(req ComputeRequest, ns, rootfs, ent
 		defer func() { _ = syscall.Close(fd) }()
 	}
 	if err := cmd.Start(); err != nil {
-		return
+		if logf != nil {
+			_ = logf.Close()
+		}
+		return 0, "", err
 	}
-	go func() { _ = cmd.Wait() }()
+	go func() {
+		_ = cmd.Wait()
+		if logf != nil {
+			_ = logf.Close()
+		}
+	}()
+	pid := cmd.Process.Pid
+	start, err := processStartTime(pid)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		return 0, "", err
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !processMatches(pid, start) {
+		return 0, "", fmt.Errorf("manager: workload exited during startup")
+	}
+	return pid, start, nil
 }
 
 // rootfsShell returns the first usable POSIX shell found inside rootfs.
@@ -488,7 +534,7 @@ func shellArgument(value string) string { return "'" + strings.ReplaceAll(value,
 func buildEntryScript(req ComputeRequest, rootfs, entryCmd, shell, pidFile, cgroupProcs string, hasCgroup, hasContainerInit bool) string {
 	var s strings.Builder
 	s.WriteString("#!/bin/sh\nset -eu\nmount --make-rprivate /\n")
-	fmt.Fprintf(&s, "echo $$ > %s\n", pidFile)
+	_ = pidFile // Host-side supervision records the launcher PID, not namespace PID 1.
 	if hasCgroup {
 		fmt.Fprintf(&s, "echo $$ > %s 2>/dev/null\n", cgroupProcs)
 	}
@@ -986,4 +1032,54 @@ func teardownOf(req ComputeRequest, rootfs string) ComputeTeardown {
 		UID: req.UID, VPCID: req.VPCID, Bridge: req.Bridge, IP: req.IP,
 		Ports: req.Ports, SGChain: req.SGChain, Rootfs: rootfs, Disks: req.Disks,
 	}
+}
+
+// computeState tracks the applied request and the host launcher identity.
+type computeState struct {
+	Request   ComputeRequest
+	PID       int
+	StartTime string
+}
+
+func (b *ExecComputeBackend) loadComputeState(uid string) (computeState, error) {
+	var snapshot computeState
+	data, err := os.ReadFile(filepath.Join(b.stateDir, "compute", uid+".runtime.json")) // #nosec G304 -- agent-owned per-compute runtime state
+	if err != nil {
+		return snapshot, err
+	}
+	err = json.Unmarshal(data, &snapshot)
+	return snapshot, err
+}
+func (b *ExecComputeBackend) saveComputeState(uid string, snapshot computeState) error {
+	dir := filepath.Join(b.stateDir, "compute")
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return err
+	}
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, uid+".runtime.json"), data, 0600)
+}
+func processStartTime(pid int) (string, error) {
+	if pid <= 1 {
+		return "", fmt.Errorf("invalid workload PID")
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- numeric host PID under procfs
+	if err != nil {
+		return "", err
+	}
+	end := strings.LastIndex(string(data), ")")
+	if end < 0 {
+		return "", fmt.Errorf("invalid process stat")
+	}
+	fields := strings.Fields(string(data)[end+1:])
+	if len(fields) < 20 || fields[0] == "Z" {
+		return "", fmt.Errorf("workload is not running")
+	}
+	return fields[19], nil
+}
+func processMatches(pid int, expected string) bool {
+	actual, err := processStartTime(pid)
+	return err == nil && expected != "" && actual == expected
 }
