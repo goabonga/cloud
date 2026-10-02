@@ -233,6 +233,9 @@ func (s *Server) authorizeSpecialized(w http.ResponseWriter, r *http.Request) bo
 	id, ok := auth.IdentityFrom(r.Context())
 	switch parts[0] {
 	case resource.KindSecret, resource.KindSecretVersion, resource.KindSSLCA, resource.KindSSLCert:
+		if ok && r.Method == http.MethodGet && len(parts) == 2 && parts[0] == resource.KindSSLCA && parts[1] == ssl.GlobalRootUID {
+			return true // The CA GET handler redacts private key material.
+		}
 		if !ok || !id.HasRole(handler.AdminRole) {
 			http.Error(w, "admin role required", http.StatusForbidden)
 			return false
