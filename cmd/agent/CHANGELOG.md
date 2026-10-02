@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.18.6] - 2026-10-02
+
+### Fixed
+
+- recreate compute workloads after exit or configuration drift (`194a96a`)
+
 ## [0.18.1] - 2026-10-02
 
 ### Fixed

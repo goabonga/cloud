@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.7] - 2026-10-02
+
+### Fixed
+
+- allow authenticated reads of the public root certificate (`7aa9646`)
+
 ## [0.13.6] - 2026-10-02
 
 ### Fixed

@@ -114,13 +114,13 @@ generator = false
 # hyphen reads as subtraction inside the Jinja `{{ ... }}` macro expression.
 [project.extra.versions]
 infra = "0.7.1"
-infra_api = "0.13.6"
+infra_api = "0.13.7"
 infra_idp = "0.7.2"
 infra_exporter = "0.5.2"
 infra_controller_manager = "0.9.0"
-infra_agent = "0.18.1"
+infra_agent = "0.18.6"
 infra_container_init = "0.5.1"
-terraform_provider_infra = "0.13.6"
+terraform_provider_infra = "0.13.8"
 infra_spa = "0.9.1"
 infra_www = "0.6.1"
 

@@ -5,4 +5,4 @@ package main
 
 // Version is the released version of the terraform-provider-infra component. It is patched by
 // multicz on release (see multicz.toml); do not edit it by hand.
-const Version = "0.13.6"
+const Version = "0.13.8"

@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.8] - 2026-10-02
+
+### Dependencies
+
+- Track `infra-api` `0.13.7`
+
 ## [0.13.6] - 2026-10-02
 
 ### Dependencies
