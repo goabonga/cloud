@@ -284,19 +284,32 @@ jobs:
     # skipped (nothing Go to lint/test) and that is not a reason to refuse
     # building - see detect-changes' own description for the PR #115 case
     # this exists for.
+    #
+    # always(): without one of the four status-check functions literally
+    # present, GitHub silently ANDs an implicit `success()` onto this whole
+    # expression - which would require every direct need (lint, vet-build,
+    # ...) to have actually run and succeeded, defeating the
+    # packaging_changed branch below outright (those six are *expected* to
+    # be skipped on that path). `always()` opts out of the implicit default
+    # so the explicit `.result` checks below are the only gate in effect.
+    # Confirmed by reproducing against a real run: without `always()`, every
+    # leg of this matrix stayed `skipped` even with packaging_changed
+    # correctly computed `true` end to end.
     if: >-
-      (
-        needs.detect.outputs.has_package_changes == 'true'
-        && needs.lint.result == 'success'
-        && needs.vet-build.result == 'success'
-        && needs.test.result == 'success'
-        && needs.gosec.result == 'success'
-        && needs.govulncheck.result == 'success'
-        && needs.osv-scanner.result == 'success'
-      )
-      || (
-        needs.detect.outputs.has_package_changes != 'true'
-        && needs.detect.outputs.packaging_changed == 'true'
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
       )
     runs-on: ubuntu-24.04
     strategy:
@@ -399,21 +412,24 @@ jobs:
     name: archlinux (${{ matrix.component }})
     needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
     # See `deb`'s identical condition for why this checks each gate's result
-    # explicitly rather than the weaker `!cancelled() && !failure()`, and why
-    # packaging_changed is a second, independent reason to build.
+    # explicitly rather than the weaker `!cancelled() && !failure()`, why
+    # packaging_changed is a second, independent reason to build, and why
+    # `always()` has to lead the expression.
     if: >-
-      (
-        needs.detect.outputs.has_package_changes == 'true'
-        && needs.lint.result == 'success'
-        && needs.vet-build.result == 'success'
-        && needs.test.result == 'success'
-        && needs.gosec.result == 'success'
-        && needs.govulncheck.result == 'success'
-        && needs.osv-scanner.result == 'success'
-      )
-      || (
-        needs.detect.outputs.has_package_changes != 'true'
-        && needs.detect.outputs.packaging_changed == 'true'
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
       )
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
@@ -628,8 +644,15 @@ jobs:
     # tagging a release with nothing published behind it. Checking each
     # `result` directly closes that regardless of how GitHub happens to
     # attribute a cancellation to the jobs underneath it.
+    #
+    # always(): none of success()/failure()/cancelled()/always() appears
+    # literally above, so without it GitHub silently ANDs an implicit
+    # `success()` onto the whole expression - which would require `www` to
+    # have succeeded even when www_changed is false and it legitimately
+    # skipped, defeating that OR entirely.
     if: >-
-      github.event_name == 'push'
+      always()
+      && github.event_name == 'push'
       && github.ref == 'refs/heads/main'
       && needs.detect.result == 'success'
       && needs.detect.outputs.has_package_changes == 'true'
@@ -763,8 +786,16 @@ jobs:
     # !failure()`, whose blind spot is the same one `release` closed above:
     # it cannot distinguish "skipped because not applicable" from "skipped
     # because the run was cancelled before this had a chance to run".
+    #
+    # always(): none of success()/failure()/cancelled()/always() appears
+    # literally above, so without it GitHub silently ANDs an implicit
+    # `success()` onto the whole expression - which would require every one
+    # of these to have succeeded, breaking every `|| ... == 'skipped'` below
+    # and making a docs-only push (where all of them legitimately skip)
+    # never actually deploy.
     if: >-
-      github.event_name == 'push'
+      always()
+      && github.event_name == 'push'
       && github.ref == 'refs/heads/main'
       && needs.detect.result == 'success'
       && (
