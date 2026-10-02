@@ -5,6 +5,13 @@ package replication
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"sync"
+
 	"errors"
 	"log/slog"
 	"net"
@@ -13,6 +20,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/goabonga/infrastructure/internal/httpsec"
 )
@@ -37,11 +46,13 @@ var validUID = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 // replica, and answers a reachability probe. Every route but /ping requires
 // a request signed with key (see sign/verifyRequest in auth.go).
 type Server struct {
-	dir    string
-	key    []byte
-	nodeID string
-	logger *slog.Logger
-	mux    *http.ServeMux
+	dir        string
+	key        []byte
+	nodeID     string
+	logger     *slog.Logger
+	mux        *http.ServeMux
+	snapshotMu sync.Mutex
+	clone      func(*os.File, *os.File) error
 }
 
 // NewServer returns a Server serving disk backing files out of dir (the
@@ -53,6 +64,7 @@ func NewServer(dir string, key []byte, nodeID string, logger *slog.Logger) *Serv
 		logger = slog.Default()
 	}
 	s := &Server{dir: dir, key: key, nodeID: nodeID, logger: logger, mux: http.NewServeMux()}
+	s.clone = func(dst, src *os.File) error { return unix.IoctlFileClone(int(dst.Fd()), int(src.Fd())) }
 	s.routes()
 	return s
 }
@@ -84,7 +96,7 @@ func (s *Server) handlePing(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-// handlePullDisk streams the requested disk's current backing file.
+// handlePullDisk streams an immutable point-in-time snapshot.
 // http.ServeContent handles conditional GETs and Range requests, which is
 // what makes a pull resumable: a client retrying after a partial transfer
 // sends Range: bytes=<have>- and picks up where it left off.
@@ -94,26 +106,28 @@ func (s *Server) handlePullDisk(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid disk uid", http.StatusBadRequest)
 		return
 	}
-	path := filepath.Join(s.dir, uid+".img")
-	f, err := os.Open(path) // #nosec G304 G703 -- uid is validated against validUID above
+	snapshot, digest, err := s.openSnapshot(uid, r.URL.Query().Get("version"))
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			http.Error(w, "disk not found", http.StatusNotFound)
-			return
+		switch {
+		case errors.Is(err, errInvalidVersion):
+			http.Error(w, "invalid snapshot version", http.StatusBadRequest)
+		case errors.Is(err, os.ErrNotExist):
+			http.Error(w, "disk or snapshot not found", http.StatusNotFound)
+		default:
+			s.logger.Error("replication: snapshot", "uid", uid, "err", err)
+			http.Error(w, "immutable snapshot unavailable", http.StatusServiceUnavailable)
 		}
-		s.logger.Error("replication: open disk", "uid", uid, "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	defer func() { _ = f.Close() }()
-
-	info, err := f.Stat()
+	defer func() { _ = snapshot.Close() }()
+	info, err := snapshot.Stat()
 	if err != nil {
-		s.logger.Error("replication: stat disk", "uid", uid, "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, "snapshot unavailable", http.StatusInternalServerError)
 		return
 	}
-	http.ServeContent(w, r, uid+".img", info.ModTime(), f)
+	w.Header().Set("ETag", `"`+digest+`"`)
+	w.Header().Set("X-Infra-SHA256", digest)
+	http.ServeContent(w, r, uid+".img", info.ModTime(), snapshot)
 }
 
 // ListenAndServe runs the replication server on addr until ctx is canceled.
@@ -136,4 +150,87 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		return nil
 	}
 	return err
+}
+
+var errInvalidVersion = errors.New("invalid snapshot version")
+
+var validDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+// openSnapshot captures an atomic filesystem reflink, never a mutable live copy.
+func (s *Server) openSnapshot(uid, version string) (*os.File, string, error) {
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+	if !validUID.MatchString(uid) {
+		return nil, "", fmt.Errorf("invalid disk uid")
+	}
+	if version != "" && !validDigest.MatchString(version) {
+		return nil, "", errInvalidVersion
+	}
+	root, err := os.OpenRoot(s.dir)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = root.Close() }()
+	source, err := root.Open(uid + ".img")
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = source.Close() }()
+	dir := filepath.Join(".snapshots", uid)
+	if err := root.MkdirAll(dir, 0700); err != nil {
+		return nil, "", err
+	}
+	cache, err := root.OpenRoot(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = cache.Close() }()
+	if version != "" {
+		f, err := cache.Open(version + ".img")
+		return f, version, err
+	}
+	temp := ".capture-" + rand.Text()
+	snapshot, err := cache.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = snapshot.Close(); _ = cache.Remove(temp) }()
+	if err := s.clone(snapshot, source); err != nil {
+		return nil, "", fmt.Errorf("atomic reflink snapshot required: %w", err)
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, snapshot); err != nil {
+		return nil, "", err
+	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	if err := snapshot.Sync(); err != nil {
+		return nil, "", err
+	}
+	if err := snapshot.Close(); err != nil {
+		return nil, "", err
+	}
+	name := digest + ".img"
+	if err := cache.Rename(temp, name); err != nil {
+		return nil, "", err
+	}
+	directory, err := cache.Open(".")
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = directory.Close() }()
+	files, err := directory.ReadDir(-1)
+	if err != nil {
+		return nil, "", err
+	}
+	// Existing readers retain their immutable inode; an evicted resume restarts.
+	for _, file := range files {
+		if file.Name() != name {
+			_ = cache.Remove(file.Name())
+		}
+	}
+	if err := directory.Sync(); err != nil {
+		return nil, "", err
+	}
+	f, err := cache.Open(name)
+	return f, digest, err
 }
