@@ -22,34 +22,27 @@ description: |
   because the PR touched no component's `paths`, so the scripts it added
   were never actually exercised by their own build chain).
 
-  `really_changed` is a SEPARATE, more conservative list used to gate each
-  named `deb-<component>`/`archlinux-<component>` job individually instead
-  of building all nine on every run. It is the union of `multicz changed`'s
-  own list (which correctly follows `depends_on` cascades - confirmed: an
-  infra-api-only change also lists terraform-provider-infra, a release-
-  contract relationship with no actual Go import behind it) with a plain
-  `git diff` against each component's REAL transitive package set, as `go
-  list -deps` reports it for the binaries packaging/components.sh says that
-  component ships.
+  `really_changed` gates each named `deb-<component>`/`archlinux-<component>`
+  job individually instead of building all nine on every run. It used to be
+  a separate, more conservative union of `multicz changed`'s own list with a
+  hand-rolled `go list -deps` git-diff, because `paths` alone was known to be
+  substantially incomplete (infra-api's `paths` names 3 of its internal/
+  packages; `go list -deps ./cmd/api/...` reports 16). `multicz` itself now
+  closes that gap: the `multicz-go-deps-plugin` plugin (see
+  `[plugins.go-deps]` in multicz.toml) is consulted by `multicz changed`
+  whenever a changed path doesn't match any component's `paths`, asking
+  `go list -deps` whether it's really a dependency - no hand-maintained
+  package list to keep in sync here. `really_changed` is therefore now just
+  `packages` under another name, kept as a separate output only because
+  every per-component job below already reads it; `packages` follows
+  `depends_on` cascades too (confirmed: an infra-api-only change also lists
+  terraform-provider-infra, a release-contract relationship with no actual
+  Go import behind it).
 
-  The git-diff half deliberately does NOT use multicz.toml's own `paths` -
-  those are hand-maintained and were found to be substantially incomplete:
-  infra-api's `paths` names 3 of its internal/ packages, but `go list -deps
-  ./cmd/api/...` reports 16, missing internal/auth, internal/crypto,
-  internal/pki, internal/secret, internal/ssl and more. A change confined to
-  any of those would have gone undetected under a `paths`-based check.
-  `go list` has no such gap: it IS the compiler's own answer to "what does
-  this binary actually link", so it cannot go stale as internal/ packages
-  gain new dependents - no hand-maintained list to update when they do.
-  multicz.toml's `paths` remain authoritative for multicz's own bump
-  planning (a different question - "should this get a new version" - this
-  action does not touch that), just not for this per-component build gate.
-
-  The union deliberately prefers over- to under-inclusion: an extra
-  unchanged-looking package costs a few CI minutes; silently shipping one
-  that needed a dependency fix does not get noticed until it is wrong in
-  production. REQUIRES Go to be set up beforehand (`go list` needs it) and
-  network access to resolve the module graph if it is not already cached.
+  REQUIRES Go to be set up beforehand (the plugin's `go list` calls need it)
+  and network access to resolve the module graph if it is not already
+  cached, and the `multicz-go-deps-plugin` package installed alongside
+  multicz.
 
   Short-circuits to an empty change set for multicz's own chore(release)
   commit or a duplicate push-event delivery - both mean "nothing here needs
@@ -115,12 +108,12 @@ runs:
       with:
         enable-cache: false
         python-version: "3.12"
+    # multicz-go-deps-plugin's affects() hook shells out to `go list -deps`
+    # when `multicz changed` can't match a path to any component's `paths` -
+    # see this action's own description.
     - name: Install multicz
       shell: bash
-      run: uv tool install multicz
-    # really_changed's git-diff half needs `go list -deps` - see this
-    # action's own description for why it reads the real import graph
-    # instead of multicz.toml's `paths`.
+      run: uv tool install multicz --with multicz-go-deps-plugin
     - uses: actions/setup-go@v7
       with:
         go-version-file: go.mod
@@ -240,38 +233,18 @@ runs:
         else
           echo "packaging_changed=true" >> "$GITHUB_OUTPUT"
         fi
-        # really_changed: see this action's own description for why this is
-        # a union of $PACKAGES with a per-component git diff against the
-        # REAL Go import graph (not multicz.toml's hand-maintained `paths`).
-        # COMPONENTS/EXTRA_BINARIES: the same dir/binary map build-debs.sh
-        # and build-archlinux.sh already build packages from, so a
-        # component's extra binaries (infra-agent's infra-lb/infra-
-        # hypervisor) are covered too, with nothing new to keep in sync.
-        ROOT="$(pwd)"
-        source packaging/components.sh
-        REALLY_CHANGED="$PACKAGES"
-        for comp in "${!COMPONENTS[@]}"; do
-          IFS=: read -r dir _bin svc <<<"${COMPONENTS[$comp]}"
-          cmd_dirs=("./cmd/$dir/...")
-          for extra in ${EXTRA_BINARIES[$comp]:-}; do
-            cmd_dirs+=("./cmd/${extra%%:*}/...")
-          done
-          mapfile -t real_dirs < <(go list -deps -f '{{.Dir}}' "${cmd_dirs[@]}" 2>/dev/null \
-            | grep "^$ROOT/" | sed "s|^$ROOT/||" | sort -u)
-          extra_paths=(go.mod go.sum)
-          [ -n "$svc" ] && extra_paths+=("deploy/systemd/$svc.service")
-          if ! git diff --quiet "$BASE" HEAD -- "${real_dirs[@]}" "${extra_paths[@]}"; then
-            REALLY_CHANGED=$(echo "$REALLY_CHANGED" | jq -c --arg c "$comp" 'if index($c) then . else . + [$c] end')
-          fi
-        done
-        echo "really_changed=$REALLY_CHANGED" >> "$GITHUB_OUTPUT"
+        # really_changed: multicz-go-deps-plugin now closes the `paths` gap
+        # inside `multicz changed` itself (see this action's own
+        # description) - no separate go-list-deps git-diff needed here
+        # anymore, so this is just $PACKAGES under the name every
+        # per-component job below already reads.
+        echo "really_changed=$PACKAGES" >> "$GITHUB_OUTPUT"
         {
           echo "## Detected changes"
           echo ""
           echo "| Field | Value |"
           echo "| --- | --- |"
-          echo "| Packages | \`$PACKAGES\` |"
-          echo "| Really changed (deb/archlinux gate) | \`$REALLY_CHANGED\` |"
+          echo "| Packages (also the deb/archlinux per-component gate) | \`$PACKAGES\` |"
           echo "| Reference | \`$REF\` |"
           echo "| Event | \`${{ github.event_name }}\` |"
         } >> "$GITHUB_STEP_SUMMARY"
