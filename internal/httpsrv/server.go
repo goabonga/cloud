@@ -6,6 +6,7 @@
 package httpsrv
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -158,6 +159,15 @@ func (s *Server) routes() {
 		handler.NewSSLHandler(ssl.NewService(cas, certs, s.kek)).Register(s.mux, APIBase)
 	}
 
+	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+		_, err := s.store.Get("health/readiness")
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	s.mux.HandleFunc("GET "+healthPath, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -186,7 +196,7 @@ func (s *Server) Handler() http.Handler {
 	// so a 401 carries them too - an error response is still a response a
 	// browser renders.
 	return httpsec.Headers(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == healthPath {
+		if r.URL.Path == healthPath || r.URL.Path == "/readyz" {
 			s.mux.ServeHTTP(w, r)
 			return
 		}
