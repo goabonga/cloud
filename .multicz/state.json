@@ -1,17 +1,22 @@
 {
   "version": 1,
-  "git_head": "bf04b16eb744bea8cbbee83396ff0df57e448c6a",
-  "git_head_short": "bf04b16",
-  "timestamp": "2026-10-02T11:54:02Z",
+  "git_head": "cf8d44697b2e2a201707a72ed468575289f9ba8e",
+  "git_head_short": "cf8d446",
+  "timestamp": "2026-10-02T12:15:12Z",
   "components": {
-    "infra-spa": {
-      "version": "0.9.1",
-      "tag": "infra-spa-v0.9.1",
+    "infra-api": {
+      "version": "0.13.4",
+      "tag": "infra-api-v0.13.4",
       "tag_sha": null
     },
-    "infra-www": {
-      "version": "0.6.1",
-      "tag": "infra-www-v0.6.1",
+    "infra-exporter": {
+      "version": "0.5.2",
+      "tag": "infra-exporter-v0.5.2",
+      "tag_sha": null
+    },
+    "terraform-provider-infra": {
+      "version": "0.13.4",
+      "tag": "terraform-provider-infra-v0.13.4",
       "tag_sha": null
     }
   }

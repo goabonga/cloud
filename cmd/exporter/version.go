@@ -5,4 +5,4 @@ package main
 
 // Version is the released version of the infra-exporter component. It is patched by
 // multicz on release (see multicz.toml); do not edit it by hand.
-const Version = "0.5.1"
+const Version = "0.5.2"

@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.4] - 2026-10-02
+
+### Fixed
+
+- report unavailable storage through readiness checks (`b14b591`)
+
 ## [0.13.1] - 2026-10-02
 
 ### Fixed

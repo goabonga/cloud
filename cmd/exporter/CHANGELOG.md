@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.5.2] - 2026-10-02
+
+### Fixed
+
+- expose collection failures instead of empty resource counts (`8706fca`)
+
 ## [0.5.1] - 2026-10-01
 
 ### Fixed
