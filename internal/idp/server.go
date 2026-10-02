@@ -15,6 +15,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/accesstoken"
 	"github.com/goabonga/infrastructure/internal/auth"
 	"github.com/goabonga/infrastructure/internal/handler"
+	"github.com/goabonga/infrastructure/internal/httpsec"
 	"github.com/goabonga/infrastructure/internal/identity"
 	"github.com/goabonga/infrastructure/internal/state"
 )
@@ -99,18 +100,19 @@ func (s *Server) routes() {
 // bearer token except the grants that issue one and the discovery surface.
 func (s *Server) Handler() http.Handler {
 	guarded := auth.Middleware(s.authn, s.mux)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httpsec.Headers(httpsec.Limits(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if publicPaths[r.URL.Path] {
 			s.mux.ServeHTTP(w, r)
 			return
 		}
 		guarded.ServeHTTP(w, r)
-	})
+	})))
 }
 
 // ListenAndServe runs the IdP on addr.
 func (s *Server) ListenAndServe(addr string) error {
 	srv := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	httpsec.ConfigureServer(srv)
 	return srv.ListenAndServe()
 }
 

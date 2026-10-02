@@ -193,7 +193,7 @@ func register[S any, ST any](s *Server, kind string) {
 // route requires a valid token except the health check.
 func (s *Server) Handler() http.Handler {
 	if s.authn == nil {
-		return httpsec.Headers(s.mux)
+		return httpsec.Headers(httpsec.Limits(s.mux))
 	}
 	guarded := auth.Middleware(s.authn, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorizeSpecialized(w, r) {
@@ -204,13 +204,13 @@ func (s *Server) Handler() http.Handler {
 	// The security headers wrap the auth check rather than sitting inside it,
 	// so a 401 carries them too - an error response is still a response a
 	// browser renders.
-	return httpsec.Headers(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httpsec.Headers(httpsec.Limits(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == healthPath || r.URL.Path == "/readyz" {
 			s.mux.ServeHTTP(w, r)
 			return
 		}
 		guarded.ServeHTTP(w, r)
-	}))
+	})))
 }
 
 // ListenAndServe runs the API server on addr until it errors.
@@ -220,6 +220,7 @@ func (s *Server) ListenAndServe(addr string) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	httpsec.ConfigureServer(srv)
 	return srv.ListenAndServe()
 }
 

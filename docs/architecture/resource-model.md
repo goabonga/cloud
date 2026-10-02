@@ -118,3 +118,20 @@ unauthenticated deployment of this API already has.
 See [Identity and access management](iam.md) for the full permission
 vocabulary, the global `admin` role, and how a caller authenticates in the
 first place.
+
+## HTTP request limits
+
+The control-plane API and IdP accept request bodies up to 1 MiB, including
+chunked requests. Larger bodies return HTTP 413 before authentication or routing.
+Each server instance admits at most 64 concurrent requests; saturation returns
+HTTP 503. A connection-address token bucket allows 100 requests/second with a
+burst of 200; exceeding it returns HTTP 429 and `Retry-After: 1`. Peer bookkeeping
+is bounded to 4096 entries and expired after ten idle minutes. Forwarding headers
+are not trusted: behind a proxy, its connected address shares a bucket.
+
+Listeners allow ten seconds for headers, thirty seconds for request reads, two
+minutes for response writes, sixty seconds for idle keep-alive, and 32 KiB of
+headers. Request contexts expire after two minutes. Health/readiness probes bypass
+admission throttles but retain listener timeouts. Function invocation inputs are
+also subject to the body limit; long streaming responses are bounded by the write
+timeout. Limits are process-local, not a distributed tenant quota.
