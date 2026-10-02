@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -70,11 +71,28 @@ func (c *Client[S, ST]) itemURL(uid string) string {
 
 // List returns every resource of this kind.
 func (c *Client[S, ST]) List(ctx context.Context) ([]resource.Resource[S, ST], error) {
-	var out resource.List[S, ST]
-	if err := c.do(ctx, http.MethodGet, c.collectionURL(), nil, &out); err != nil {
-		return nil, err
+	var items []resource.Resource[S, ST]
+	next := ""
+	seen := make(map[string]bool)
+	for {
+		var out resource.List[S, ST]
+		endpoint := c.collectionURL()
+		if next != "" {
+			endpoint += "?continue=" + url.QueryEscape(next)
+		}
+		if err := c.do(ctx, http.MethodGet, endpoint, nil, &out); err != nil {
+			return nil, err
+		}
+		items = append(items, out.Items...)
+		if out.Continue == "" {
+			return items, nil
+		}
+		if seen[out.Continue] {
+			return nil, fmt.Errorf("client: repeated continuation token")
+		}
+		seen[out.Continue] = true
+		next = out.Continue
 	}
-	return out.Items, nil
 }
 
 // Get returns the resource with the given UID, or ErrNotFound.

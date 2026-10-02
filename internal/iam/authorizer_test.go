@@ -120,3 +120,35 @@ type failingLookup struct{}
 
 func (failingLookup) ProjectParent(string) (string, string, error) { return "", "", errors.New("boom") }
 func (failingLookup) FolderParent(string) (string, string, error)  { return "", "", errors.New("boom") }
+
+func TestRequestAuthorizationCacheRefreshesAfterRevocation(t *testing.T) {
+	reads := 0
+	bindings := []resource.IAMBinding{{Spec: resource.IAMBindingSpec{Resource: resource.ObjectReference{Kind: resource.KindProject, UID: "project-1"}, Role: resource.RoleViewer, Members: []string{"user:alice"}}}}
+	az := &iam.Authorizer{Lookup: fakeLookup{projects: map[string][2]string{"project-1": {resource.ParentKindOrganization, "org-1"}}}, Bindings: func() ([]resource.IAMBinding, error) { reads++; return bindings, nil }}
+	request := az.ForRequest()
+	for range 100 {
+		allowed, err := request.Allowed("alice", false, "bob", "project-1", iam.PermissionRead)
+		if !allowed || err != nil {
+			t.Fatalf("authorization=%v,%v", allowed, err)
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("bindings read %d times", reads)
+	}
+	allowed, err := request.Allowed("carol", false, "bob", "project-1", iam.PermissionRead)
+	if allowed || err != nil {
+		t.Fatal("cached decision leaked to another subject")
+	}
+	allowed, err = request.Allowed("alice", false, "bob", "project-1", iam.PermissionWrite)
+	if allowed || err != nil {
+		t.Fatal("cached read permission granted write")
+	}
+	bindings = nil
+	allowed, err = az.ForRequest().Allowed("alice", false, "bob", "project-1", iam.PermissionRead)
+	if allowed || err != nil {
+		t.Fatal("revocation was hidden by cross-request cache")
+	}
+	if reads != 2 {
+		t.Fatalf("bindings read %d times after revocation", reads)
+	}
+}

@@ -6,6 +6,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/client"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/httpsrv"
+	"github.com/goabonga/infrastructure/internal/registry"
 	"github.com/goabonga/infrastructure/internal/state"
 )
 
@@ -105,5 +107,22 @@ func TestClientRejectsInvalidSpec(t *testing.T) {
 	}
 	if _, err := c.Put(context.Background(), in); err == nil {
 		t.Fatal("expected error for invalid spec")
+	}
+}
+
+func TestClientListFollowsServerPagination(t *testing.T) {
+	store := state.NewFileStore(t.TempDir())
+	reg := registry.New[resource.VPCSpec, resource.VPCStatus](store, resource.KindVPC)
+	for i := range 205 {
+		if err := reg.Put(&resource.VPC{Metadata: resource.ObjectMeta{UID: fmt.Sprintf("vpc-%03d", i)}, Spec: resource.VPCSpec{CIDR: "10.0.0.0/16"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := httptest.NewServer(httpsrv.New(store).Handler())
+	defer srv.Close()
+	c := client.New[resource.VPCSpec, resource.VPCStatus](srv.URL, resource.KindVPC)
+	items, err := c.List(t.Context())
+	if err != nil || len(items) != 205 {
+		t.Fatalf("list: %d items, %v", len(items), err)
 	}
 }

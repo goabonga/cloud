@@ -165,3 +165,15 @@ describe("idp api", () => {
     expect(opts.method).toBe("DELETE");
   });
 });
+
+describe("identity collection pagination", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("follows user pages", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: [{ metadata: { uid: "alice" } }], continue: "next" }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: [{ metadata: { uid: "bob" } }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    expect((await listUsers()).map((user) => user.metadata.uid)).toEqual(["alice", "bob"]);
+    expect(fetchMock.mock.calls[1][0]).toBe("/idp/user?continue=next");
+  });
+});

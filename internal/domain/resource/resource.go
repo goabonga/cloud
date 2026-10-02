@@ -31,6 +31,7 @@ type List[S any, ST any] struct {
 	APIVersion string            `json:"apiVersion"`
 	Kind       string            `json:"kind"`
 	Items      []Resource[S, ST] `json:"items"`
+	Continue   string            `json:"continue,omitempty"`
 }
 
 // ObjectMeta holds identity and lifecycle fields common to all resources.

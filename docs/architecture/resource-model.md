@@ -135,3 +135,21 @@ headers. Request contexts expire after two minutes. Health/readiness probes bypa
 admission throttles but retain listener timeouts. Function invocation inputs are
 also subject to the body limit; long streaming responses are bounded by the write
 timeout. Limits are process-local, not a distributed tenant quota.
+
+## Collection pagination
+
+Collection GETs return up to 100 resources by default. Set `limit=1..1000` to
+choose a page size, then pass the response's opaque `continue` token in the next
+GET. Items are ordered by UID. Authorization filtering and secret redaction happen
+before page selection; cursors reference only visible resources. Tokens identify
+a position, not a frozen snapshot, so resources inserted before that position
+while iterating appear on the next full traversal.
+
+The Go client, Terraform provider and dashboard automatically follow continuation
+pages. Raw HTTP consumers must do the same to retrieve an entire collection.
+Invalid limits and tokens return HTTP 400. IAM binding and hierarchy reads are
+cached only within an individual collection request, with decisions separated by
+subject, project and permission; the next request observes revoked grants.
+Pagination bounds response item counts. Storage backends still materialize the
+collection before filtering, so it does not provide storage-level streaming or a
+bound on memory proportional to the total stored resource count.
