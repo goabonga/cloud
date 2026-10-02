@@ -56,6 +56,10 @@ func TestHTTPSTerminatesWithTheCertificateOfTheSNI(t *testing.T) {
 	ca := newCA(t, "public")
 	var proto, forwardedFor, host atomic.Value
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.UserAgent() == "infra-lb-health-check" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		proto.Store(r.Header.Get("X-Forwarded-Proto"))
 		forwardedFor.Store(r.Header.Get("X-Forwarded-For"))
 		host.Store(r.Host)
