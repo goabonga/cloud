@@ -145,7 +145,7 @@ func (r *genericResource[M, S, ST]) Delete(ctx context.Context, req resource.Del
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.Delete(ctx, r.def.id(state)); err != nil && !errors.Is(err, client.ErrNotFound) {
+	if err := r.client.DeleteAndWait(ctx, r.def.id(state)); err != nil && !errors.Is(err, client.ErrNotFound) {
 		resp.Diagnostics.AddError("Delete "+r.def.kind, err.Error())
 	}
 }

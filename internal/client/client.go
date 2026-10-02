@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 )
@@ -102,18 +103,23 @@ func (c *Client[S, ST]) Delete(ctx context.Context, uid string) error {
 // do performs an HTTP request, encoding body (if any) and decoding into out (if
 // any). It maps a 404 to ErrNotFound and any other non-2xx to an error.
 func (c *Client[S, ST]) do(ctx context.Context, method, url string, body, out any) error {
+	_, err := c.doStatus(ctx, method, url, body, out)
+	return err
+}
+
+func (c *Client[S, ST]) doStatus(ctx context.Context, method, url string, body, out any) (int, error) {
 	var reader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("client: marshal request: %w", err)
+			return 0, fmt.Errorf("client: marshal request: %w", err)
 		}
 		reader = bytes.NewReader(buf)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
-		return fmt.Errorf("client: build request: %w", err)
+		return 0, fmt.Errorf("client: build request: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -124,22 +130,51 @@ func (c *Client[S, ST]) do(ctx context.Context, method, url string, body, out an
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("client: %s %s: %w", method, url, err)
+		return 0, fmt.Errorf("client: %s %s: %w", method, url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return ErrNotFound
+		return resp.StatusCode, ErrNotFound
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("client: %s %s: status %d: %s", method, url, resp.StatusCode, strings.TrimSpace(string(msg)))
+		return 0, fmt.Errorf("client: %s %s: status %d: %s", method, url, resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			return fmt.Errorf("client: decode response: %w", err)
+			return 0, fmt.Errorf("client: decode response: %w", err)
 		}
 	}
-	return nil
+	return resp.StatusCode, nil
+}
+
+// DeleteAndWait waits for finalization only when deletion is asynchronous.
+func (c *Client[S, ST]) DeleteAndWait(ctx context.Context, uid string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	status, err := c.doStatus(ctx, http.MethodDelete, c.itemURL(uid), nil, nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil || status != http.StatusAccepted {
+		return err
+	}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		_, err := c.Get(ctx, uid)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("client: wait for deletion of %s: %w", uid, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
