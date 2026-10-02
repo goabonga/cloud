@@ -119,3 +119,8 @@ not a new class of bug.
 HTTP-routed triggers (path/host-based, API-Gateway style - today's invoke
 endpoint must be called directly by UID), cron triggers, and event-driven
 (pub/sub) triggers are later work, not part of this foundation.
+
+The invoke service keeps an instance `Assigned` for the entire response stream.
+It returns the instance to `Warm` when the body reaches EOF, fails, or is closed
+by the caller. Closing the response releases the claim exactly once; receiving
+response headers alone does not make the instance available to another invoke.

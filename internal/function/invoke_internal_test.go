@@ -325,3 +325,72 @@ func TestAllocatePort_SkipsPortsAlreadyInUse(t *testing.T) {
 		t.Fatalf("port = %d, want %d (the next free one)", port, functionInstancePortRangeLo+1)
 	}
 }
+
+func TestStreamingInvocationRetainsExclusiveInstanceUntilClose(t *testing.T) {
+	env := newInvokeEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("stream"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, portString, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.putFunction(t, "fn-stream", true, false)
+	env.putNode(t, "node", host)
+	uid := env.putWarmInstance(t, "fn-stream", "node", port)
+	resp, err := env.svc.Invoke(context.Background(), "fn-stream", strings.NewReader("request"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	inst, err := env.instances.Get(uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Status.State != resource.FunctionInstanceAssigned {
+		t.Fatal("stream released before the caller consumed it")
+	}
+	second, err := env.svc.Invoke(context.Background(), "fn-stream", strings.NewReader("second"), "")
+	if second != nil {
+		_ = second.Body.Close()
+	}
+	if !errors.Is(err, ErrNoWarmInstance) {
+		t.Fatalf("concurrent invocation reused streaming instance: %v", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	inst, err = env.instances.Get(uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Status.State != resource.FunctionInstanceWarm {
+		t.Fatal("closed response did not release instance")
+	}
+}
+
+func TestResponseClaimReleasedOnceOnEOFAndClose(t *testing.T) {
+	calls := 0
+	body := &assignedBody{ReadCloser: io.NopCloser(strings.NewReader("done")), release: func() error { calls++; return nil }}
+	if _, err := io.ReadAll(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("claim released %d times", calls)
+	}
+}

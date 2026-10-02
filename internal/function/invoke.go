@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
@@ -87,8 +88,8 @@ func NewService(
 
 // Invoke claims a warm instance of functionID - or, when none is available
 // and the policy allows it, creates one - proxies body to it over HTTP, and
-// releases the instance back to the pool before returning. The caller owns
-// closing the returned response's body.
+// keeps it assigned until the response body reaches EOF, fails or is closed.
+// The caller owns closing the returned response's body.
 func (s *Service) Invoke(ctx context.Context, functionID string, body io.Reader, contentType string) (*http.Response, error) {
 	fn, err := s.functions.Get(functionID)
 	if err != nil {
@@ -112,10 +113,14 @@ func (s *Service) Invoke(ctx context.Context, functionID string, body io.Reader,
 	}
 
 	resp, invokeErr := s.forward(ctx, inst, body, contentType)
-	if relErr := s.release(inst.Metadata.UID); relErr != nil && invokeErr == nil {
-		return resp, fmt.Errorf("function: release instance %s after invoke: %w", inst.Metadata.UID, relErr)
+	if invokeErr != nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		return nil, errors.Join(invokeErr, s.release(inst.Metadata.UID))
 	}
-	return resp, invokeErr
+	resp.Body = &assignedBody{ReadCloser: resp.Body, release: func() error { return s.release(inst.Metadata.UID) }}
+	return resp, nil
 }
 
 // claimWarmInstance tries to atomically claim a Warm instance of functionID
@@ -331,3 +336,26 @@ func newUID(kind string) string {
 	_, _ = rand.Read(b[:])
 	return kind + "-" + hex.EncodeToString(b[:])
 }
+
+// assignedBody retains the claim for the entire response stream.
+type assignedBody struct {
+	io.ReadCloser
+	once       sync.Once
+	release    func() error
+	releaseErr error
+}
+
+func (b *assignedBody) done() error {
+	b.once.Do(func() { b.releaseErr = b.release() })
+	return b.releaseErr
+}
+func (b *assignedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		if releaseErr := b.done(); releaseErr != nil {
+			return n, errors.Join(err, releaseErr)
+		}
+	}
+	return n, err
+}
+func (b *assignedBody) Close() error { return errors.Join(b.ReadCloser.Close(), b.done()) }
