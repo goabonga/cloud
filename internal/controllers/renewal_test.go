@@ -5,6 +5,7 @@ package controllers_test
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/controllers"
@@ -27,22 +28,24 @@ func (c *longController) Reconcile(ctx context.Context) error {
 	}
 }
 func TestLeadershipRenewedDuringLongPass(t *testing.T) {
-	store := state.NewFileStore(t.TempDir())
-	lease := controllers.NewLease(store, "leases/long", "a", 150*time.Millisecond, nil)
-	other := controllers.NewLease(store, "leases/long", "b", 150*time.Millisecond, nil)
-	manager := controllers.NewManager(lease, time.Second, quietLogger())
-	c := &longController{started: make(chan struct{}), finish: make(chan struct{})}
-	manager.Add(c)
-	done := make(chan error, 1)
-	go func() { _, err := manager.RunOnce(context.Background()); done <- err }()
-	<-c.started
-	time.Sleep(400 * time.Millisecond)
-	ok, err := other.Acquire(context.Background())
-	close(c.finish)
-	if err != nil || ok {
-		t.Fatalf("other acquired during pass: %v %v", ok, err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		store := state.NewFileStore(t.TempDir())
+		lease := controllers.NewLease(store, "leases/long", "a", 150*time.Millisecond, nil)
+		other := controllers.NewLease(store, "leases/long", "b", 150*time.Millisecond, nil)
+		manager := controllers.NewManager(lease, time.Second, quietLogger())
+		c := &longController{started: make(chan struct{}), finish: make(chan struct{})}
+		manager.Add(c)
+		done := make(chan error, 1)
+		go func() { _, err := manager.RunOnce(context.Background()); done <- err }()
+		<-c.started
+		time.Sleep(400 * time.Millisecond)
+		ok, err := other.Acquire(context.Background())
+		close(c.finish)
+		if err != nil || ok {
+			t.Fatalf("other acquired during pass: %v %v", ok, err)
+		}
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
 }
