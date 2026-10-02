@@ -3,7 +3,10 @@
 
 package resource
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 // KindCompute is the resource kind for compute instances.
 const KindCompute = "compute"
@@ -39,8 +42,19 @@ type ComputeSpec struct {
 	Privileged bool              `json:"privileged,omitempty"`
 }
 
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var hostName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$`)
+
 // Validate reports whether the spec is well-formed.
 func (s ComputeSpec) Validate() error {
+	if s.Hostname != "" && !hostName.MatchString(s.Hostname) {
+		return fmt.Errorf("compute: invalid hostname")
+	}
+	for key := range s.Env {
+		if !envName.MatchString(key) {
+			return fmt.Errorf("compute: invalid environment name %q", key)
+		}
+	}
 	if s.SubnetID == "" {
 		return fmt.Errorf("compute: subnetId is required")
 	}
