@@ -91,7 +91,7 @@ func run(args []string) error {
 	}
 	accessTokens := accesstoken.NewService(registry.New[resource.AccessTokenSpec, resource.AccessTokenStatus](store, resource.KindAccessToken), users)
 
-	server := idp.NewServer(idp.NewIssuer(key, cfg.issuerURL, cfg.ttl), clients, users, accessTokens, &key.PublicKey, cfg.issuerURL, cfg.consoleURL)
+	server := idp.NewServer(idp.NewIssuer(key, cfg.issuerURL, cfg.ttl), clients, users, accessTokens, &key.PublicKey, cfg.issuerURL, cfg.consoleURL, idp.WithDeviceState(store))
 
 	log.Printf("%s listening on %s (issuer %s)", meta.Line("infra-idp", Version), cfg.addr, cfg.issuerURL)
 	pub, err := marshalPublicKeyPEM(&key.PublicKey)
