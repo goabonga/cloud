@@ -56,6 +56,7 @@ func (s *Service) Put(uid, name, plaintext string) (*resource.Secret, error) {
 
 	sec := &resource.Secret{Metadata: resource.ObjectMeta{UID: uid, Name: name}}
 	if existing, err := s.reg.Get(uid); err == nil {
+		sec.Metadata.ResourceVersion = existing.Metadata.ResourceVersion
 		sec.Metadata.CreatedAt = existing.Metadata.CreatedAt
 		sec.Metadata.Generation = existing.Metadata.Generation + 1
 	} else {

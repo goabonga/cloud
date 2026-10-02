@@ -52,6 +52,7 @@ func (s *Service) Put(uid string, spec resource.UserSpec) (*resource.User, error
 	existing, err := s.reg.Get(uid)
 	switch {
 	case err == nil:
+		usr.Metadata.ResourceVersion = existing.Metadata.ResourceVersion
 		usr.Metadata.CreatedAt = existing.Metadata.CreatedAt
 		usr.Metadata.Generation = existing.Metadata.Generation + 1
 		usr.Status = existing.Status

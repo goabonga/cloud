@@ -7,7 +7,10 @@
 package registry
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
@@ -42,13 +45,34 @@ func (r *Registry[S, ST]) Put(res *resource.Resource[S, ST]) error {
 	res.APIVersion = resource.APIVersion
 	res.Kind = r.kind
 
-	data, err := json.Marshal(res)
+	expected := res.Metadata.ResourceVersion
+	copy := *res
+	copy.Metadata.ResourceVersion = ""
+	data, err := json.Marshal(&copy)
 	if err != nil {
 		return fmt.Errorf("registry: marshal %s/%s: %w", r.kind, res.Metadata.UID, err)
 	}
-	if err := r.store.Put(r.key(res.Metadata.UID), data); err != nil {
+	var old []byte
+	if expected != "" {
+		old, err = r.store.Get(r.key(res.Metadata.UID))
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return state.ErrConflict
+			}
+			return err
+		}
+		if revision(old) != expected {
+			return state.ErrConflict
+		}
+	}
+	ok, err := r.store.CompareAndSwap(r.key(res.Metadata.UID), old, data)
+	if err != nil {
 		return fmt.Errorf("registry: put %s/%s: %w", r.kind, res.Metadata.UID, err)
 	}
+	if !ok {
+		return state.ErrConflict
+	}
+	res.Metadata.ResourceVersion = revision(data)
 	return nil
 }
 
@@ -62,6 +86,7 @@ func (r *Registry[S, ST]) Get(uid string) (*resource.Resource[S, ST], error) {
 	if err := json.Unmarshal(data, &res); err != nil {
 		return nil, fmt.Errorf("registry: unmarshal %s/%s: %w", r.kind, uid, err)
 	}
+	res.Metadata.ResourceVersion = revision(data)
 	return &res, nil
 }
 
@@ -88,11 +113,13 @@ func (r *Registry[S, ST]) TryUpdate(uid string, mutate func(*resource.Resource[S
 	if err := json.Unmarshal(oldData, &res); err != nil {
 		return false, fmt.Errorf("registry: unmarshal %s/%s: %w", r.kind, uid, err)
 	}
+	res.Metadata.ResourceVersion = revision(oldData)
 	if err := mutate(&res); err != nil {
 		return false, err
 	}
 	res.APIVersion = resource.APIVersion
 	res.Kind = r.kind
+	res.Metadata.ResourceVersion = ""
 	newData, err := json.Marshal(&res)
 	if err != nil {
 		return false, fmt.Errorf("registry: marshal %s/%s: %w", r.kind, uid, err)
@@ -116,7 +143,10 @@ func (r *Registry[S, ST]) List() ([]resource.Resource[S, ST], error) {
 		if err := json.Unmarshal(kv.Value, &res); err != nil {
 			return nil, fmt.Errorf("registry: unmarshal %s: %w", kv.Key, err)
 		}
+		res.Metadata.ResourceVersion = revision(kv.Value)
 		items = append(items, res)
 	}
 	return items, nil
 }
+
+func revision(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }

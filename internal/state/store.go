@@ -12,6 +12,9 @@ import "errors"
 // it with errors.Is rather than comparing returned bytes against nil.
 var ErrNotFound = errors.New("state: key not found")
 
+// ErrConflict reports an attempted write against a stale revision.
+var ErrConflict = errors.New("state: resource version conflict")
+
 // Store is the storage backend abstraction. Implementations: FileStore
 // (single-host, local filesystem) and, later, an etcd-backed store.
 type Store interface {

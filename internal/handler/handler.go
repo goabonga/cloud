@@ -140,6 +140,11 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 	created := false
 	switch {
 	case err == nil:
+		if res.Metadata.ResourceVersion != "" && res.Metadata.ResourceVersion != existing.Metadata.ResourceVersion {
+			writeError(w, http.StatusConflict, "resource version conflict")
+			return
+		}
+		res.Metadata.ResourceVersion = existing.Metadata.ResourceVersion
 		// Metadata.ProjectID is immutable once set - moving a resource between
 		// projects is not supported.
 		if res.Metadata.ProjectID != existing.Metadata.ProjectID {
@@ -186,6 +191,7 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 		res.Metadata.CreatedAt = h.now()
 		res.Metadata.Generation = 1
 		res.Status = zero
+		res.Metadata.ResourceVersion = ""
 		created = true
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -205,6 +211,10 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.reg.Put(&res); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			writeError(w, http.StatusConflict, "resource version conflict")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

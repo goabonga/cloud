@@ -91,6 +91,7 @@ func (s *Service) CreateCA(uid, name string, spec resource.SSLCASpec) (*resource
 
 	res := &resource.SSLCA{Metadata: resource.ObjectMeta{UID: uid, Name: name}, Spec: spec}
 	if existing != nil {
+		res.Metadata.ResourceVersion = existing.Metadata.ResourceVersion
 		res.Metadata.CreatedAt = existing.Metadata.CreatedAt
 		res.Metadata.Generation = existing.Metadata.Generation + 1
 	} else {
@@ -160,7 +161,8 @@ func (s *Service) CreateCert(uid, name string, spec resource.SSLCertSpec) (*reso
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
-	if existing, err := s.certs.Get(uid); err == nil && reflect.DeepEqual(existing.Spec, spec) && len(existing.Status.CertPEM) > 0 {
+	existing, err := s.certs.Get(uid)
+	if err == nil && reflect.DeepEqual(existing.Spec, spec) && len(existing.Status.CertPEM) > 0 {
 		// Nothing to sign anew: keep the certificate and its key.
 		return redactCert(existing), nil
 	}
@@ -198,9 +200,14 @@ func (s *Service) CreateCert(uid, name string, spec resource.SSLCertSpec) (*reso
 		Metadata: resource.ObjectMeta{UID: uid, Name: name, CreatedAt: s.now(), Generation: 1},
 		Spec:     spec,
 	}
+	if existing != nil {
+		res.Metadata.ResourceVersion = existing.Metadata.ResourceVersion
+		res.Metadata.CreatedAt = existing.Metadata.CreatedAt
+		res.Metadata.Generation = existing.Metadata.Generation + 1
+	}
 	res.Status.CertPEM = certPEM
 	res.Status.EncryptedKey = blob
-	res.Status.MarkReconciled(1)
+	res.Status.MarkReconciled(res.Metadata.Generation)
 	res.Status.SetPhase(resource.PhaseReady, "Issued", "certificate signed")
 	if err := s.certs.Put(res); err != nil {
 		return nil, err
