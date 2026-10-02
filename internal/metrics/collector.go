@@ -20,13 +20,15 @@ type Collector struct {
 	kinds   []string
 	total   *prometheus.Desc
 	byPhase *prometheus.Desc
+	success *prometheus.Desc
 }
 
 // NewCollector returns a collector that scrapes the given kinds from store.
 func NewCollector(store state.Store, kinds ...string) *Collector {
 	return &Collector{
-		store: store,
-		kinds: kinds,
+		success: prometheus.NewDesc("infra_resource_collection_success", "Whether resource collection succeeded.", []string{"kind"}, nil),
+		store:   store,
+		kinds:   kinds,
 		total: prometheus.NewDesc(
 			"infra_resources_total",
 			"Number of resources of a kind in the store.",
@@ -42,6 +44,7 @@ func NewCollector(store state.Store, kinds ...string) *Collector {
 
 // Describe implements prometheus.Collector.
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.success
 	ch <- c.total
 	ch <- c.byPhase
 }
@@ -54,14 +57,15 @@ type phaseEnvelope struct {
 }
 
 // Collect implements prometheus.Collector. A store error for one kind yields a
-// zero total for that kind rather than failing the whole scrape.
+// failed collection signal and omits counts rather than reporting a false zero.
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	for _, kind := range c.kinds {
 		kvs, err := c.store.List(kind)
 		if err != nil {
-			ch <- prometheus.MustNewConstMetric(c.total, prometheus.GaugeValue, 0, kind)
+			ch <- prometheus.MustNewConstMetric(c.success, prometheus.GaugeValue, 0, kind)
 			continue
 		}
+		ch <- prometheus.MustNewConstMetric(c.success, prometheus.GaugeValue, 1, kind)
 		ch <- prometheus.MustNewConstMetric(c.total, prometheus.GaugeValue, float64(len(kvs)), kind)
 
 		byPhase := make(map[string]int)
