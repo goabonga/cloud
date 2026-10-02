@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,5 +210,32 @@ func TestPostgresStoreClosedPoolErrors(t *testing.T) {
 	// Close is safe to call more than once.
 	if err := s.Close(); err != nil {
 		t.Fatalf("second close: %v", err)
+	}
+}
+
+func TestPostgresCASAbsentHasOneWinner(t *testing.T) {
+	s := newPostgresStore(t)
+	key := fmt.Sprintf("pgtest-race-%d/k", time.Now().UnixNano())
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var winners atomic.Int32
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ok, err := s.CompareAndSwap(key, nil, []byte("winner"))
+			if err != nil {
+				t.Error(err)
+			}
+			if ok {
+				winners.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if winners.Load() != 1 {
+		t.Fatalf("got %d winners", winners.Load())
 	}
 }

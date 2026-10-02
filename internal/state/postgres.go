@@ -4,7 +4,6 @@
 package state
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -95,32 +94,18 @@ func (s *PostgresStore) List(prefix string) ([]KeyValue, error) {
 // current value equals oldValue (nil oldValue means "expect absent").
 func (s *PostgresStore) CompareAndSwap(key string, oldValue, newValue []byte) (bool, error) {
 	ctx := context.Background()
-	tx, err := s.pool.Begin(ctx)
+	if oldValue == nil {
+		result, err := s.pool.Exec(ctx, `INSERT INTO kv (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`, key, newValue)
+		if err != nil {
+			return false, fmt.Errorf("state: pg cas insert %q: %w", key, err)
+		}
+		return result.RowsAffected() == 1, nil
+	}
+	result, err := s.pool.Exec(ctx, `UPDATE kv SET value = $3 WHERE key = $1 AND value = $2`, key, oldValue, newValue)
 	if err != nil {
-		return false, fmt.Errorf("state: pg cas begin: %w", err)
+		return false, fmt.Errorf("state: pg cas update %q: %w", key, err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var current []byte
-	err = tx.QueryRow(ctx, `SELECT value FROM kv WHERE key = $1 FOR UPDATE`, key).Scan(&current)
-	if errors.Is(err, pgx.ErrNoRows) {
-		current = nil
-	} else if err != nil {
-		return false, fmt.Errorf("state: pg cas read %q: %w", key, err)
-	}
-	if !bytes.Equal(current, oldValue) {
-		return false, nil
-	}
-
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO kv (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-		key, newValue); err != nil {
-		return false, fmt.Errorf("state: pg cas write %q: %w", key, err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("state: pg cas commit %q: %w", key, err)
-	}
-	return true, nil
+	return result.RowsAffected() == 1, nil
 }
 
 // Close releases the connection pool.
