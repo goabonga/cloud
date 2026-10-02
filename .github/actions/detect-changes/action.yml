@@ -201,6 +201,9 @@ runs:
         else
           echo "packaging_changed=true" >> "$GITHUB_OUTPUT"
         fi
+        echo "DEBUG BASE=$BASE resolved=$(git rev-parse "$BASE" 2>&1)"
+        echo "DEBUG HEAD resolved=$(git rev-parse HEAD 2>&1)"
+        echo "DEBUG git diff ci.yml: $(git diff --stat "$BASE" HEAD -- .github/workflows/ci.yml 2>&1)"
         {
           echo "## Detected changes"
           echo ""
