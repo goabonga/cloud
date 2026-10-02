@@ -1,22 +1,22 @@
 {
   "version": 1,
-  "git_head": "37dc47eccd5c05d56ca68f8d7b631cc9f58a37db",
-  "git_head_short": "37dc47e",
-  "timestamp": "2026-10-01T22:35:36Z",
+  "git_head": "2db5ccad17bea66946b305eb3f576098fff73b6c",
+  "git_head_short": "2db5cca",
+  "timestamp": "2026-10-02T11:29:27Z",
   "components": {
-    "infra-idp": {
-      "version": "0.7.1",
-      "tag": "infra-idp-v0.7.1",
+    "infra-api": {
+      "version": "0.13.1",
+      "tag": "infra-api-v0.13.1",
       "tag_sha": null
     },
-    "infra-exporter": {
-      "version": "0.5.1",
-      "tag": "infra-exporter-v0.5.1",
+    "infra-agent": {
+      "version": "0.18.1",
+      "tag": "infra-agent-v0.18.1",
       "tag_sha": null
     },
-    "infra-container-init": {
-      "version": "0.5.1",
-      "tag": "infra-container-init-v0.5.1",
+    "terraform-provider-infra": {
+      "version": "0.13.1",
+      "tag": "terraform-provider-infra-v0.13.1",
       "tag_sha": null
     }
   }

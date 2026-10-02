@@ -2,6 +2,13 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.1] - 2026-10-02
+
+### Fixed
+
+- preserve server-owned resource lifecycle metadata (`50341c3`)
+- authorize specialized secret and function routes (`99f75bc`)
+
 ## [0.13.0] - 2026-10-01
 
 ### Added

@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.18.1] - 2026-10-02
+
+### Fixed
+
+- validate and quote compute shell inputs (`337c9ff`)
+
 ## [0.18.0] - 2026-10-01
 
 ### Added
