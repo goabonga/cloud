@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.9.3] - 2026-10-02
+
+### Fixed
+
+- allocate function slots atomically and retire failed starts (`94ee638`)
+
 ## [0.9.0] - 2026-10-01
 
 ### Added
