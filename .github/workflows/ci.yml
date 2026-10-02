@@ -64,6 +64,7 @@ jobs:
       docs_changed: ${{ steps.detect.outputs.docs_changed }}
       integration_changed: ${{ steps.detect.outputs.integration_changed }}
       www_changed: ${{ steps.detect.outputs.www_changed }}
+      packaging_changed: ${{ steps.detect.outputs.packaging_changed }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -273,9 +274,30 @@ jobs:
   deb:
     name: deb (${{ matrix.component }})
     needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # Two independent reasons to build: a component changed (has_package_
+    # changes), in which case every quality gate above gated on the same
+    # flag must have actually succeeded - not merely "didn't fail", which
+    # `!cancelled() && !failure()` alone would also accept for a gate GitHub
+    # marked `skipped` without this job's knowledge of why. Or the packaging
+    # scripts/actions themselves changed (packaging_changed) with no
+    # component touched, in which case those six gates are expected to have
+    # skipped (nothing Go to lint/test) and that is not a reason to refuse
+    # building - see detect-changes' own description for the PR #115 case
+    # this exists for.
     if: >-
-      !cancelled() && !failure()
-      && needs.detect.outputs.has_package_changes == 'true'
+      (
+        needs.detect.outputs.has_package_changes == 'true'
+        && needs.lint.result == 'success'
+        && needs.vet-build.result == 'success'
+        && needs.test.result == 'success'
+        && needs.gosec.result == 'success'
+        && needs.govulncheck.result == 'success'
+        && needs.osv-scanner.result == 'success'
+      )
+      || (
+        needs.detect.outputs.has_package_changes != 'true'
+        && needs.detect.outputs.packaging_changed == 'true'
+      )
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -376,9 +398,23 @@ jobs:
   archlinux:
     name: archlinux (${{ matrix.component }})
     needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See `deb`'s identical condition for why this checks each gate's result
+    # explicitly rather than the weaker `!cancelled() && !failure()`, and why
+    # packaging_changed is a second, independent reason to build.
     if: >-
-      !cancelled() && !failure()
-      && needs.detect.outputs.has_package_changes == 'true'
+      (
+        needs.detect.outputs.has_package_changes == 'true'
+        && needs.lint.result == 'success'
+        && needs.vet-build.result == 'success'
+        && needs.test.result == 'success'
+        && needs.gosec.result == 'success'
+        && needs.govulncheck.result == 'success'
+        && needs.osv-scanner.result == 'success'
+      )
+      || (
+        needs.detect.outputs.has_package_changes != 'true'
+        && needs.detect.outputs.packaging_changed == 'true'
+      )
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
     strategy:
@@ -464,7 +500,7 @@ jobs:
     name: e2e
     needs: detect
     if: >-
-      !cancelled() && !failure()
+      needs.detect.result == 'success'
       && needs.detect.outputs.has_package_changes == 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -508,13 +544,16 @@ jobs:
   owasp:
     name: owasp (${{ matrix.name }})
     needs: [detect, e2e]
-    # has_package_changes is repeated from `e2e` on purpose: a skipped `needs`
-    # does not skip the dependent job under `!cancelled() && !failure()`, so
-    # without this a docs-only push would stand up two stacks to scan a
-    # control plane nothing had changed.
+    # has_package_changes is repeated from `e2e` on purpose: a docs-only push
+    # must not stand up two stacks to scan a control plane nothing changed.
+    # Checking `needs.e2e.result` explicitly, rather than the job-wide
+    # `!cancelled() && !failure()`, means a real e2e failure or an e2e
+    # GitHub otherwise marks anything other than `success` both block this -
+    # no reliance on how a cancellation happens to be attributed upstream.
     if: >-
-      !cancelled() && !failure()
+      needs.detect.result == 'success'
       && needs.detect.outputs.has_package_changes == 'true'
+      && needs.e2e.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -578,15 +617,35 @@ jobs:
       - archlinux-validate
       - e2e
       - owasp
-    # www is gated on www_changed, so it is skipped on non-frontend pushes. A
-    # skipped need would skip release too, so tolerate skips (!cancelled) and
-    # only block on real failures (!failure) rather than requiring success.
+    # Every need below shares has_package_changes' own gate except `www`
+    # (gated independently on www_changed, legitimately skipped on a
+    # non-frontend push) - so every one of them is required to have actually
+    # SUCCEEDED, `www` alone excepted. This used to read
+    # `!cancelled() && !failure()`, which tolerates ANY need coming back
+    # `skipped` for whatever reason, not just www's legitimate one - the
+    # same shape of gap that let test-pipelilne-multicz's release-bump fire
+    # once on a run cancelled before its validations had even dispatched,
+    # tagging a release with nothing published behind it. Checking each
+    # `result` directly closes that regardless of how GitHub happens to
+    # attribute a cancellation to the jobs underneath it.
     if: >-
-      !cancelled()
-      && !failure()
-      && github.event_name == 'push'
+      github.event_name == 'push'
       && github.ref == 'refs/heads/main'
+      && needs.detect.result == 'success'
       && needs.detect.outputs.has_package_changes == 'true'
+      && needs.license-headers.result == 'success'
+      && needs.lint.result == 'success'
+      && (needs.www.result == 'success' || needs.detect.outputs.www_changed != 'true')
+      && needs.vet-build.result == 'success'
+      && needs.test.result == 'success'
+      && needs.gosec.result == 'success'
+      && needs.govulncheck.result == 'success'
+      && needs.osv-scanner.result == 'success'
+      && needs.integration.result == 'success'
+      && needs.deb-validate.result == 'success'
+      && needs.archlinux-validate.result == 'success'
+      && needs.e2e.result == 'success'
+      && needs.owasp.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -696,15 +755,36 @@ jobs:
       - e2e
       - owasp
       - release
+    # Unlike `release`, EVERY one of these may legitimately come back
+    # `skipped` here - a docs-only push skips every one of them, by design,
+    # and that must not block docs. What must still block it is any of them
+    # coming back `failure` or `cancelled`, so each is checked for those
+    # two explicitly rather than relying on the job-wide `!cancelled() &&
+    # !failure()`, whose blind spot is the same one `release` closed above:
+    # it cannot distinguish "skipped because not applicable" from "skipped
+    # because the run was cancelled before this had a chance to run".
     if: >-
-      !cancelled()
-      && !failure()
-      && github.event_name == 'push'
+      github.event_name == 'push'
       && github.ref == 'refs/heads/main'
+      && needs.detect.result == 'success'
       && (
         needs.detect.outputs.docs_changed == 'true'
         || (needs.release.result == 'success' && needs.release.outputs.no_bumps == 'false')
       )
+      && (needs.license-headers.result == 'success' || needs.license-headers.result == 'skipped')
+      && (needs.lint.result == 'success' || needs.lint.result == 'skipped')
+      && (needs.www.result == 'success' || needs.www.result == 'skipped')
+      && (needs.vet-build.result == 'success' || needs.vet-build.result == 'skipped')
+      && (needs.test.result == 'success' || needs.test.result == 'skipped')
+      && (needs.gosec.result == 'success' || needs.gosec.result == 'skipped')
+      && (needs.govulncheck.result == 'success' || needs.govulncheck.result == 'skipped')
+      && (needs.osv-scanner.result == 'success' || needs.osv-scanner.result == 'skipped')
+      && (needs.integration.result == 'success' || needs.integration.result == 'skipped')
+      && (needs.deb-validate.result == 'success' || needs.deb-validate.result == 'skipped')
+      && (needs.archlinux-validate.result == 'success' || needs.archlinux-validate.result == 'skipped')
+      && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped')
+      && (needs.owasp.result == 'success' || needs.owasp.result == 'skipped')
+      && (needs.release.result == 'success' || needs.release.result == 'skipped')
     runs-on: ubuntu-24.04
     environment:
       name: github-pages

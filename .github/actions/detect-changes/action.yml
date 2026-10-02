@@ -9,9 +9,18 @@ description: |
   language-agnostic: it reads multicz.toml `paths`, so it works on the Go
   module just as it does on a Python workspace.
 
-  Docs and integration detection bypass multicz on purpose: neither carries a
-  version of its own, so there is no tag for `multicz changed` to compare
-  against. We use a plain `git diff` on their paths instead.
+  Docs, integration and packaging detection bypass multicz on purpose: none
+  of the three carries a version of its own, so there is no tag for `multicz
+  changed` to compare against. We use a plain `git diff` on their paths
+  instead.
+
+  Packaging detection exists because the `.deb`/Arch build and validate jobs
+  only otherwise gate on `has_package_changes` - which, being a pure
+  `multicz changed` readout, is blind to a change confined to the packaging
+  scripts or composite actions themselves (seen for real on PR #115: every
+  `deb`/`archlinux`/`deb-validate`/`archlinux-validate` leg showed `skipping`
+  because the PR touched no component's `paths`, so the scripts it added
+  were never actually exercised by their own build chain).
 
   Short-circuits to an empty change set for multicz's own chore(release)
   commit or a duplicate push-event delivery - both mean "nothing here needs
@@ -30,6 +39,8 @@ outputs:
     value: ${{ steps.bypass.outputs.integration_changed || steps.changed.outputs.integration_changed }}
   www_changed:
     value: ${{ steps.bypass.outputs.www_changed || steps.changed.outputs.www_changed }}
+  packaging_changed:
+    value: ${{ steps.bypass.outputs.packaging_changed || steps.changed.outputs.packaging_changed }}
 
 runs:
   using: composite
@@ -103,6 +114,7 @@ runs:
           echo "docs_changed=false"
           echo "integration_changed=false"
           echo "www_changed=false"
+          echo "packaging_changed=false"
         } >> "$GITHUB_OUTPUT"
         [ "$IS_RELEASE_COMMIT" = "true" ] || exit 0
         # multicz shapes the subject as
@@ -171,6 +183,23 @@ runs:
           echo "www_changed=false" >> "$GITHUB_OUTPUT"
         else
           echo "www_changed=true" >> "$GITHUB_OUTPUT"
+        fi
+        # Packaging detection: the build/validate scripts and their composite
+        # actions ship no version of their own either, and a change confined
+        # to them touches no component's `paths` - see this action's own
+        # description for the PR #115 case that motivated it.
+        if git diff --quiet "$BASE" HEAD -- \
+            packaging \
+            .github/actions/build-deb \
+            .github/actions/validate-deb \
+            .github/actions/build-archlinux \
+            .github/actions/validate-archlinux \
+            .github/actions/publish-component \
+            .github/actions/push-aur \
+            .github/workflows/ci.yml; then
+          echo "packaging_changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "packaging_changed=true" >> "$GITHUB_OUTPUT"
         fi
         {
           echo "## Detected changes"
