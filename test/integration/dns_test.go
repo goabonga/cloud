@@ -7,11 +7,14 @@ package integration
 
 import (
 	"context"
+	"net"
 	"os"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
+	"golang.org/x/sys/unix"
 
 	"github.com/goabonga/infrastructure/internal/manager"
 )
@@ -23,12 +26,17 @@ func TestNativeDNSResolver(t *testing.T) {
 		t.Skip("requires root")
 	}
 	ctx := context.Background()
-	net := manager.NewExecBackend()
+	backend := manager.NewExecBackend()
 	const bridge = "br-itest-dns"
-	if err := net.EnsureBridge(ctx, manager.Bridge{Name: bridge}); err != nil {
+	const vpc, addr = "vpc-itest", "10.251.0.1"
+	if err := backend.EnsureBridge(ctx, manager.Bridge{Name: bridge}); err != nil {
 		t.Fatalf("ensure bridge: %v", err)
 	}
-	t.Cleanup(func() { _ = net.DeleteBridge(ctx, bridge) })
+	t.Cleanup(func() { _ = backend.DeleteBridge(ctx, bridge) })
+	if err := backend.EnsureVRF(ctx, vpc, bridge); err != nil {
+		t.Fatalf("ensure VRF: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.DeleteVRF(ctx, vpc, bridge) })
 
 	be := manager.NewNativeDNS()
 	rr, err := manager.ParseRecord("web", "itest.internal", "A", 0, "10.251.1.10")
@@ -36,7 +44,6 @@ func TestNativeDNSResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := &manager.DNSView{Forward: true, Zones: []manager.DNSZone{{Domain: "itest.internal", Records: []dns.RR{rr}}}}
-	const vpc, addr = "vpc-itest", "10.251.0.1"
 	if err := be.ServeVPC(ctx, vpc, bridge, addr, view); err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -44,9 +51,21 @@ func TestNativeDNSResolver(t *testing.T) {
 
 	q := new(dns.Msg)
 	q.SetQuestion("web.itest.internal.", dns.TypeA)
+	client := &dns.Client{Timeout: time.Second, Dialer: &net.Dialer{
+		Control: func(_, _ string, conn syscall.RawConn) error {
+			var socketErr error
+			controlErr := conn.Control(func(fd uintptr) {
+				socketErr = unix.SetsockoptString(int(fd), unix.SOL_SOCKET, unix.SO_BINDTODEVICE, "vrf-"+vpc) // #nosec G115 -- kernel socket descriptors fit int
+			})
+			if controlErr != nil {
+				return controlErr
+			}
+			return socketErr
+		},
+	}}
 	var resp *dns.Msg
 	for try := 0; try < 20; try++ {
-		if resp, _, err = (&dns.Client{Timeout: time.Second}).Exchange(q, addr+":53"); err == nil {
+		if resp, _, err = client.Exchange(q, addr+":53"); err == nil {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
