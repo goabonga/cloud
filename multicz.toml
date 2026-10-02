@@ -75,6 +75,7 @@ types = ["perf"]
 paths = ["cmd/api/**", "internal/handler/**", "internal/httpsrv/**", "internal/httpsec/**", "web/**", "go.mod", "go.sum", "deploy/systemd/infra-api.service"]
 bump_files = [
     { file = "cmd/api/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_api" },
 ]
 changelog = "cmd/api/CHANGELOG.md"
 post_bump = ["go mod tidy"]
@@ -101,6 +102,7 @@ ref  = "infra-api-{version}-1-x86_64.pkg.tar.zst"
 paths = ["cmd/controller-manager/**", "internal/controllers/**", "internal/scheduler/**", "go.mod", "go.sum", "deploy/systemd/infra-controller-manager.service"]
 bump_files = [
     { file = "cmd/controller-manager/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_controller_manager" },
 ]
 changelog = "cmd/controller-manager/CHANGELOG.md"
 post_bump = ["go mod tidy"]
@@ -132,6 +134,7 @@ paths = ["cmd/agent/**", "internal/manager/**", "cmd/lb/**", "internal/lbproxy/*
 bump_files = [
     { file = "cmd/agent/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
     { file = "cmd/lb/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_agent" },
 ]
 changelog = "cmd/agent/CHANGELOG.md"
 post_bump = ["go mod tidy"]
@@ -160,6 +163,7 @@ ref  = "infra-agent-{version}-1-x86_64.pkg.tar.zst"
 paths = ["cmd/cli/**", "internal/client/**", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/cli/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra" },
 ]
 changelog = "cmd/cli/CHANGELOG.md"
 post_bump = ["go mod tidy"]
@@ -186,6 +190,7 @@ ref  = "infra-{version}-1-x86_64.pkg.tar.zst"
 paths = ["cmd/provider/**", "internal/provider/**", "internal/resources/**", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/provider/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.terraform_provider_infra" },
 ]
 changelog = "cmd/provider/CHANGELOG.md"
 # The provider speaks to the API over HTTP and is version-coupled to it.
@@ -218,6 +223,7 @@ ref  = "terraform-provider-infra-{version}-1-x86_64.pkg.tar.zst"
 paths = ["cmd/idp/**", "internal/idp/**", "go.mod", "go.sum", "deploy/systemd/infra-idp.service"]
 bump_files = [
     { file = "cmd/idp/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_idp" },
 ]
 changelog = "cmd/idp/CHANGELOG.md"
 post_bump = ["go mod tidy"]
@@ -246,6 +252,7 @@ ref  = "infra-idp-{version}-1-x86_64.pkg.tar.zst"
 paths = ["cmd/exporter/**", "internal/metrics/**", "go.mod", "go.sum", "deploy/systemd/infra-exporter.service"]
 bump_files = [
     { file = "cmd/exporter/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_exporter" },
 ]
 changelog = "cmd/exporter/CHANGELOG.md"
 post_bump = ["go mod tidy"]
@@ -274,6 +281,7 @@ ref  = "infra-exporter-{version}-1-x86_64.pkg.tar.zst"
 paths = ["cmd/container-init/**", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/container-init/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_container_init" },
 ]
 changelog = "cmd/container-init/CHANGELOG.md"
 post_bump = ["go mod tidy"]
@@ -304,6 +312,7 @@ ref  = "infra-container-init-{version}-1-x86_64.pkg.tar.zst"
 paths = ["www/**"]
 bump_files = [
     { file = "www/package.json", key = "regex:\"version\"\\s*:\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_spa" },
 ]
 changelog = "www/CHANGELOG.md"
 
@@ -313,6 +322,7 @@ changelog = "www/CHANGELOG.md"
 paths = ["cmd/www/**", "internal/web/**", "internal/httpsec/**", "deploy/systemd/infra-www.service", "go.mod", "go.sum"]
 bump_files = [
     { file = "cmd/www/version.go", key = "regex:Version\\s*=\\s*\"([^\"]+)\"" },
+    { file = "zensical.toml", key = "project.extra.versions.infra_www" },
 ]
 changelog = "cmd/www/CHANGELOG.md"
 depends_on = ["infra-spa"]
