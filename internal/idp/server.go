@@ -16,6 +16,7 @@ import (
 	"github.com/goabonga/infrastructure/internal/auth"
 	"github.com/goabonga/infrastructure/internal/handler"
 	"github.com/goabonga/infrastructure/internal/identity"
+	"github.com/goabonga/infrastructure/internal/state"
 )
 
 // publicPaths never require a bearer token: the client-credentials and
@@ -57,7 +58,7 @@ type Server struct {
 // the issuer claim; consoleURL is where a human approves a device
 // authorization (idp has no concept of "www" beyond this - it is just the
 // console's own address).
-func NewServer(issuer *Issuer, clients map[string]string, users *identity.Service, accessToken *accesstoken.Service, pub *ecdsa.PublicKey, issuerURL, consoleURL string) *Server {
+func NewServer(issuer *Issuer, clients map[string]string, users *identity.Service, accessToken *accesstoken.Service, pub *ecdsa.PublicKey, issuerURL, consoleURL string, options ...func(*Server)) *Server {
 	s := &Server{
 		mux:         http.NewServeMux(),
 		issuer:      issuer,
@@ -69,6 +70,9 @@ func NewServer(issuer *Issuer, clients map[string]string, users *identity.Servic
 		pub:         pub,
 		issuerURL:   issuerURL,
 		consoleURL:  consoleURL,
+	}
+	for _, option := range options {
+		option(s)
 	}
 	s.routes()
 	return s
@@ -161,20 +165,22 @@ func (s *Server) deviceGrant(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return
 	}
-	da, ok := s.devices.byDeviceCode(deviceCode)
-	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expired_token"})
+	da, failure, err := s.devices.poll(deviceCode)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "temporarily_unavailable"})
 		return
 	}
-	switch da.status {
+	if failure != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": failure})
+		return
+	}
+	switch da.Status {
 	case deviceStatusPending:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "authorization_pending"})
 	case deviceStatusDenied:
-		s.devices.delete(deviceCode)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "access_denied"})
 	case deviceStatusApproved:
-		token, err := s.issuer.Issue(da.subject, da.roles)
-		s.devices.delete(deviceCode)
+		token, err := s.issuer.Issue(da.Subject, da.Roles)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
 			return
@@ -239,16 +245,20 @@ type deviceAuthorizationResponse struct {
 // the polling client and a code plus a link for the human approving it.
 func (s *Server) deviceAuthorization(w http.ResponseWriter, _ *http.Request) {
 	da, err := s.devices.create()
+	if errors.Is(err, errDeviceCapacity) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "temporarily_unavailable"})
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
 		return
 	}
 	verificationURI := s.consoleURL + "/device"
 	writeJSON(w, http.StatusOK, deviceAuthorizationResponse{
-		DeviceCode:              da.deviceCode,
-		UserCode:                da.userCode,
+		DeviceCode:              da.DeviceCode,
+		UserCode:                da.UserCode,
 		VerificationURI:         verificationURI,
-		VerificationURIComplete: verificationURI + "?user_code=" + url.QueryEscape(da.userCode),
+		VerificationURIComplete: verificationURI + "?user_code=" + url.QueryEscape(da.UserCode),
 		ExpiresIn:               int(deviceCodeTTL.Seconds()),
 		Interval:                devicePollInterval,
 	})
@@ -350,4 +360,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// WithDeviceState persists device grants in the shared control-plane store.
+func WithDeviceState(store state.Store) func(*Server) {
+	return func(s *Server) { s.devices.backend = store }
 }

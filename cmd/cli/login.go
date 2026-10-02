@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"os"
 	"time"
 )
+
+var errDeviceSlowDown = errors.New("device login: slow down")
 
 func idpURL() string {
 	if v := os.Getenv("GOA_IDP_URL"); v != "" {
@@ -84,7 +87,9 @@ func deviceLogin(ctx context.Context, baseURL string, onCode func(userCode, veri
 	// returned - then wait interval between subsequent attempts.
 	for {
 		tok, exp, pending, err := pollDeviceToken(baseURL, auth.DeviceCode)
-		if err != nil {
+		if errors.Is(err, errDeviceSlowDown) {
+			interval += 5 * time.Second
+		} else if err != nil {
 			return "", 0, err
 		}
 		if !pending {
@@ -121,6 +126,8 @@ func pollDeviceToken(baseURL, deviceCode string) (token string, expiresIn int, p
 	switch {
 	case resp.StatusCode == http.StatusOK:
 		return out.AccessToken, out.ExpiresIn, false, nil
+	case out.Error == "slow_down":
+		return "", 0, true, errDeviceSlowDown
 	case out.Error == "authorization_pending":
 		return "", 0, true, nil
 	case out.Error == "access_denied":

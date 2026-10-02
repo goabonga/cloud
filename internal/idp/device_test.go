@@ -16,27 +16,27 @@ func TestDeviceStoreApproveThenConsume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if da.status != deviceStatusPending {
-		t.Fatalf("status = %q, want pending", da.status)
+	if da.Status != deviceStatusPending {
+		t.Fatalf("status = %q, want pending", da.Status)
 	}
 
-	if !store.approve(da.userCode, "alice", []string{"admin"}) {
+	if !store.approve(da.UserCode, "alice", []string{"admin"}) {
 		t.Fatal("approve: expected success")
 	}
 
-	got, ok := store.byDeviceCode(da.deviceCode)
+	got, ok := store.byDeviceCode(da.DeviceCode)
 	if !ok {
 		t.Fatal("byDeviceCode: expected the authorization to still be present")
 	}
-	if got.status != deviceStatusApproved || got.subject != "alice" || len(got.roles) != 1 || got.roles[0] != "admin" {
+	if got.Status != deviceStatusApproved || got.Subject != "alice" || len(got.Roles) != 1 || got.Roles[0] != "admin" {
 		t.Fatalf("unexpected authorization: %+v", got)
 	}
 
-	store.delete(da.deviceCode)
-	if _, ok := store.byDeviceCode(da.deviceCode); ok {
+	store.delete(da.DeviceCode)
+	if _, ok := store.byDeviceCode(da.DeviceCode); ok {
 		t.Fatal("byDeviceCode: expected the authorization to be gone after delete")
 	}
-	if store.approve(da.userCode, "alice", nil) {
+	if store.approve(da.UserCode, "alice", nil) {
 		t.Fatal("approve: expected failure after delete")
 	}
 }
@@ -47,19 +47,19 @@ func TestDeviceStoreDeny(t *testing.T) {
 	store := newDeviceStore(time.Minute)
 	da, _ := store.create()
 
-	if !store.deny(da.userCode) {
+	if !store.deny(da.UserCode) {
 		t.Fatal("deny: expected success")
 	}
-	got, ok := store.byDeviceCode(da.deviceCode)
-	if !ok || got.status != deviceStatusDenied {
+	got, ok := store.byDeviceCode(da.DeviceCode)
+	if !ok || got.Status != deviceStatusDenied {
 		t.Fatalf("status = %+v, want denied", got)
 	}
 
 	// A resolved authorization cannot be approved or denied again.
-	if store.approve(da.userCode, "alice", nil) {
+	if store.approve(da.UserCode, "alice", nil) {
 		t.Fatal("approve: expected failure on an already-denied code")
 	}
-	if store.deny(da.userCode) {
+	if store.deny(da.UserCode) {
 		t.Fatal("deny: expected failure on an already-denied code")
 	}
 }
@@ -74,10 +74,10 @@ func TestDeviceStoreExpiry(t *testing.T) {
 	da, _ := store.create()
 	store.now = func() time.Time { return now.Add(2 * time.Minute) }
 
-	if _, ok := store.byDeviceCode(da.deviceCode); ok {
+	if _, ok := store.byDeviceCode(da.DeviceCode); ok {
 		t.Fatal("byDeviceCode: expected the authorization to have expired")
 	}
-	if store.approve(da.userCode, "alice", nil) {
+	if store.approve(da.UserCode, "alice", nil) {
 		t.Fatal("approve: expected failure on an expired code")
 	}
 }
