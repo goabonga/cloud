@@ -61,7 +61,7 @@ deploys:
 | `infra-control` | infra-www | `:8088` | dashboard (embedded SPA + API reverse proxy) |
 | `infra-control` | Prometheus | `:9090` | scrapes the exporter (native, no Docker) |
 | `infra-control` | Grafana | `:3000` | admin / infra; infra dashboard provisioned |
-| `infra-control` | Terraform | - | local provider + demo workspace in `~/infra-demo` |
+| `infra-control` | Terraform | - | local provider + 4 example workspaces in `~/infra-demo` |
 | `infra-agent-*` | infra-agent | - | registered as a schedulable node |
 | `infra-agent-*` | infra-controller-manager | - | one leader via a lease in etcd, the other on standby |
 
@@ -74,13 +74,17 @@ service from starting rather than letting it run without authentication.
 ```bash
 ssh ubuntu@192.168.122.10
 infra-login          # fetch a JWT from the IdP into GOA_API_TOKEN
-cd ~/infra-demo
-terraform apply      # VPC, subnet, gateway, firewall, encrypted disk, compute
+cd ~/infra-demo/compute
+terraform apply      # VPC, subnet, security group, one infra_compute instance
 ```
 
-The workspace is already initialised against the provider installed in
-`~/.terraform.d/plugins`. The `infra` CLI reads the same `GOA_API_URL` and
-`GOA_API_TOKEN`. To run Terraform from the libvirt host instead, see
+Four independent examples are staged this way, each its own root module:
+`compute` (above), `faas` (an `infra_function` with a warm pool), `vm` (a
+single `infra_microvm`) and `k8s` (a 3-node kubeadm cluster, one
+`infra_microvm` per node). Every workspace is already initialised against the
+provider installed in `~/.terraform.d/plugins`. The `infra` CLI reads the
+same `GOA_API_URL` and `GOA_API_TOKEN`. For what each example provisions and
+how to exercise it, and to run Terraform from the libvirt host instead, see
 [terraform/README.md](terraform/README.md).
 
 ## Verify, and drill a failover

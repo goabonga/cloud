@@ -5,7 +5,7 @@ terraform {
     }
     # Generates the k8s micro-VM demo's SSH key pair (main.tf) - a public
     # registry provider, unlike infra, so it needs a real `terraform init`
-    # alongside the dev_overrides used for infra (see README.md).
+    # alongside the dev_overrides used for infra (see ../README.md).
     tls = {
       source  = "hashicorp/tls"
       version = "~> 4.0"
@@ -22,5 +22,5 @@ variable "endpoint" {
 provider "infra" {
   endpoint = var.endpoint
   # The bearer token is read from GOA_API_TOKEN: a JWT issued by infra-idp.
-  # Run `export GOA_API_TOKEN="$(./get-token.sh)"` first (see README.md).
+  # Run `export GOA_API_TOKEN="$(../get-token.sh)"` first (see ../README.md).
 }
