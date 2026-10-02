@@ -179,8 +179,15 @@ jobs:
 
       # Mirror the bump onto the issue board so dependency work is visible
       # where the rest of the backlog lives. Idempotent through a hidden
-      # marker in a PR comment: Dependabot re-pushes retrigger this whole
+      # marker in the PR body: Dependabot re-pushes retrigger this whole
       # workflow, and without the marker each one would file a duplicate.
+      #
+      # The closing keyword goes into the PR's own body, not a comment on it
+      # or into the issue's body. GitHub only auto-closes an issue from a
+      # closing keyword in the referencing PR's description (or a commit
+      # message) - never from the reverse reference - so writing "closes #N"
+      # on the issue side closes nothing. Putting it in the PR body also means
+      # no extra comment on the thread: the body already shows the link.
       - name: Open a tracking issue linked to the PR
         if: steps.gate.outputs.skip != 'true'
         env:
@@ -192,15 +199,15 @@ jobs:
         run: |
           set -euo pipefail
           marker="<!-- dependabot-tracking -->"
-          if gh pr view "$PR_NUMBER" --json comments --jq '.comments[].body' \
-               | grep -qF "$marker"; then
+          body=$(gh pr view "$PR_NUMBER" --json body --jq '.body')
+          if printf '%s' "$body" | grep -qF "$marker"; then
             echo "PR #$PR_NUMBER already has a tracking issue; nothing to do"
             exit 0
           fi
           title=$(gh pr view "$PR_NUMBER" --json title --jq '.title')
-          body=$(gh pr view "$PR_NUMBER" --json body --jq '.body')
           # Scope = the Conventional Commits prefix the rewrite just assigned
-          # (`ci` or `chore(deps)`); headline = the subject without it.
+          # (`ci`, `fix(deps)` or `chore(deps)`); headline = the subject
+          # without it.
           scope=$(printf '%s' "$title" | sed -nE 's/^([a-z]+(\([^)]*\))?)!?:.*/\1/p')
           [ -z "$scope" ] && scope="deps"
           headline=$(printf '%s' "$title" | sed -E 's/^[a-z]+(\([^)]*\))?!?:[[:space:]]*//')
@@ -216,19 +223,21 @@ jobs:
             if [ -n "$table" ]; then
               printf '<details><summary>Packages</summary>\n\n%s\n\n</details>\n\n' "$table"
             fi
-            printf -- '---\nClose this issue when #%s is merged or dropped.\n' "$PR_NUMBER"
+            printf -- '---\nCloses automatically when #%s merges.\n' "$PR_NUMBER"
           } > /tmp/dependabot-issue.md
-          issue=$(gh issue create \
+          issue_url=$(gh issue create \
             --title "track: $title" \
             --label "dependencies" \
             --body-file /tmp/dependabot-issue.md)
+          issue_number=$(printf '%s' "$issue_url" | grep -oE '[0-9]+$')
           {
+            printf '%s\n\n' "$body"
             printf '%s\n' "$marker"
-            printf '## Tracking issue\n\n'
-            printf 'Filed %s to track this update on the issue board.\n' "$issue"
-          } > /tmp/dependabot-comment.md
-          gh pr comment "$PR_NUMBER" --body-file /tmp/dependabot-comment.md
-          echo "opened tracking issue $issue for PR #$PR_NUMBER"
+            printf 'Tracked by %s.\n\n' "$issue_url"
+            printf 'Closes #%s\n' "$issue_number"
+          } > /tmp/dependabot-pr-body.md
+          gh pr edit "$PR_NUMBER" --body-file /tmp/dependabot-pr-body.md
+          echo "opened tracking issue #$issue_number for PR #$PR_NUMBER"
 
       - name: Summary
         if: steps.gate.outputs.skip != 'true' && success()
