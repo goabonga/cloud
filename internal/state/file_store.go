@@ -101,7 +101,7 @@ func (fs *FileStore) putLocked(key string, value []byte) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("state: put rename %q: %w", key, err)
 	}
-	return syncDirectory(dir)
+	return fs.syncDirectory(dir)
 }
 
 // Delete removes the file at key. A missing key is not an error.
@@ -120,7 +120,7 @@ func (fs *FileStore) deleteLocked(key string) error {
 		}
 		return fmt.Errorf("state: delete %q: %w", key, err)
 	}
-	return syncDirectory(filepath.Dir(path))
+	return fs.syncDirectory(filepath.Dir(path))
 }
 
 // List returns the regular files directly under prefix as key-value pairs. Keys
@@ -199,8 +199,17 @@ func (fs *FileStore) withWriteLock(fn func() error) error {
 	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
 	return fn()
 }
-func syncDirectory(path string) error {
-	dir, err := os.Open(path)
+func (fs *FileStore) syncDirectory(path string) error {
+	rel, err := filepath.Rel(fs.baseDir, path)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(fs.baseDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	dir, err := root.Open(rel)
 	if err != nil {
 		return err
 	}
