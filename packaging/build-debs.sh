@@ -120,18 +120,16 @@ License: MIT
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  THE SOFTWARE.
 EOF
-  # SOURCE_DATE_EPOCH keeps the stanza date reproducible when the caller sets
-  # it; gzip -n drops the mtime for the same reason.
-  local stamp
-  stamp=$(date -R ${SOURCE_DATE_EPOCH:+--date="@$SOURCE_DATE_EPOCH"})
-  cat >"$stage/usr/share/doc/$pkg/changelog" <<EOF
-$pkg ($VERSION) unstable; urgency=medium
-
-  * Release $VERSION. Full history: cmd/$dir/CHANGELOG.md.
-
- -- $MAINTAINER  $stamp
-EOF
-  gzip -9n "$stage/usr/share/doc/$pkg/changelog"
+  # multicz's debian-changelog writer (multicz.toml) maintains the real file,
+  # prepending a dch(1)-format stanza - grouped by the conventional commits
+  # that drove the bump - on every `multicz bump` (including bump-preview's
+  # write-only one, which is what stamps this before CI ever gets here).
+  local real_changelog="$ROOT/cmd/$dir/debian/changelog"
+  if [ ! -f "$real_changelog" ]; then
+    echo "build-debs: $real_changelog is missing - run 'multicz bump' first" >&2
+    return 1
+  fi
+  gzip -9n -c "$real_changelog" >"$stage/usr/share/doc/$pkg/changelog.gz"
   # Explicit, because these were written under the builder's umask and a
   # group-writable file in a package is a lintian warning.
   chmod 0644 "$stage/usr/share/doc/$pkg/copyright" \
