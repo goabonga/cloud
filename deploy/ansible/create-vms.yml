@@ -33,9 +33,15 @@
         get_checksum: false
       register: base_image_stat
 
-    - name: Fail when the base image is missing
-      ansible.builtin.fail:
-        msg: "Base image {{ base_image }} not found. Place an Ubuntu 24.04 cloud qcow2 into {{ images_dir }}."
+    # Fetched straight into images_dir from base_image_url, the same place an
+    # operator who pre-seeds it manually (e.g. for an offline run, or a
+    # different release) would put it; the stat above skips this on every
+    # later run once it exists.
+    - name: Download the base cloud image if missing
+      ansible.builtin.get_url:
+        url: "{{ base_image_url }}"
+        dest: "{{ base_image }}"
+        mode: "0644"
       when: not base_image_stat.stat.exists
 
     - name: Look up the wan-sim transit network

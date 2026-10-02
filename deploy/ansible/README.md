@@ -8,16 +8,19 @@ start the services. Use this to test the `.deb` artifacts on real machines.
 On the libvirt host:
 
 - `libvirtd`, `virt-install`, `qemu-img` and `cloud-image-utils` (`cloud-localds`)
-- An Ubuntu 24.04 (noble) cloud image at the path in `group_vars/all.yml`
-  (`base_image`). The upstream `.img` is already a qcow2 and is BIOS-bootable,
-  for example:
-
-  ```bash
-  curl -L -o /var/lib/libvirt/images/noble-server-cloudimg-amd64.img \
-    https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
-  ```
-
 - An SSH key at `~/.ssh/id_ed25519.pub` (or change `ssh_public_key`).
+
+`create-vms.yml` fetches the Ubuntu 24.04 (noble) cloud image itself (from
+`base_image_url`) to the path in `group_vars/all.yml` (`base_image`) if it
+isn't already there, so there's nothing to pre-seed for a normal run. To
+pre-seed it yourself instead (an offline run, or a different image/release),
+place it at that path before running the playbook - it is used as-is, so a
+qcow2 release image works without conversion:
+
+```bash
+curl -L -o /var/lib/libvirt/images/noble-server-cloudimg-amd64.img \
+  https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+```
 
 ## Build the artifacts
 
