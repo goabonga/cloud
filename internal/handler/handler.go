@@ -155,6 +155,8 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 		res.Metadata.CreatedAt = existing.Metadata.CreatedAt
 		res.Metadata.Generation = existing.Metadata.Generation + 1
 		res.Metadata.OwnerUID = existing.Metadata.OwnerUID
+		res.Metadata.Finalizers = existing.Metadata.Finalizers
+		res.Metadata.DeletionTimestamp = existing.Metadata.DeletionTimestamp
 		res.Status = existing.Status
 	case errors.Is(err, state.ErrNotFound):
 		switch {
@@ -185,6 +187,8 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 		var zero ST
 		res.Metadata.CreatedAt = h.now()
 		res.Metadata.Generation = 1
+		res.Metadata.Finalizers = nil
+		res.Metadata.DeletionTimestamp = nil
 		res.Status = zero
 		created = true
 	default:
