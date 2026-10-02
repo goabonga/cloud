@@ -11,11 +11,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
+	"github.com/goabonga/infrastructure/internal/functionpool"
 	"github.com/goabonga/infrastructure/internal/registry"
 	"github.com/goabonga/infrastructure/internal/state"
 )
@@ -23,15 +22,9 @@ import (
 // functionLabel marks the compute instances a FunctionController creates, so
 // they can be told apart from user-created compute without a join (purely for
 // observability; the function_instance resource is the source of truth).
-const functionLabel = "infra.io/function-id"
+var errFunctionBusy = errors.New("function instance is assigned")
 
-// functionInstancePortRangeLo and Hi bound the host ports FunctionController
-// allocates for pool instances, kept disjoint from ports a user might
-// deliberately choose for their own compute.
-const (
-	functionInstancePortRangeLo = 30000
-	functionInstancePortRangeHi = 32767
-)
+const functionLabel = functionpool.Label
 
 // functionDeps groups the registries FunctionController consults to decide
 // whether a function's shape is realizable, mirroring the checks
@@ -174,6 +167,22 @@ func (c *FunctionController) Reconcile(ctx context.Context) error {
 
 	var errs []error
 
+	referenced := make(map[string]bool, len(insts))
+	for _, inst := range insts {
+		referenced[inst.Spec.ComputeID] = true
+	}
+	for _, cp := range computes {
+		if cp.Metadata.Labels[functionLabel] == "" || referenced[cp.Metadata.UID] || cp.Metadata.IsDeleting() || cp.Metadata.CreatedAt.IsZero() {
+			continue
+		}
+		if c.now().Sub(cp.Metadata.CreatedAt) < 2*time.Minute {
+			continue
+		}
+		if err := functionpool.RetireCompute(c.computes, cp.Metadata.UID, c.now()); err != nil {
+			errs = append(errs, fmt.Errorf("orphan compute %s: %w", cp.Metadata.UID, err))
+		}
+	}
+
 	// Finalize instances pending deletion, independent of their function's
 	// own state, so a function can be deleted and recreated without waiting
 	// on stragglers from the previous generation.
@@ -246,7 +255,13 @@ func (c *FunctionController) ensureFunction(ctx context.Context, fn *resource.Fu
 	// through syncInstances - this loop only needs to stop creating once
 	// enough slots (live or pending) exist.
 	now := c.now()
-	pending := len(live)
+	pending := 0
+	for _, inst := range insts {
+		cp, exists := computesByUID[inst.Spec.ComputeID]
+		if !inst.Metadata.IsDeleting() && inst.Status.State == resource.FunctionInstanceWarm && exists && !cp.Metadata.IsDeleting() && cp.Status.Phase != resource.PhaseError {
+			pending++
+		}
+	}
 	for pending < fn.Spec.WarmPool.MinWarm {
 		if _, err := c.createInstance(fn, computesByUID, now); err != nil {
 			return err
@@ -306,39 +321,15 @@ func (c *FunctionController) syncInstances(insts []resource.FunctionInstance, co
 // computesByUID is updated in place with the compute it creates, so a second
 // call within the same ensureFunction pass sees the port as taken.
 func (c *FunctionController) createInstance(fn *resource.Function, computesByUID map[string]resource.Compute, now time.Time) (*resource.FunctionInstance, error) {
-	port, err := allocatePort(computesByUID)
+	cp, port, err := functionpool.CreateCompute(c.computes, fn, now)
 	if err != nil {
-		return nil, fmt.Errorf("controllers: allocate port for function %s: %w", fn.Metadata.UID, err)
-	}
-
-	computeUID := newUID("compute")
-	cp := &resource.Compute{
-		Metadata: resource.ObjectMeta{
-			UID:        computeUID,
-			Name:       fn.Spec.Name,
-			Generation: 1,
-			Labels:     map[string]string{functionLabel: fn.Metadata.UID},
-		},
-		Spec: resource.ComputeSpec{
-			SubnetID:        fn.Spec.SubnetID,
-			SecurityGroupID: fn.Spec.SecurityGroupID,
-			NodePoolID:      fn.Spec.NodePoolID,
-			CPU:             fn.Spec.CPU,
-			MemoryMB:        fn.Spec.MemoryMB,
-			PidsMax:         fn.Spec.PidsMax,
-			Image:           fn.Spec.Image,
-			Command:         fn.Spec.Command,
-			Env:             fn.Spec.Env,
-			Ports:           []string{fmt.Sprintf("%d:%d/tcp", port, fn.Spec.Port)},
-		},
-	}
-	if err := c.computes.Put(cp); err != nil {
 		return nil, fmt.Errorf("controllers: create compute for function %s: %w", fn.Metadata.UID, err)
 	}
+	computeUID := cp.Metadata.UID
 	computesByUID[computeUID] = *cp
 
 	inst := &resource.FunctionInstance{
-		Metadata: resource.ObjectMeta{UID: newUID("fninst"), Generation: 1},
+		Metadata: resource.ObjectMeta{UID: newUID("fninst"), Generation: 1, OwnerUID: fn.Metadata.OwnerUID, ProjectID: fn.Metadata.ProjectID, OrganizationID: fn.Metadata.OrganizationID, CreatedAt: now},
 		Spec:     resource.FunctionInstanceSpec{FunctionID: fn.Metadata.UID, ComputeID: computeUID},
 	}
 	inst.Metadata.AddFinalizer(resource.FunctionInstanceFinalizer)
@@ -347,44 +338,10 @@ func (c *FunctionController) createInstance(fn *resource.Function, computesByUID
 	inst.Status.Port = port
 	inst.Status.SetPhase(resource.PhasePending, "Created", "pool instance created, waiting for its compute")
 	if err := c.instances.Put(inst); err != nil {
-		return nil, fmt.Errorf("controllers: create function instance for function %s: %w", fn.Metadata.UID, err)
+		return nil, errors.Join(fmt.Errorf("controllers: create function instance for function %s: %w", fn.Metadata.UID, err), functionpool.RetireCompute(c.computes, computeUID, now))
 	}
 	c.logger.Info("created function instance", "function", fn.Metadata.UID, "instance", inst.Metadata.UID, "compute", computeUID, "port", port)
 	return inst, nil
-}
-
-// allocatePort picks a host port in the function-instance range not already
-// used by any compute's port mapping, so pool instances never collide with
-// each other or with user-created compute.
-func allocatePort(computesByUID map[string]resource.Compute) (int, error) {
-	used := make(map[int]bool, len(computesByUID))
-	for _, cp := range computesByUID {
-		for _, mapping := range cp.Spec.Ports {
-			if port, ok := hostPortOf(mapping); ok {
-				used[port] = true
-			}
-		}
-	}
-	for port := functionInstancePortRangeLo; port <= functionInstancePortRangeHi; port++ {
-		if !used[port] {
-			return port, nil
-		}
-	}
-	return 0, fmt.Errorf("no free port in %d-%d", functionInstancePortRangeLo, functionInstancePortRangeHi)
-}
-
-// hostPortOf extracts the host-side port from a "host:container/proto"
-// mapping, as used by ComputeSpec.Ports.
-func hostPortOf(mapping string) (int, bool) {
-	host, _, ok := strings.Cut(mapping, ":")
-	if !ok {
-		return 0, false
-	}
-	port, err := strconv.Atoi(host)
-	if err != nil {
-		return 0, false
-	}
-	return port, true
 }
 
 // evictIdle enforces policy's MaxWarm cap and IdleTTLSeconds eviction over
@@ -438,6 +395,31 @@ func (c *FunctionController) evictIdle(ctx context.Context, live []resource.Func
 // compute has finished tearing down.
 func (c *FunctionController) deleteInstance(ctx context.Context, inst *resource.FunctionInstance) error {
 	now := c.now()
+	if !inst.Metadata.IsDeleting() {
+		var busy bool
+		marked, err := c.instances.TryUpdate(inst.Metadata.UID, func(current *resource.FunctionInstance) error {
+			if current.Status.State == resource.FunctionInstanceAssigned {
+				busy = true
+				return errFunctionBusy
+			}
+			current.Metadata.DeletionTimestamp = &now
+			return nil
+		})
+		if busy || errors.Is(err, errFunctionBusy) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !marked {
+			return state.ErrConflict
+		}
+		current, err := c.instances.Get(inst.Metadata.UID)
+		if err != nil {
+			return err
+		}
+		inst = current
+	}
 	cp, err := c.computes.Get(inst.Spec.ComputeID)
 	switch {
 	case errors.Is(err, state.ErrNotFound):

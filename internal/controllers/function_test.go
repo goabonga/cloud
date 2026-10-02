@@ -12,6 +12,7 @@ import (
 
 	"github.com/goabonga/infrastructure/internal/controllers"
 	"github.com/goabonga/infrastructure/internal/domain/resource"
+	"github.com/goabonga/infrastructure/internal/functionpool"
 	"github.com/goabonga/infrastructure/internal/registry"
 	"github.com/goabonga/infrastructure/internal/state"
 )
@@ -398,5 +399,76 @@ func (env *fnEnv) seedWarmInstance(t *testing.T, functionID string, lastUsedAt t
 	inst.Status.SetPhase(resource.PhaseReady, "Synced", "tracks backing compute")
 	if err := env.instances.Put(inst); err != nil {
 		t.Fatalf("seed function instance: %v", err)
+	}
+}
+
+func TestFunctionPoolCountsPendingWarmInstances(t *testing.T) {
+	env := newFnEnv(t)
+	env.seedNetwork(t)
+	fn := env.putFunction(t, "fn-pending", resource.WarmPoolPolicy{MinWarm: 2})
+	fn.Metadata.OwnerUID = "alice"
+	fn.Metadata.ProjectID = "project"
+	if err := env.functions.Put(fn); err != nil {
+		t.Fatal(err)
+	}
+	for range 4 {
+		env.reconcile(t)
+	}
+	instances := env.instancesFor(t, fn.Metadata.UID)
+	if len(instances) != 2 {
+		t.Fatalf("pending slots duplicated: %d", len(instances))
+	}
+	for _, inst := range instances {
+		if inst.Metadata.OwnerUID != "alice" || inst.Metadata.ProjectID != "project" {
+			t.Fatal("instance tenant scope missing")
+		}
+	}
+}
+
+func TestFunctionControllerRetiresAbandonedCompute(t *testing.T) {
+	env := newFnEnv(t)
+	env.seedNetwork(t)
+	fn := env.putFunction(t, "fn-orphan", resource.WarmPoolPolicy{})
+	cp, _, err := functionpool.CreateCompute(env.computes, fn, env.now.Add(-3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.reconcile(t)
+	cp, err = env.computes.Get(cp.Metadata.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cp.Metadata.IsDeleting() {
+		t.Fatal("orphan compute was not retired")
+	}
+}
+
+func TestFunctionDeletionWaitsForAssignedInstance(t *testing.T) {
+	env := newFnEnv(t)
+	env.seedNetwork(t)
+	fn := env.putFunction(t, "fn-active", resource.WarmPoolPolicy{MinWarm: 1})
+	env.reconcile(t)
+	env.markComputesReady(t)
+	env.reconcile(t)
+	inst := env.instancesFor(t, fn.Metadata.UID)[0]
+	inst.Status.State = resource.FunctionInstanceAssigned
+	if err := env.instances.Put(&inst); err != nil {
+		t.Fatal(err)
+	}
+	fn, err := env.functions.Get(fn.Metadata.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn.Metadata.DeletionTimestamp = &env.now
+	if err := env.functions.Put(fn); err != nil {
+		t.Fatal(err)
+	}
+	env.reconcile(t)
+	cp, err := env.computes.Get(inst.Spec.ComputeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cp.Metadata.IsDeleting() {
+		t.Fatal("active stream's compute was evicted")
 	}
 }

@@ -6,10 +6,18 @@ package resource
 import (
 	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
 // KindCompute is the resource kind for compute instances.
 const KindCompute = "compute"
+
+// FunctionPortRangeLo and Hi are reserved for controller-created function slots.
+const (
+	FunctionPortRangeLo = 30000
+	FunctionPortRangeHi = 32767
+)
 
 // ComputeFinalizer is attached by the agent so the network namespace, veth pair,
 // cgroup, rootfs and firewall rules are torn down before the record is removed.
@@ -66,6 +74,13 @@ func (s ComputeSpec) Validate() error {
 	}
 	if s.MemoryMB < 0 {
 		return fmt.Errorf("compute: memoryMb must not be negative")
+	}
+	for _, mapping := range s.Ports {
+		host, _, _ := strings.Cut(mapping, ":")
+		port, err := strconv.Atoi(host)
+		if err == nil && port >= FunctionPortRangeLo && port <= FunctionPortRangeHi {
+			return fmt.Errorf("compute: host ports %d-%d are reserved for functions", FunctionPortRangeLo, FunctionPortRangeHi)
+		}
 	}
 	for i, d := range s.Disks {
 		if d.DiskID == "" || d.MountPath == "" {

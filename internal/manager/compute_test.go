@@ -460,3 +460,23 @@ func TestExecComputeBackendUndoesAFailedCreation(t *testing.T) {
 		t.Fatalf("the namespace was left behind: %v", rec.calls)
 	}
 }
+
+func TestUnscheduledDeletingComputeIsFinalizedByScopedAgent(t *testing.T) {
+	env := newComputeEnv(t)
+	backend := &fakeComputeBackend{}
+	cp := basicCompute("pending-function")
+	cp.Metadata.AddFinalizer(resource.ComputeFinalizer)
+	now := time.Now()
+	cp.Metadata.DeletionTimestamp = &now
+	env.putCompute(t, cp)
+	reconciler := manager.NewComputeReconciler(env.computes, env.subnets, env.vpcs, env.disks, env.sgs, backend, "node-1")
+	if err := reconciler.Reconcile(context.Background(), cp.Metadata.UID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.computes.Get(cp.Metadata.UID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unscheduled deletion stuck: %v", err)
+	}
+	if len(backend.ensured) != 0 {
+		t.Fatal("deleted pending compute was started")
+	}
+}
