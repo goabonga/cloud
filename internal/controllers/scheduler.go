@@ -69,6 +69,11 @@ func (c *SchedulerController) Name() string { return "scheduler" }
 // status. It is idempotent: allocation is recomputed from the assigned compute
 // each pass.
 func (c *SchedulerController) Reconcile(ctx context.Context) error {
+	bound := *c
+	bound.computes = c.computes.WithContext(ctx)
+	bound.nodes = c.nodes.WithContext(ctx)
+	bound.pools = c.pools.WithContext(ctx)
+	c = &bound
 	nodes, err := c.nodes.List()
 	if err != nil {
 		return fmt.Errorf("controllers: list nodes: %w", err)

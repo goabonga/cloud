@@ -141,6 +141,14 @@ func (c *FunctionController) Name() string { return "function" }
 // finalizes instances and functions pending deletion. It is idempotent: pool
 // membership is recomputed from the function instance records each pass.
 func (c *FunctionController) Reconcile(ctx context.Context) error {
+	bound := *c
+	bound.functions = c.functions.WithContext(ctx)
+	bound.instances = c.instances.WithContext(ctx)
+	bound.computes = c.computes.WithContext(ctx)
+	bound.deps.subnets = c.deps.subnets.WithContext(ctx)
+	bound.deps.vpcs = c.deps.vpcs.WithContext(ctx)
+	bound.deps.sgs = c.deps.sgs.WithContext(ctx)
+	c = &bound
 	fns, err := c.functions.List()
 	if err != nil {
 		return fmt.Errorf("controllers: list functions: %w", err)

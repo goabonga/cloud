@@ -292,7 +292,7 @@ func (r *LoadBalancerReconciler) Name() string { return resource.KindLoadBalance
 
 // ReconcileAll reconciles every load balancer, collecting per-LB errors.
 func (r *LoadBalancerReconciler) ReconcileAll(ctx context.Context) error {
-	lbs, err := r.reg.List()
+	lbs, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list load balancers: %w", err)
 	}
@@ -315,7 +315,7 @@ func (r *LoadBalancerReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the load balancer identified by uid in line with its spec.
 func (r *LoadBalancerReconciler) Reconcile(ctx context.Context, uid string) error {
-	lb, err := r.reg.Get(uid)
+	lb, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -339,7 +339,7 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 	if errors.Is(err, state.ErrNotFound) {
 		err = fmt.Errorf("vpc %q not found", lb.Spec.VPCID)
 		lb.Status.SetPhase(resource.PhaseError, "VPCError", err.Error())
-		_ = r.reg.Put(lb)
+		_ = r.reg.WithContext(ctx).Put(lb)
 		return err
 	}
 	if err != nil {
@@ -347,7 +347,7 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 	}
 	if vpc.Status.BridgeName == "" {
 		lb.Status.SetPhase(resource.PhasePending, "WaitingForVPC", "vpc bridge not ready")
-		return r.reg.Put(lb)
+		return r.reg.WithContext(ctx).Put(lb)
 	}
 
 	vip := lb.Status.Address
@@ -362,7 +362,7 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 		vip, err = allocateIP(vpc.Spec.CIDR, used)
 		if err != nil {
 			lb.Status.SetPhase(resource.PhaseError, "AllocError", err.Error())
-			_ = r.reg.Put(lb)
+			_ = r.reg.WithContext(ctx).Put(lb)
 			return err
 		}
 	}
@@ -370,27 +370,27 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 	servers, err := r.realServers(lb.Metadata.UID)
 	if err != nil {
 		lb.Status.SetPhase(resource.PhaseError, "BackendError", err.Error())
-		_ = r.reg.Put(lb)
+		_ = r.reg.WithContext(ctx).Put(lb)
 		return err
 	}
 
 	lb.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "configuring service")
 	if err := r.dropOldPort(ctx, lb, vip, vpc.Status.BridgeName); err != nil {
 		lb.Status.SetPhase(resource.PhaseError, "IPVSError", err.Error())
-		_ = r.reg.Put(lb)
+		_ = r.reg.WithContext(ctx).Put(lb)
 		return err
 	}
 	r.moveOutOfHost(ctx, lb, vip, vpc.Status.BridgeName)
 	if err := r.backend.EnsureService(ctx, lb.Spec.VPCID, vpc.Status.BridgeName, vip, lb.Spec.Port, lb.Spec.Protocol, lb.Spec.Algorithm, servers); err != nil {
 		lb.Status.SetPhase(resource.PhaseError, "IPVSError", err.Error())
-		_ = r.reg.Put(lb)
+		_ = r.reg.WithContext(ctx).Put(lb)
 		return err
 	}
 
 	if r.publicIPs != nil {
 		if err := r.ensurePublic(ctx, lb, servers); err != nil {
 			lb.Status.SetPhase(resource.PhaseError, "PublicAddressError", err.Error())
-			_ = r.reg.Put(lb)
+			_ = r.reg.WithContext(ctx).Put(lb)
 			return err
 		}
 	}
@@ -402,7 +402,7 @@ func (r *LoadBalancerReconciler) ensure(ctx context.Context, lb *resource.LoadBa
 	}
 	lb.Status.MarkReconciled(lb.Metadata.Generation)
 	lb.Status.SetPhase(resource.PhaseReady, "Serving", "virtual service ready")
-	if err := r.reg.Put(lb); err != nil {
+	if err := r.reg.WithContext(ctx).Put(lb); err != nil {
 		return fmt.Errorf("manager: save lb %q: %w", lb.Metadata.UID, err)
 	}
 	r.markBackends(lb.Metadata.UID)
@@ -422,7 +422,7 @@ func (r *LoadBalancerReconciler) finalize(ctx context.Context, lb *resource.Load
 		if vip != "" {
 			if err := r.backend.DeleteService(ctx, lb.Spec.VPCID, bridge, vip, lb.Spec.Port, lb.Spec.Protocol); err != nil {
 				lb.Status.SetPhase(resource.PhaseError, "IPVSError", err.Error())
-				_ = r.reg.Put(lb)
+				_ = r.reg.WithContext(ctx).Put(lb)
 				return err
 			}
 		}
@@ -439,12 +439,12 @@ func (r *LoadBalancerReconciler) finalize(ctx context.Context, lb *resource.Load
 		}
 		lb.Metadata.RemoveFinalizer(resource.LoadBalancerFinalizer)
 		lb.Status.SetPhase(resource.PhaseDeleting, "Deleting", "service removed")
-		if err := r.reg.Put(lb); err != nil {
+		if err := r.reg.WithContext(ctx).Put(lb); err != nil {
 			return fmt.Errorf("manager: save lb %q: %w", lb.Metadata.UID, err)
 		}
 	}
 	if len(lb.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(lb.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(lb.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete lb %q: %w", lb.Metadata.UID, err)
 		}
 	}

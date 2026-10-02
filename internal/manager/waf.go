@@ -201,7 +201,7 @@ func (r *WAFReconciler) Name() string { return resource.KindWAFPolicy }
 
 // ReconcileAll reconciles every WAF policy, collecting per-policy errors.
 func (r *WAFReconciler) ReconcileAll(ctx context.Context) error {
-	policies, err := r.reg.List()
+	policies, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list waf policies: %w", err)
 	}
@@ -217,7 +217,7 @@ func (r *WAFReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the WAF policy identified by uid in line with its rules.
 func (r *WAFReconciler) Reconcile(ctx context.Context, uid string) error {
-	pol, err := r.reg.Get(uid)
+	pol, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -238,18 +238,18 @@ func (r *WAFReconciler) ensure(ctx context.Context, pol *resource.WAFPolicy) err
 	match, ready, err := r.targetMatch(pol.Spec)
 	if err != nil {
 		pol.Status.SetPhase(resource.PhaseError, "TargetError", err.Error())
-		_ = r.reg.Put(pol)
+		_ = r.reg.WithContext(ctx).Put(pol)
 		return err
 	}
 	if !ready {
 		pol.Status.SetPhase(resource.PhasePending, "WaitingForTarget", "target not ready")
-		return r.reg.Put(pol)
+		return r.reg.WithContext(ctx).Put(pol)
 	}
 
 	rules, err := r.rulesFor(pol.Metadata.UID)
 	if err != nil {
 		pol.Status.SetPhase(resource.PhaseError, "RuleError", err.Error())
-		_ = r.reg.Put(pol)
+		_ = r.reg.WithContext(ctx).Put(pol)
 		return err
 	}
 
@@ -257,14 +257,14 @@ func (r *WAFReconciler) ensure(ctx context.Context, pol *resource.WAFPolicy) err
 	pol.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "building chain")
 	if err := r.backend.EnsureChain(ctx, chain, match, rules, pol.Spec.LogEnabled); err != nil {
 		pol.Status.SetPhase(resource.PhaseError, "FirewallError", err.Error())
-		_ = r.reg.Put(pol)
+		_ = r.reg.WithContext(ctx).Put(pol)
 		return err
 	}
 
 	pol.Status.Chain = chain
 	pol.Status.MarkReconciled(pol.Metadata.Generation)
 	pol.Status.SetPhase(resource.PhaseReady, "Applied", "chain attached")
-	if err := r.reg.Put(pol); err != nil {
+	if err := r.reg.WithContext(ctx).Put(pol); err != nil {
 		return fmt.Errorf("manager: save waf %q: %w", pol.Metadata.UID, err)
 	}
 	return nil
@@ -275,17 +275,17 @@ func (r *WAFReconciler) finalize(ctx context.Context, pol *resource.WAFPolicy) e
 		match, _, _ := r.targetMatch(pol.Spec)
 		if err := r.backend.DeleteChain(ctx, wafChainName(pol.Metadata.UID), match); err != nil {
 			pol.Status.SetPhase(resource.PhaseError, "FirewallError", err.Error())
-			_ = r.reg.Put(pol)
+			_ = r.reg.WithContext(ctx).Put(pol)
 			return err
 		}
 		pol.Metadata.RemoveFinalizer(resource.WAFPolicyFinalizer)
 		pol.Status.SetPhase(resource.PhaseDeleting, "Deleting", "chain removed")
-		if err := r.reg.Put(pol); err != nil {
+		if err := r.reg.WithContext(ctx).Put(pol); err != nil {
 			return fmt.Errorf("manager: save waf %q: %w", pol.Metadata.UID, err)
 		}
 	}
 	if len(pol.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(pol.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(pol.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete waf %q: %w", pol.Metadata.UID, err)
 		}
 	}

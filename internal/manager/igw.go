@@ -34,7 +34,7 @@ func (r *IGWReconciler) Name() string { return resource.KindIGW }
 
 // ReconcileAll reconciles every internet gateway, collecting per-igw errors.
 func (r *IGWReconciler) ReconcileAll(ctx context.Context) error {
-	igws, err := r.reg.List()
+	igws, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list igws: %w", err)
 	}
@@ -50,7 +50,7 @@ func (r *IGWReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the gateway identified by uid in line with its spec.
 func (r *IGWReconciler) Reconcile(ctx context.Context, uid string) error {
-	igw, err := r.reg.Get(uid)
+	igw, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -72,7 +72,7 @@ func (r *IGWReconciler) ensure(ctx context.Context, igw *resource.IGW) error {
 	if errors.Is(err, state.ErrNotFound) {
 		err = fmt.Errorf("vpc %q not found", igw.Spec.VPCID)
 		igw.Status.SetPhase(resource.PhaseError, "VPCError", err.Error())
-		_ = r.reg.Put(igw)
+		_ = r.reg.WithContext(ctx).Put(igw)
 		return err
 	}
 	if err != nil {
@@ -80,31 +80,31 @@ func (r *IGWReconciler) ensure(ctx context.Context, igw *resource.IGW) error {
 	}
 	if vpc.Status.BridgeName == "" {
 		igw.Status.SetPhase(resource.PhasePending, "WaitingForVPC", "vpc bridge not ready")
-		return r.reg.Put(igw)
+		return r.reg.WithContext(ctx).Put(igw)
 	}
 
 	igw.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "configuring NAT")
 	hostIface, err := r.net.DefaultInterface(ctx)
 	if err != nil {
 		igw.Status.SetPhase(resource.PhaseError, "RouteError", err.Error())
-		_ = r.reg.Put(igw)
+		_ = r.reg.WithContext(ctx).Put(igw)
 		return err
 	}
 	if err := r.net.EnableForwarding(ctx); err != nil {
 		igw.Status.SetPhase(resource.PhaseError, "ForwardingError", err.Error())
-		_ = r.reg.Put(igw)
+		_ = r.reg.WithContext(ctx).Put(igw)
 		return err
 	}
 	if err := r.net.EnsureNAT(ctx, vpc.Spec.CIDR, hostIface); err != nil {
 		igw.Status.SetPhase(resource.PhaseError, "NATError", err.Error())
-		_ = r.reg.Put(igw)
+		_ = r.reg.WithContext(ctx).Put(igw)
 		return err
 	}
 	// The VPC routes in its own table: without this route, its instances
 	// have no way out even with the NAT in place.
 	if err := r.net.EnsureEgress(ctx, igw.Spec.VPCID); err != nil {
 		igw.Status.SetPhase(resource.PhaseError, "RouteError", err.Error())
-		_ = r.reg.Put(igw)
+		_ = r.reg.WithContext(ctx).Put(igw)
 		return err
 	}
 
@@ -112,7 +112,7 @@ func (r *IGWReconciler) ensure(ctx context.Context, igw *resource.IGW) error {
 	igw.Status.Bridge = vpc.Status.BridgeName
 	igw.Status.MarkReconciled(igw.Metadata.Generation)
 	igw.Status.SetPhase(resource.PhaseReady, "Reconciled", "gateway ready")
-	if err := r.reg.Put(igw); err != nil {
+	if err := r.reg.WithContext(ctx).Put(igw); err != nil {
 		return fmt.Errorf("manager: save igw %q: %w", igw.Metadata.UID, err)
 	}
 	return nil
@@ -122,24 +122,24 @@ func (r *IGWReconciler) finalize(ctx context.Context, igw *resource.IGW) error {
 	if igw.Metadata.HasFinalizer(resource.IGWFinalizer) {
 		if err := r.net.DeleteEgress(ctx, igw.Spec.VPCID); err != nil {
 			igw.Status.SetPhase(resource.PhaseError, "RouteError", err.Error())
-			_ = r.reg.Put(igw)
+			_ = r.reg.WithContext(ctx).Put(igw)
 			return err
 		}
 		if vpc, err := r.vpcs.Get(igw.Spec.VPCID); err == nil && igw.Status.HostIface != "" {
 			if err := r.net.DeleteNAT(ctx, vpc.Spec.CIDR, igw.Status.HostIface); err != nil {
 				igw.Status.SetPhase(resource.PhaseError, "NATError", err.Error())
-				_ = r.reg.Put(igw)
+				_ = r.reg.WithContext(ctx).Put(igw)
 				return err
 			}
 		}
 		igw.Metadata.RemoveFinalizer(resource.IGWFinalizer)
 		igw.Status.SetPhase(resource.PhaseDeleting, "Deleting", "NAT removed")
-		if err := r.reg.Put(igw); err != nil {
+		if err := r.reg.WithContext(ctx).Put(igw); err != nil {
 			return fmt.Errorf("manager: save igw %q: %w", igw.Metadata.UID, err)
 		}
 	}
 	if len(igw.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(igw.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(igw.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete igw %q: %w", igw.Metadata.UID, err)
 		}
 	}

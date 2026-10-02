@@ -73,7 +73,7 @@ func (r *AsyncDiskReplicaReconciler) localPath(uid string) string {
 // ReconcileAll reconciles every async disk replica, collecting per-replica
 // errors.
 func (r *AsyncDiskReplicaReconciler) ReconcileAll(ctx context.Context) error {
-	replicas, err := r.reg.List()
+	replicas, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list async disk replicas: %w", err)
 	}
@@ -89,7 +89,7 @@ func (r *AsyncDiskReplicaReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the replica identified by uid in line with its spec.
 func (r *AsyncDiskReplicaReconciler) Reconcile(ctx context.Context, uid string) error {
-	rep, err := r.reg.Get(uid)
+	rep, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -114,14 +114,14 @@ func (r *AsyncDiskReplicaReconciler) ensure(ctx context.Context, rep *resource.A
 	disk, err := r.disks.Get(rep.Spec.DiskID)
 	if errors.Is(err, state.ErrNotFound) {
 		rep.Status.SetPhase(resource.PhasePending, "WaitingForDisk", "disk "+rep.Spec.DiskID+" does not exist")
-		return r.reg.Put(rep)
+		return r.reg.WithContext(ctx).Put(rep)
 	}
 	if err != nil {
 		return fmt.Errorf("manager: load disk %q: %w", rep.Spec.DiskID, err)
 	}
 	if disk.Status.NodeName == "" {
 		rep.Status.SetPhase(resource.PhasePending, "WaitingForDisk", "disk has no primary node yet")
-		return r.reg.Put(rep)
+		return r.reg.WithContext(ctx).Put(rep)
 	}
 
 	if !r.dueToSync(rep) {
@@ -131,34 +131,34 @@ func (r *AsyncDiskReplicaReconciler) ensure(ctx context.Context, rep *resource.A
 	node, err := r.nodes.Get(disk.Status.NodeName)
 	if err != nil {
 		rep.Status.SetPhase(resource.PhaseError, "PrimaryNodeMissing", err.Error())
-		_ = r.reg.Put(rep)
+		_ = r.reg.WithContext(ctx).Put(rep)
 		return err
 	}
 	addr := net.JoinHostPort(node.Spec.Address, r.replicationPort)
 
 	if err := os.MkdirAll(r.dir, 0o700); err != nil {
 		rep.Status.SetPhase(resource.PhaseError, "SyncError", err.Error())
-		_ = r.reg.Put(rep)
+		_ = r.reg.WithContext(ctx).Put(rep)
 		return fmt.Errorf("manager: replica dir: %w", err)
 	}
 	dest := r.localPath(rep.Metadata.UID)
 	if err := r.puller.PullDisk(ctx, addr, disk.Metadata.UID, dest); err != nil {
 		rep.Status.SetPhase(resource.PhaseError, "SyncError", err.Error())
-		_ = r.reg.Put(rep)
+		_ = r.reg.WithContext(ctx).Put(rep)
 		return err
 	}
 
 	info, err := os.Stat(dest)
 	if err != nil {
 		rep.Status.SetPhase(resource.PhaseError, "SyncError", err.Error())
-		_ = r.reg.Put(rep)
+		_ = r.reg.WithContext(ctx).Put(rep)
 		return err
 	}
 	rep.Status.LastSyncedAt = r.now().UTC().Format(time.RFC3339)
 	rep.Status.BytesSynced = info.Size()
 	rep.Status.MarkReconciled(rep.Metadata.Generation)
 	rep.Status.SetPhase(resource.PhaseReady, "Synced", "replica up to date")
-	return r.reg.Put(rep)
+	return r.reg.WithContext(ctx).Put(rep)
 }
 
 // dueToSync reports whether enough time has passed since the last sync (or
@@ -175,21 +175,21 @@ func (r *AsyncDiskReplicaReconciler) dueToSync(rep *resource.AsyncDiskReplica) b
 	return r.now().Sub(last) >= interval
 }
 
-func (r *AsyncDiskReplicaReconciler) finalize(_ context.Context, rep *resource.AsyncDiskReplica) error {
+func (r *AsyncDiskReplicaReconciler) finalize(ctx context.Context, rep *resource.AsyncDiskReplica) error {
 	if rep.Metadata.HasFinalizer(resource.AsyncDiskReplicaFinalizer) {
 		if err := os.Remove(r.localPath(rep.Metadata.UID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			rep.Status.SetPhase(resource.PhaseError, "DeleteError", err.Error())
-			_ = r.reg.Put(rep)
+			_ = r.reg.WithContext(ctx).Put(rep)
 			return err
 		}
 		rep.Metadata.RemoveFinalizer(resource.AsyncDiskReplicaFinalizer)
 		rep.Status.SetPhase(resource.PhaseDeleting, "Deleting", "replica removed")
-		if err := r.reg.Put(rep); err != nil {
+		if err := r.reg.WithContext(ctx).Put(rep); err != nil {
 			return fmt.Errorf("manager: save async disk replica %q: %w", rep.Metadata.UID, err)
 		}
 	}
 	if len(rep.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(rep.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(rep.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete async disk replica %q: %w", rep.Metadata.UID, err)
 		}
 	}

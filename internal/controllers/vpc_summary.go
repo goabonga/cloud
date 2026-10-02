@@ -46,7 +46,7 @@ func (c *VPCSummaryController) Name() string { return "vpc-summary" }
 
 // Reconcile recomputes and records the VPC phase summary.
 func (c *VPCSummaryController) Reconcile(ctx context.Context) error {
-	vpcs, err := c.reg.List()
+	vpcs, err := c.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("controllers: list vpcs: %w", err)
 	}

@@ -72,6 +72,11 @@ func (c *MicroVMSchedulerController) Name() string { return "microvm-scheduler" 
 // node-pool status. It is idempotent: allocation is recomputed from the
 // assigned micro-VMs each pass.
 func (c *MicroVMSchedulerController) Reconcile(ctx context.Context) error {
+	bound := *c
+	bound.microvms = c.microvms.WithContext(ctx)
+	bound.nodes = c.nodes.WithContext(ctx)
+	bound.pools = c.pools.WithContext(ctx)
+	c = &bound
 	nodes, err := c.nodes.List()
 	if err != nil {
 		return fmt.Errorf("controllers: list nodes: %w", err)

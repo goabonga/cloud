@@ -131,7 +131,7 @@ func (r *SecurityGroupReconciler) Name() string { return resource.KindSecurityGr
 
 // ReconcileAll reconciles every security group, collecting per-group errors.
 func (r *SecurityGroupReconciler) ReconcileAll(ctx context.Context) error {
-	groups, err := r.reg.List()
+	groups, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list security groups: %w", err)
 	}
@@ -147,7 +147,7 @@ func (r *SecurityGroupReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the security group identified by uid in line with its rules.
 func (r *SecurityGroupReconciler) Reconcile(ctx context.Context, uid string) error {
-	sg, err := r.reg.Get(uid)
+	sg, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -169,21 +169,21 @@ func (r *SecurityGroupReconciler) ensure(ctx context.Context, sg *resource.Secur
 	rules, err := r.rulesFor(sg.Metadata.UID)
 	if err != nil {
 		sg.Status.SetPhase(resource.PhaseError, "RuleError", err.Error())
-		_ = r.reg.Put(sg)
+		_ = r.reg.WithContext(ctx).Put(sg)
 		return err
 	}
 
 	chain := sgChainName(sg.Metadata.UID)
 	if err := r.fw.EnsureChain(ctx, chain, rules); err != nil {
 		sg.Status.SetPhase(resource.PhaseError, "FirewallError", err.Error())
-		_ = r.reg.Put(sg)
+		_ = r.reg.WithContext(ctx).Put(sg)
 		return err
 	}
 
 	sg.Status.Chain = chain
 	sg.Status.MarkReconciled(sg.Metadata.Generation)
 	sg.Status.SetPhase(resource.PhaseReady, "Applied", "chain built")
-	if err := r.reg.Put(sg); err != nil {
+	if err := r.reg.WithContext(ctx).Put(sg); err != nil {
 		return fmt.Errorf("manager: save security group %q: %w", sg.Metadata.UID, err)
 	}
 	return nil
@@ -193,17 +193,17 @@ func (r *SecurityGroupReconciler) finalize(ctx context.Context, sg *resource.Sec
 	if sg.Metadata.HasFinalizer(resource.SecurityGroupFinalizer) {
 		if err := r.fw.DeleteChain(ctx, sgChainName(sg.Metadata.UID)); err != nil {
 			sg.Status.SetPhase(resource.PhaseError, "FirewallError", err.Error())
-			_ = r.reg.Put(sg)
+			_ = r.reg.WithContext(ctx).Put(sg)
 			return err
 		}
 		sg.Metadata.RemoveFinalizer(resource.SecurityGroupFinalizer)
 		sg.Status.SetPhase(resource.PhaseDeleting, "Deleting", "chain removed")
-		if err := r.reg.Put(sg); err != nil {
+		if err := r.reg.WithContext(ctx).Put(sg); err != nil {
 			return fmt.Errorf("manager: save security group %q: %w", sg.Metadata.UID, err)
 		}
 	}
 	if len(sg.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(sg.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(sg.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete security group %q: %w", sg.Metadata.UID, err)
 		}
 	}

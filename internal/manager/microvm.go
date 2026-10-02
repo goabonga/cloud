@@ -359,7 +359,7 @@ func (r *MicroVMReconciler) Name() string { return resource.KindMicroVM }
 
 // ReconcileAll reconciles every micro-VM, collecting per-instance errors.
 func (r *MicroVMReconciler) ReconcileAll(ctx context.Context) error {
-	vms, err := r.reg.List()
+	vms, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list microvms: %w", err)
 	}
@@ -375,7 +375,7 @@ func (r *MicroVMReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the micro-VM identified by uid in line with its spec.
 func (r *MicroVMReconciler) Reconcile(ctx context.Context, uid string) error {
-	v, err := r.reg.Get(uid)
+	v, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -400,12 +400,12 @@ func (r *MicroVMReconciler) ensure(ctx context.Context, v *resource.MicroVM) err
 	req, ready, err := r.resolve(v)
 	if err != nil {
 		v.Status.SetPhase(resource.PhaseError, "ResolveError", err.Error())
-		_ = r.reg.Put(v)
+		_ = r.reg.WithContext(ctx).Put(v)
 		return err
 	}
 	if !ready {
 		// A dependency is not provisioned yet; retry on the next pass.
-		return r.reg.Put(v)
+		return r.reg.WithContext(ctx).Put(v)
 	}
 
 	// Record the address before realising the instance, so a failed attempt
@@ -415,7 +415,7 @@ func (r *MicroVMReconciler) ensure(ctx context.Context, v *resource.MicroVM) err
 	res, err := r.backend.EnsureMicroVM(ctx, req)
 	if err != nil {
 		v.Status.SetPhase(resource.PhaseError, "MicroVMError", err.Error())
-		_ = r.reg.Put(v)
+		_ = r.reg.WithContext(ctx).Put(v)
 		return err
 	}
 
@@ -425,7 +425,7 @@ func (r *MicroVMReconciler) ensure(ctx context.Context, v *resource.MicroVM) err
 	v.Status.Ready = true
 	v.Status.MarkReconciled(v.Metadata.Generation)
 	v.Status.SetPhase(resource.PhaseReady, "Running", "micro-VM ready")
-	if err := r.reg.Put(v); err != nil {
+	if err := r.reg.WithContext(ctx).Put(v); err != nil {
 		return fmt.Errorf("manager: save microvm %q: %w", v.Metadata.UID, err)
 	}
 	return nil
@@ -532,7 +532,7 @@ func (r *MicroVMReconciler) finalize(ctx context.Context, v *resource.MicroVM) e
 		}
 		if err := r.backend.DeleteMicroVM(ctx, td); err != nil {
 			v.Status.SetPhase(resource.PhaseError, "MicroVMError", err.Error())
-			_ = r.reg.Put(v)
+			_ = r.reg.WithContext(ctx).Put(v)
 			return err
 		}
 		if r.addresses != nil && v.Status.IP != "" {
@@ -542,12 +542,12 @@ func (r *MicroVMReconciler) finalize(ctx context.Context, v *resource.MicroVM) e
 		}
 		v.Metadata.RemoveFinalizer(resource.MicroVMFinalizer)
 		v.Status.SetPhase(resource.PhaseDeleting, "Deleting", "micro-VM removed")
-		if err := r.reg.Put(v); err != nil {
+		if err := r.reg.WithContext(ctx).Put(v); err != nil {
 			return fmt.Errorf("manager: save microvm %q: %w", v.Metadata.UID, err)
 		}
 	}
 	if len(v.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(v.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(v.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete microvm %q: %w", v.Metadata.UID, err)
 		}
 	}

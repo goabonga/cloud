@@ -33,7 +33,7 @@ func (r *VPCReconciler) Name() string { return resource.KindVPC }
 
 // ReconcileAll reconciles every VPC, collecting per-VPC errors.
 func (r *VPCReconciler) ReconcileAll(ctx context.Context) error {
-	vpcs, err := r.reg.List()
+	vpcs, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list vpcs: %w", err)
 	}
@@ -51,7 +51,7 @@ func (r *VPCReconciler) ReconcileAll(ctx context.Context) error {
 // to call repeatedly: a missing resource is a no-op, an active resource ensures
 // its bridge, and a deleting resource runs its finalizer.
 func (r *VPCReconciler) Reconcile(ctx context.Context, uid string) error {
-	vpc, err := r.reg.Get(uid)
+	vpc, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -74,24 +74,24 @@ func (r *VPCReconciler) ensure(ctx context.Context, vpc *resource.VPC) error {
 	name := bridgeName(vpc.Metadata.UID)
 	if err := r.net.EnsureBridge(ctx, Bridge{Name: name, CIDR: vpc.Spec.CIDR}); err != nil {
 		vpc.Status.SetPhase(resource.PhaseError, "BridgeError", err.Error())
-		_ = r.reg.Put(vpc)
+		_ = r.reg.WithContext(ctx).Put(vpc)
 		return err
 	}
 	if err := r.net.EnsureVRF(ctx, vpc.Metadata.UID, name); err != nil {
 		vpc.Status.SetPhase(resource.PhaseError, "VRFError", err.Error())
-		_ = r.reg.Put(vpc)
+		_ = r.reg.WithContext(ctx).Put(vpc)
 		return err
 	}
 	if err := r.net.EnsureNodePort(ctx, vpc.Metadata.UID, name); err != nil {
 		vpc.Status.SetPhase(resource.PhaseError, "NodePortError", err.Error())
-		_ = r.reg.Put(vpc)
+		_ = r.reg.WithContext(ctx).Put(vpc)
 		return err
 	}
 
 	vpc.Status.BridgeName = name
 	vpc.Status.MarkReconciled(vpc.Metadata.Generation)
 	vpc.Status.SetPhase(resource.PhaseReady, "Reconciled", "bridge ready")
-	if err := r.reg.Put(vpc); err != nil {
+	if err := r.reg.WithContext(ctx).Put(vpc); err != nil {
 		return fmt.Errorf("manager: save vpc %q: %w", vpc.Metadata.UID, err)
 	}
 	return nil
@@ -101,28 +101,28 @@ func (r *VPCReconciler) finalize(ctx context.Context, vpc *resource.VPC) error {
 	if vpc.Metadata.HasFinalizer(resource.VPCFinalizer) {
 		if err := r.net.DeleteNodePort(ctx, vpc.Metadata.UID); err != nil {
 			vpc.Status.SetPhase(resource.PhaseError, "NodePortError", err.Error())
-			_ = r.reg.Put(vpc)
+			_ = r.reg.WithContext(ctx).Put(vpc)
 			return err
 		}
 		if err := r.net.DeleteVRF(ctx, vpc.Metadata.UID, bridgeName(vpc.Metadata.UID)); err != nil {
 			vpc.Status.SetPhase(resource.PhaseError, "VRFError", err.Error())
-			_ = r.reg.Put(vpc)
+			_ = r.reg.WithContext(ctx).Put(vpc)
 			return err
 		}
 		if err := r.net.DeleteBridge(ctx, bridgeName(vpc.Metadata.UID)); err != nil {
 			vpc.Status.SetPhase(resource.PhaseError, "BridgeError", err.Error())
-			_ = r.reg.Put(vpc)
+			_ = r.reg.WithContext(ctx).Put(vpc)
 			return err
 		}
 		vpc.Metadata.RemoveFinalizer(resource.VPCFinalizer)
 		vpc.Status.SetPhase(resource.PhaseDeleting, "Deleting", "bridge removed")
-		if err := r.reg.Put(vpc); err != nil {
+		if err := r.reg.WithContext(ctx).Put(vpc); err != nil {
 			return fmt.Errorf("manager: save vpc %q: %w", vpc.Metadata.UID, err)
 		}
 	}
 	// Once no finalizers remain, the record can leave the store.
 	if len(vpc.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(vpc.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(vpc.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete vpc %q: %w", vpc.Metadata.UID, err)
 		}
 	}

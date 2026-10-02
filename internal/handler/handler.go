@@ -7,6 +7,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -87,7 +88,14 @@ func (h *Handler[S, ST]) Register(mux *http.ServeMux, base string) {
 	mux.HandleFunc("DELETE "+prefix+"/{uid}", h.delete)
 }
 
+func (h *Handler[S, ST]) withContext(ctx context.Context) *Handler[S, ST] {
+	copy := *h
+	copy.reg = h.reg.WithContext(ctx)
+	return &copy
+}
+
 func (h *Handler[S, ST]) list(w http.ResponseWriter, r *http.Request) {
+	h = h.withContext(r.Context())
 	items, err := h.reg.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -110,6 +118,7 @@ func (h *Handler[S, ST]) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler[S, ST]) get(w http.ResponseWriter, r *http.Request) {
+	h = h.withContext(r.Context())
 	res, err := h.reg.Get(r.PathValue("uid"))
 	switch {
 	case err == nil:
@@ -126,6 +135,7 @@ func (h *Handler[S, ST]) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
+	h = h.withContext(r.Context())
 	var res resource.Resource[S, ST]
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -237,6 +247,7 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler[S, ST]) delete(w http.ResponseWriter, r *http.Request) {
+	h = h.withContext(r.Context())
 	uid := r.PathValue("uid")
 	existing, err := h.reg.Get(uid)
 	switch {

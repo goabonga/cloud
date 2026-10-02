@@ -154,7 +154,7 @@ func (r *PeeringReconciler) Name() string { return resource.KindPeering }
 
 // ReconcileAll reconciles every peering, collecting per-peering errors.
 func (r *PeeringReconciler) ReconcileAll(ctx context.Context) error {
-	peerings, err := r.reg.List()
+	peerings, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list peerings: %w", err)
 	}
@@ -170,7 +170,7 @@ func (r *PeeringReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the peering identified by uid in line with its spec.
 func (r *PeeringReconciler) Reconcile(ctx context.Context, uid string) error {
-	pr, err := r.reg.Get(uid)
+	pr, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -191,37 +191,37 @@ func (r *PeeringReconciler) ensure(ctx context.Context, pr *resource.Peering) er
 	side1, ok1, err := r.side(pr.Spec.VPC1ID)
 	if err != nil {
 		pr.Status.SetPhase(resource.PhaseError, "VPCError", err.Error())
-		_ = r.reg.Put(pr)
+		_ = r.reg.WithContext(ctx).Put(pr)
 		return err
 	}
 	side2, ok2, err := r.side(pr.Spec.VPC2ID)
 	if err != nil {
 		pr.Status.SetPhase(resource.PhaseError, "VPCError", err.Error())
-		_ = r.reg.Put(pr)
+		_ = r.reg.WithContext(ctx).Put(pr)
 		return err
 	}
 	if cidrsOverlap(side1.CIDR, side2.CIDR) {
 		err := fmt.Errorf("vpc %s (%s) and vpc %s (%s) overlap", side1.VPCID, side1.CIDR, side2.VPCID, side2.CIDR)
 		pr.Status.SetPhase(resource.PhaseError, "Overlap", err.Error())
-		_ = r.reg.Put(pr)
+		_ = r.reg.WithContext(ctx).Put(pr)
 		return err
 	}
 	if !ok1 || !ok2 {
 		// A VPC bridge is not provisioned yet; retry on the next pass.
 		pr.Status.SetPhase(resource.PhasePending, "WaitingForVPC", "vpc bridge not ready")
-		return r.reg.Put(pr)
+		return r.reg.WithContext(ctx).Put(pr)
 	}
 
 	veth1, veth2 := peeringNames(pr.Metadata.UID)
 	pr.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "linking bridges")
 	if err := r.backend.EnsureLink(ctx, veth1, veth2, side1.Bridge, side2.Bridge); err != nil {
 		pr.Status.SetPhase(resource.PhaseError, "LinkError", err.Error())
-		_ = r.reg.Put(pr)
+		_ = r.reg.WithContext(ctx).Put(pr)
 		return err
 	}
 	if err := r.backend.EnsureRoutes(ctx, side1, side2); err != nil {
 		pr.Status.SetPhase(resource.PhaseError, "RouteError", err.Error())
-		_ = r.reg.Put(pr)
+		_ = r.reg.WithContext(ctx).Put(pr)
 		return err
 	}
 
@@ -229,7 +229,7 @@ func (r *PeeringReconciler) ensure(ctx context.Context, pr *resource.Peering) er
 	pr.Status.Veth2 = veth2
 	pr.Status.MarkReconciled(pr.Metadata.Generation)
 	pr.Status.SetPhase(resource.PhaseReady, "Linked", "bridges linked")
-	if err := r.reg.Put(pr); err != nil {
+	if err := r.reg.WithContext(ctx).Put(pr); err != nil {
 		return fmt.Errorf("manager: save peering %q: %w", pr.Metadata.UID, err)
 	}
 	return nil
@@ -245,17 +245,17 @@ func (r *PeeringReconciler) finalize(ctx context.Context, pr *resource.Peering) 
 		veth1, _ := peeringNames(pr.Metadata.UID)
 		if err := r.backend.DeleteLink(ctx, veth1); err != nil {
 			pr.Status.SetPhase(resource.PhaseError, "LinkError", err.Error())
-			_ = r.reg.Put(pr)
+			_ = r.reg.WithContext(ctx).Put(pr)
 			return err
 		}
 		pr.Metadata.RemoveFinalizer(resource.PeeringFinalizer)
 		pr.Status.SetPhase(resource.PhaseDeleting, "Deleting", "link removed")
-		if err := r.reg.Put(pr); err != nil {
+		if err := r.reg.WithContext(ctx).Put(pr); err != nil {
 			return fmt.Errorf("manager: save peering %q: %w", pr.Metadata.UID, err)
 		}
 	}
 	if len(pr.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(pr.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(pr.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete peering %q: %w", pr.Metadata.UID, err)
 		}
 	}
