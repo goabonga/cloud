@@ -38,15 +38,15 @@ state_file = ".multicz/state.json"
 overlap_policy = "all"
 
 # Custom commit types layered on the conventional defaults. `deprecate:`
-# announces an upcoming removal; `remove:` performs it after the n+2 window
-# (see docs/stability.md). Both bump minor.
+# announces an upcoming removal; `remove:` performs it in a major release
+# (see docs/stability.md). Keep these rules for historical commits.
 [project.bump_rules]
 feat = "minor"
 fix = "patch"
 perf = "patch"
 revert = "patch"
 deprecate = "minor"
-remove = "minor"
+remove = "major"
 
 # CHANGELOG layout aligned on Keep-a-Changelog. Sections render in order.
 [[project.changelog_sections]]

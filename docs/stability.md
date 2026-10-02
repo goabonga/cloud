@@ -10,18 +10,19 @@ Commits by [multicz](https://github.com/goabonga/multicz).
 | --- | --- |
 | `feat` | minor |
 | `fix`, `perf`, `revert` | patch |
-| `deprecate`, `remove` | minor |
+| `feat` announcing a deprecation | minor |
+| removal of a public surface | major |
 | `feat!` / `BREAKING CHANGE:` | major |
 
 ## Deprecation cadence
 
 Public surfaces follow an `n + 2` cadence:
 
-1. **Announce** in release `n + 1` with a `deprecate:` commit. The symbol keeps
+1. **Announce** in release `n + 1` with a `feat:` commit. The symbol keeps
    working and emits a deprecation notice.
-2. **Remove** in release `n + 2` with a `remove:` commit.
+2. **Remove** no earlier than release `n + 2`, in a major release with a
+   `feat!:` commit and a `BREAKING CHANGE:` footer.
 
-Because the deprecation cycle is the breaking-change announcement, the removal
-itself ships in a minor release, not a major one. Reserve `feat!:` /
-`BREAKING CHANGE:` for changes that must bypass the deprecation cycle (for
-example a security fix that cannot wait).
+Deprecation notices do not make removal backward compatible. Every removal
+of a public surface requires a major release, including security changes
+that must bypass the deprecation cadence.
