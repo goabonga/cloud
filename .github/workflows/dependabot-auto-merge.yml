@@ -56,8 +56,12 @@ jobs:
             echo "::error::workflow_run carried no pull request"
             exit 1
           fi
+          # gh pr view's author.login comes from the REST/GraphQL API, which
+          # renders a bot author as "app/dependabot" - a different string
+          # from the Actions `actor` context's "dependabot[bot]", even
+          # though both name the same identity.
           author=$(gh pr view "$PR_NUMBER" --json author --jq '.author.login')
-          if [ "$author" != "dependabot[bot]" ]; then
+          if [ "$author" != "app/dependabot" ]; then
             echo "PR #$PR_NUMBER was opened by $author, not dependabot[bot]; not labelling"
             exit 0
           fi
