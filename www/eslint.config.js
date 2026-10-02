@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Chris <goabonga@pm.me>
+
+import js from "@eslint/js";
+import globals from "globals";
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(
+  { ignores: ["dist"] },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    languageOptions: {
+      globals: { ...globals.browser },
+    },
+  },
+);

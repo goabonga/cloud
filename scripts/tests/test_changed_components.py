@@ -1,0 +1,240 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+"""Multicz component detection is visible in CI output and job summaries."""
+
+import json
+from pathlib import Path
+import sys
+from unittest.mock import Mock
+
+import pytest
+
+import ci_automation as ci
+
+
+@pytest.fixture
+def output_files(tmp_path, monkeypatch):
+    output = tmp_path / "outputs"
+    summary = tmp_path / "summary"
+    summary.write_text("Existing summary\n")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setenv("JOB_STATUS", "success")
+    return output, summary
+
+
+def test_changed_components_are_exposed_in_logs_outputs_and_appended_summary(output_files, monkeypatch, capsys):
+    command = Mock(return_value=json.dumps({"changed": ["cloud-docs"], "unchanged": []}))
+    monkeypatch.setattr(ci, "run", command)
+    ci.changed_components()
+    command.assert_called_once_with("multicz", "changed", "--output", "json")
+    assert output_files[0].read_text().splitlines()[0] + "\n" == 'changed=["cloud-docs"]\n'
+    assert 'Changed components: ["cloud-docs"]' in capsys.readouterr().out
+    text = output_files[1].read_text()
+    assert text.startswith("Existing summary\n")
+    assert "## Changed components" in text and "- `cloud-docs`" in text
+    assert "**Result:** success" in text
+    assert "latest tag" in text
+
+
+def test_no_component_changes_are_reported_explicitly(output_files, monkeypatch):
+    monkeypatch.setattr(ci, "run", Mock(return_value='{"changed": [], "unchanged": ["cloud-docs"]}'))
+    ci.changed_components()
+    assert output_files[0].read_text().splitlines()[0] + "\n" == "changed=[]\n"
+    assert "No changed components." in output_files[1].read_text()
+
+
+def test_cli_optional_reference_is_an_argument_instead_of_shell_code(output_files, monkeypatch):
+    reference = "$(touch injected)"
+    command = Mock(return_value='{"changed": [], "unchanged": []}')
+    monkeypatch.setattr(ci, "run", command)
+    monkeypatch.setattr(sys, "argv", ["ci_automation.py", "changed-components", "--since", reference])
+    ci.main()
+    command.assert_called_once_with("multicz", "changed", "--output", "json", "--since", reference)
+    assert not Path("injected").exists()
+
+
+def test_invalid_component_response_is_rejected_without_writing_outputs(output_files, monkeypatch):
+    monkeypatch.setattr(ci, "run", Mock(return_value='{"changed": "cloud-docs", "unchanged": []}'))
+    with pytest.raises(ValueError, match="Invalid multicz component list"):
+        ci.changed_components()
+    assert not output_files[0].exists()
+    assert output_files[1].read_text() == "Existing summary\n"
+
+
+def test_detection_follows_plumber_and_tool_installation_with_full_history():
+    workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text()
+    components = workflow.split("  components:")[1].split("  scripts:")[0]
+    assert "needs: plumber" in components
+    assert components.index("uv tool install multicz") < components.index("List changed multicz components")
+    assert "fetch-depth: 0" in components
+    assert "changed-components --ci" in components
+    scripts = workflow.split("  scripts:")[1].split("  documentation:")[0]
+    assert "contains(fromJSON(needs.components.outputs.checks), 'cloud-scripts')" in scripts
+    assert "python3 scripts/check_scripts.py --ci" in scripts
+    assert "CHANGED_FILES: ${{ needs.components.outputs.files }}" in scripts
+
+
+@pytest.mark.parametrize("event,key", [("pull_request", "PR_BASE_SHA"), ("push", "PUSH_BEFORE_SHA")])
+def test_ci_comparison_uses_valid_ancestor(event, key, monkeypatch, output_files):
+    base = "a" * 40
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv(key, base)
+    git = Mock(side_effect=["", "docs/index.md"])
+    command = Mock(return_value='{"changed": ["cloud-docs"], "unchanged": ["cloud-scripts"]}')
+    monkeypatch.setattr(ci, "git", git)
+    monkeypatch.setattr(ci, "run", command)
+    ci.changed_components(ci=True)
+    assert git.call_args_list[0].args == ("merge-base", "--is-ancestor", base, "HEAD")
+    assert git.call_args_list[1].args == ("diff", "--no-renames", "--name-only", base, "HEAD")
+    command.assert_called_once_with("multicz", "changed", "--output", "json", "--since", base)
+    assert output_files[0].read_text().splitlines()[0] + "\n" == 'changed=["cloud-docs"]\n'
+
+
+@pytest.mark.parametrize("event,base", [("push", "0" * 40), ("push", ""), ("workflow_dispatch", "a" * 40)])
+def test_initial_or_manual_run_validates_all_components(event, base, monkeypatch, output_files):
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv("PUSH_BEFORE_SHA", base)
+    monkeypatch.setattr(ci, "run", Mock(return_value='{"changed": [], "unchanged": ["cloud-docs", "cloud-scripts"]}'))
+    ci.changed_components(ci=True)
+    assert output_files[0].read_text().splitlines()[0] + "\n" == 'changed=["cloud-docs","cloud-scripts"]\n'
+    assert "validate all components" in output_files[1].read_text()
+
+
+def test_rewritten_history_validates_all_components(monkeypatch, output_files):
+    import subprocess
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("PUSH_BEFORE_SHA", "a" * 40)
+    monkeypatch.setattr(ci, "git", Mock(side_effect=subprocess.CalledProcessError(1, "git")))
+    monkeypatch.setattr(ci, "run", Mock(return_value='{"changed": [], "unchanged": ["cloud-scripts"]}'))
+    ci.changed_components(ci=True)
+    assert output_files[0].read_text().splitlines()[0] + "\n" == 'changed=["cloud-scripts"]\n'
+
+
+@pytest.mark.parametrize("path,expected", [("docs/index.md", ["cloud-docs"]), ("scripts/tool.py", ["cloud-docs", "cloud-scripts"])])
+def test_real_multicz_detects_only_the_event_changes(tmp_path, monkeypatch, output_files, path, expected):
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(tmp_path)
+    for command in [["git", "init", "-b", "main"], ["git", "config", "user.name", "Test"],
+                    ["git", "config", "user.email", "test@example.test"], ["git", "config", "commit.gpgsign", "false"]]:
+        subprocess.run(command, check=True, capture_output=True)
+    Path("scripts").mkdir()
+    Path("docs").mkdir()
+    Path("multicz.toml").write_text((root / "multicz.toml").read_text())
+    Path("scripts/pyproject.toml").write_text((root / "scripts/pyproject.toml").read_text())
+    Path("zensical.toml").write_text((root / "zensical.toml").read_text())
+    Path("docs/index.md").write_text("Initial docs")
+    Path("scripts/tool.py").write_text("# Initial script")
+    for directory in ("api", "cli", "ssr", "idp", "mgr"):
+        Path(f"cmd/{directory}").mkdir(parents=True)
+        Path(f"cmd/{directory}/version.go").write_text('package main\nconst Version = "0.0.0"\n')
+    Path("www").mkdir()
+    Path("www/package.json").write_text('{"version":"0.0.0"}')
+    subprocess.run(["git", "add", "multicz.toml", "scripts/pyproject.toml", "scripts/tool.py", "docs/index.md", "zensical.toml"], check=True)
+    subprocess.run(["git", "commit", "-m", "chore: initialize project"], check=True, capture_output=True)
+    base = ci.git("rev-parse", "HEAD")
+    Path(path).write_text("Changed")
+    subprocess.run(["git", "add", path], check=True)
+    subprocess.run(["git", "commit", "-m", "fix: update component"], check=True, capture_output=True)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("PUSH_BEFORE_SHA", base)
+    ci.changed_components(ci=True)
+    assert output_files[0].read_text().splitlines()[0] + "\n" == "changed=" + json.dumps(expected, separators=(",", ":")) + "\n"
+
+
+def test_script_component_bump_refreshes_version_changelog_and_uv_lock(tmp_path, monkeypatch):
+    import subprocess
+    import tomllib
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(tmp_path)
+    for filename in ("multicz.toml", "zensical.toml", "scripts/pyproject.toml", "scripts/uv.lock", "scripts/CHANGELOG.md"):
+        destination = tmp_path / filename
+        destination.parent.mkdir(exist_ok=True)
+        destination.write_bytes((root / filename).read_bytes())
+    for command in [["git", "init", "-b", "main"], ["git", "config", "user.name", "Test"],
+                    ["git", "config", "user.email", "test@example.test"], ["git", "config", "commit.gpgsign", "false"],
+                    ["git", "add", "multicz.toml", "zensical.toml", "scripts/pyproject.toml", "scripts/uv.lock", "scripts/CHANGELOG.md"],
+                    ["git", "commit", "-m", "chore: initialize project"],
+                    ["multicz", "bump", "--component", "cloud-scripts", "--force", "cloud-scripts:patch"],
+                    ["uv", "lock", "--project", "scripts", "--check"]]:
+        subprocess.run(command, check=True, capture_output=True)
+    assert tomllib.loads(Path("scripts/pyproject.toml").read_text())["project"]["version"] == "0.0.1"
+    locked = tomllib.loads(Path("scripts/uv.lock").read_text())["package"]
+    assert next(package for package in locked if package["name"] == "cloud-scripts")["version"] == "0.0.1"
+    assert "0.0.1" in Path("scripts/CHANGELOG.md").read_text()
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("internal/transport/http.go", {"cloud-api", "cloud-identity-platform", "cloud-ssr", "cloud-fleet", "cloud-docs"}),
+    ("internal/cli/cli.go", {"cloud", "cloud-docs"}),
+    ("internal/fleet/fleet.go", {"cloud-fleet", "cloud-docs"}),
+    ("www/src/App.tsx", {"cloud-www", "cloud-ssr", "cloud-docs"}),
+])
+def test_go_plugin_and_frontend_dependency_select_actual_consumers(tmp_path, monkeypatch, output_files, path, expected):
+    import shutil
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(tmp_path)
+    for directory in ("cmd", "internal"):
+        shutil.copytree(root / directory, tmp_path / directory)
+    for filename in ("go.mod", "multicz.toml", "zensical.toml", "scripts/pyproject.toml", "www/package.json", "www/src/App.tsx"):
+        target = tmp_path / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((root / filename).read_bytes())
+    for command in [["git", "init", "-b", "main"], ["git", "config", "user.name", "Test"],
+                    ["git", "config", "user.email", "test@example.test"], ["git", "config", "commit.gpgsign", "false"],
+                    ["git", "add", "cmd", "internal", "go.mod", "multicz.toml", "zensical.toml", "scripts/pyproject.toml", "www/package.json", "www/src/App.tsx"],
+                    ["git", "commit", "-m", "chore: initialize project"]]:
+        subprocess.run(command, check=True, capture_output=True)
+    base = ci.git("rev-parse", "HEAD")
+    target = Path(path)
+    target.write_text(target.read_text() + "\n// Change component\n")
+    subprocess.run(["git", "add", path], check=True)
+    subprocess.run(["git", "commit", "-m", "fix: update component"], check=True, capture_output=True)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("PUSH_BEFORE_SHA", base)
+    ci.changed_components(ci=True)
+    result = dict(line.split("=", 1) for line in output_files[0].read_text().splitlines())
+    assert set(json.loads(result["changed"])) == expected
+    checks = expected - {"cloud-docs"}
+    if "cloud-ssr" in checks:
+        checks.add("cloud-www")
+    assert set(json.loads(result["checks"])) == checks
+    assert set(json.loads(result["go"])) == expected.intersection({"cloud", "cloud-api", "cloud-ssr", "cloud-identity-platform", "cloud-fleet"})
+
+
+def test_validation_ignores_doc_release_cascades_and_couples_web_sides():
+    import tomllib
+    config = tomllib.loads((Path(__file__).resolve().parents[2] / "multicz.toml").read_text())
+    assert ci.validation_components(["cloud-docs", "cloud-api"], config, ["cmd/api/main.go"]) == ["cloud-api"]
+    assert ci.validation_components(["cloud-docs", "cloud-scripts"], config, ["scripts/ci_automation.py"]) == ["cloud-scripts"]
+    assert ci.validation_components(["cloud-docs", "cloud-ssr"], config, ["internal/ssr/handler.go"]) == ["cloud-ssr", "cloud-www"]
+    assert ci.validation_components(["cloud-docs", "cloud-www", "cloud-ssr"], config, ["www/src/App.tsx"]) == ["cloud-ssr", "cloud-www"]
+    assert ci.validation_components(["cloud-docs"], config, ["docs/index.md"]) == ["cloud-docs"]
+    assert ci.validation_components(["cloud-docs", "cloud-api"], config, []) == []
+
+
+def test_license_and_signature_gates_block_all_downstream_jobs():
+    import re
+    workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text()
+    jobs = dict(re.findall(r"^  ([a-z-]+):\n(.*?)(?=^  [a-z-]+:\n|\Z)", workflow, re.M | re.S))
+    assert "needs:" not in jobs["licenses"]
+    assert "needs:" not in jobs["signatures"]
+    assert "needs: [licenses, signatures]" in jobs["plumber"]
+    assert "needs: plumber" in jobs["components"]
+    # Keep the signatures job successful outside PRs; a skipped prerequisite
+    # would otherwise skip Plumber and the entire downstream pipeline.
+    assert not re.search(r"^    if:", jobs["signatures"], re.M)
+    assert "        if: github.event_name == 'pull_request'" in jobs["signatures"]
+    for name in ("scripts", "go", "www", "documentation"):
+        assert "needs: components" in jobs[name]
+        assert "always()" not in jobs[name].split("    steps:")[0]
+    assert "contains(fromJSON(needs.components.outputs.checks), 'cloud-docs')" in jobs["documentation"]
+    assert "\n  validate:\n" not in workflow
+    assert "needs: [plumber, components, licenses, signatures, scripts, go, www, documentation]" in jobs["release-bump"]
+    assert "needs.licenses.result == 'success' && needs.signatures.result == 'success'" in jobs["release-bump"]
+    assert "needs: [release-bump, release]" in jobs["pages"]
+    assert "needs: release-bump" in jobs["release"]
+    assert "needs.release-bump.result == 'success'" in jobs["release"]
