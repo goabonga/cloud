@@ -52,15 +52,6 @@ build_pkg() {
   local dir bin svc
   IFS=: read -r dir bin svc <<<"${COMPONENTS[$pkg]}"
 
-  # infra-www embeds the SPA via go:embed, so it is stale the moment the
-  # frontend changes underneath it: stage a fresh build before packaging,
-  # same as build-debs.sh.
-  if [ "$pkg" = "infra-www" ]; then
-    ( cd "$ROOT/www" && npm ci && npm run build )
-    find "$ROOT/cmd/www/dist" -mindepth 1 ! -name .gitkeep -delete
-    cp -r "$ROOT/www/dist/." "$ROOT/cmd/www/dist/"
-  fi
-
   local work tarball sha256
   work="$(mktemp -d)"
   trap 'rm -rf "$work"' RETURN
