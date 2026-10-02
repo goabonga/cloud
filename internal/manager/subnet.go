@@ -101,7 +101,7 @@ func (r *SubnetReconciler) syncNodeAddress(ctx context.Context, vpcID, cidr stri
 
 // ReconcileAll reconciles every subnet, collecting per-subnet errors.
 func (r *SubnetReconciler) ReconcileAll(ctx context.Context) error {
-	subnets, err := r.reg.List()
+	subnets, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list subnets: %w", err)
 	}
@@ -117,7 +117,7 @@ func (r *SubnetReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the subnet identified by uid in line with its spec.
 func (r *SubnetReconciler) Reconcile(ctx context.Context, uid string) error {
-	sn, err := r.reg.Get(uid)
+	sn, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -138,37 +138,37 @@ func (r *SubnetReconciler) ensure(ctx context.Context, sn *resource.Subnet) erro
 	bridge, ok, err := r.vpcBridge(sn.Spec.VPCID)
 	if err != nil {
 		sn.Status.SetPhase(resource.PhaseError, "VPCError", err.Error())
-		_ = r.reg.Put(sn)
+		_ = r.reg.WithContext(ctx).Put(sn)
 		return err
 	}
 	if !ok {
 		// The VPC bridge is not provisioned yet; retry on the next pass.
 		sn.Status.SetPhase(resource.PhasePending, "WaitingForVPC", "vpc bridge not ready")
-		return r.reg.Put(sn)
+		return r.reg.WithContext(ctx).Put(sn)
 	}
 
 	gwCIDR, err := gatewayCIDR(sn.Spec.CIDR)
 	if err != nil {
 		sn.Status.SetPhase(resource.PhaseError, "BadCIDR", err.Error())
-		_ = r.reg.Put(sn)
+		_ = r.reg.WithContext(ctx).Put(sn)
 		return err
 	}
 	sn.Status.SetPhase(resource.PhaseReconciling, "Reconciling", "assigning gateway")
 	if err := r.net.EnsureGatewayAddress(ctx, bridge, gwCIDR); err != nil {
 		sn.Status.SetPhase(resource.PhaseError, "AddressError", err.Error())
-		_ = r.reg.Put(sn)
+		_ = r.reg.WithContext(ctx).Put(sn)
 		return err
 	}
 	if err := r.syncNodeAddress(ctx, sn.Spec.VPCID, sn.Spec.CIDR); err != nil {
 		sn.Status.SetPhase(resource.PhaseError, "NodeAddressError", err.Error())
-		_ = r.reg.Put(sn)
+		_ = r.reg.WithContext(ctx).Put(sn)
 		return err
 	}
 
 	sn.Status.Gateway = hostOf(gwCIDR)
 	sn.Status.MarkReconciled(sn.Metadata.Generation)
 	sn.Status.SetPhase(resource.PhaseReady, "Reconciled", "gateway assigned")
-	if err := r.reg.Put(sn); err != nil {
+	if err := r.reg.WithContext(ctx).Put(sn); err != nil {
 		return fmt.Errorf("manager: save subnet %q: %w", sn.Metadata.UID, err)
 	}
 	return nil
@@ -186,19 +186,19 @@ func (r *SubnetReconciler) finalize(ctx context.Context, sn *resource.Subnet) er
 			if gwCIDR, gwErr := gatewayCIDR(sn.Spec.CIDR); gwErr == nil {
 				if err := r.net.DeleteAddress(ctx, bridge, gwCIDR); err != nil {
 					sn.Status.SetPhase(resource.PhaseError, "AddressError", err.Error())
-					_ = r.reg.Put(sn)
+					_ = r.reg.WithContext(ctx).Put(sn)
 					return err
 				}
 			}
 		}
 		sn.Metadata.RemoveFinalizer(resource.SubnetFinalizer)
 		sn.Status.SetPhase(resource.PhaseDeleting, "Deleting", "gateway removed")
-		if err := r.reg.Put(sn); err != nil {
+		if err := r.reg.WithContext(ctx).Put(sn); err != nil {
 			return fmt.Errorf("manager: save subnet %q: %w", sn.Metadata.UID, err)
 		}
 	}
 	if len(sn.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(sn.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(sn.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete subnet %q: %w", sn.Metadata.UID, err)
 		}
 	}

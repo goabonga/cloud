@@ -32,9 +32,11 @@ func NewEtcdStore(endpoints []string) (*EtcdStore, error) {
 	return &EtcdStore{client: client}, nil
 }
 
-// Get returns the value at key, or ErrNotFound.
-func (s *EtcdStore) Get(key string) ([]byte, error) {
-	resp, err := s.client.Get(context.Background(), key)
+// GetContext returns the value at key, or ErrNotFound.
+func (s *EtcdStore) GetContext(ctx context.Context, key string) ([]byte, error) {
+	ctx, cancel := boundedContext(ctx)
+	defer cancel()
+	resp, err := s.client.Get(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("state: etcd get %q: %w", key, err)
 	}
@@ -44,27 +46,33 @@ func (s *EtcdStore) Get(key string) ([]byte, error) {
 	return resp.Kvs[0].Value, nil
 }
 
-// Put stores value at key.
-func (s *EtcdStore) Put(key string, value []byte) error {
-	if _, err := s.client.Put(context.Background(), key, string(value)); err != nil {
+// PutContext stores value at key.
+func (s *EtcdStore) PutContext(ctx context.Context, key string, value []byte) error {
+	ctx, cancel := boundedContext(ctx)
+	defer cancel()
+	if _, err := s.client.Put(ctx, key, string(value)); err != nil {
 		return fmt.Errorf("state: etcd put %q: %w", key, err)
 	}
 	return nil
 }
 
-// Delete removes key. A missing key is not an error.
-func (s *EtcdStore) Delete(key string) error {
-	if _, err := s.client.Delete(context.Background(), key); err != nil {
+// DeleteContext removes key. A missing key is not an error.
+func (s *EtcdStore) DeleteContext(ctx context.Context, key string) error {
+	ctx, cancel := boundedContext(ctx)
+	defer cancel()
+	if _, err := s.client.Delete(ctx, key); err != nil {
 		return fmt.Errorf("state: etcd delete %q: %w", key, err)
 	}
 	return nil
 }
 
-// List returns the key-value pairs directly under prefix (one segment deeper),
+// ListContext returns the key-value pairs directly under prefix (one segment deeper),
 // matching the file store's single-level semantics.
-func (s *EtcdStore) List(prefix string) ([]KeyValue, error) {
+func (s *EtcdStore) ListContext(ctx context.Context, prefix string) ([]KeyValue, error) {
+	ctx, cancel := boundedContext(ctx)
+	defer cancel()
 	scan := prefix + "/"
-	resp, err := s.client.Get(context.Background(), scan,
+	resp, err := s.client.Get(ctx, scan,
 		clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
 	if err != nil {
@@ -82,9 +90,11 @@ func (s *EtcdStore) List(prefix string) ([]KeyValue, error) {
 	return kvs, nil
 }
 
-// CompareAndSwap atomically replaces the value at key with newValue only if the
+// CompareAndSwapContext atomically replaces the value at key with newValue only if the
 // current value equals oldValue (nil oldValue means "expect absent").
-func (s *EtcdStore) CompareAndSwap(key string, oldValue, newValue []byte) (bool, error) {
+func (s *EtcdStore) CompareAndSwapContext(ctx context.Context, key string, oldValue, newValue []byte) (bool, error) {
+	ctx, cancel := boundedContext(ctx)
+	defer cancel()
 	var cmp clientv3.Cmp
 	if oldValue == nil {
 		// Expect absent: a key that has never been created has revision 0.
@@ -92,7 +102,7 @@ func (s *EtcdStore) CompareAndSwap(key string, oldValue, newValue []byte) (bool,
 	} else {
 		cmp = clientv3.Compare(clientv3.Value(key), "=", string(oldValue))
 	}
-	resp, err := s.client.Txn(context.Background()).
+	resp, err := s.client.Txn(ctx).
 		If(cmp).
 		Then(clientv3.OpPut(key, string(newValue))).
 		Commit()
@@ -108,4 +118,25 @@ func (s *EtcdStore) Close() error {
 		return fmt.Errorf("state: etcd close: %w", err)
 	}
 	return nil
+}
+
+// Get uses a bounded default context.
+func (s *EtcdStore) Get(key string) ([]byte, error) { return s.GetContext(context.Background(), key) }
+
+// Put uses a bounded default context.
+func (s *EtcdStore) Put(key string, value []byte) error {
+	return s.PutContext(context.Background(), key, value)
+}
+
+// Delete uses a bounded default context.
+func (s *EtcdStore) Delete(key string) error { return s.DeleteContext(context.Background(), key) }
+
+// List uses a bounded default context.
+func (s *EtcdStore) List(prefix string) ([]KeyValue, error) {
+	return s.ListContext(context.Background(), prefix)
+}
+
+// CompareAndSwap uses a bounded default context.
+func (s *EtcdStore) CompareAndSwap(key string, oldValue, newValue []byte) (bool, error) {
+	return s.CompareAndSwapContext(context.Background(), key, oldValue, newValue)
 }

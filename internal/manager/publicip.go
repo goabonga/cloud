@@ -54,11 +54,11 @@ func (r *PublicIPReconciler) Name() string { return resource.KindIPAddress }
 
 // ReconcileAll resolves every public ip_address and releases stale
 // reservations.
-func (r *PublicIPReconciler) ReconcileAll(_ context.Context) error {
+func (r *PublicIPReconciler) ReconcileAll(ctx context.Context) error {
 	if r.cidr == "" {
 		return nil
 	}
-	ips, err := r.reg.List()
+	ips, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list ip addresses: %w", err)
 	}
@@ -84,7 +84,7 @@ func (r *PublicIPReconciler) ReconcileAll(_ context.Context) error {
 			errs = append(errs, fmt.Errorf("ip address %s: %w", ip.Metadata.UID, err))
 			if ip.Status.Phase != resource.PhaseError {
 				ip.Status.SetPhase(resource.PhaseError, "AddressError", err.Error())
-				_ = r.reg.Put(ip)
+				_ = r.reg.WithContext(ctx).Put(ip)
 			}
 			continue
 		}
@@ -94,7 +94,7 @@ func (r *PublicIPReconciler) ReconcileAll(_ context.Context) error {
 		ip.Status.Address = addr
 		ip.Status.MarkReconciled(ip.Metadata.Generation)
 		ip.Status.SetPhase(resource.PhaseReady, "Reserved", "public address reserved")
-		if err := r.reg.Put(ip); err != nil {
+		if err := r.reg.WithContext(ctx).Put(ip); err != nil {
 			errs = append(errs, fmt.Errorf("manager: save ip address %q: %w", ip.Metadata.UID, err))
 		}
 	}

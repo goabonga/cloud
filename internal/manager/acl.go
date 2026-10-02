@@ -33,7 +33,7 @@ func (r *ACLReconciler) Name() string { return resource.KindACLPolicy }
 
 // ReconcileAll reconciles every ACL policy, collecting per-policy errors.
 func (r *ACLReconciler) ReconcileAll(ctx context.Context) error {
-	policies, err := r.reg.List()
+	policies, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list acl policies: %w", err)
 	}
@@ -49,7 +49,7 @@ func (r *ACLReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the policy identified by uid in line with its spec.
 func (r *ACLReconciler) Reconcile(ctx context.Context, uid string) error {
-	pol, err := r.reg.Get(uid)
+	pol, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -71,7 +71,7 @@ func (r *ACLReconciler) ensure(ctx context.Context, pol *resource.ACLPolicy) err
 	chain := chainName(pol.Metadata.UID)
 	if err := r.fw.Apply(ctx, chain, pol.Spec.Rules); err != nil {
 		pol.Status.SetPhase(resource.PhaseError, "FirewallError", err.Error())
-		_ = r.reg.Put(pol)
+		_ = r.reg.WithContext(ctx).Put(pol)
 		return err
 	}
 
@@ -79,7 +79,7 @@ func (r *ACLReconciler) ensure(ctx context.Context, pol *resource.ACLPolicy) err
 	pol.Status.AppliedRules = len(pol.Spec.Rules)
 	pol.Status.MarkReconciled(pol.Metadata.Generation)
 	pol.Status.SetPhase(resource.PhaseReady, "Applied", "rules applied")
-	if err := r.reg.Put(pol); err != nil {
+	if err := r.reg.WithContext(ctx).Put(pol); err != nil {
 		return fmt.Errorf("manager: save acl %q: %w", pol.Metadata.UID, err)
 	}
 	return nil
@@ -89,17 +89,17 @@ func (r *ACLReconciler) finalize(ctx context.Context, pol *resource.ACLPolicy) e
 	if pol.Metadata.HasFinalizer(resource.ACLFinalizer) {
 		if err := r.fw.Clear(ctx, chainName(pol.Metadata.UID)); err != nil {
 			pol.Status.SetPhase(resource.PhaseError, "FirewallError", err.Error())
-			_ = r.reg.Put(pol)
+			_ = r.reg.WithContext(ctx).Put(pol)
 			return err
 		}
 		pol.Metadata.RemoveFinalizer(resource.ACLFinalizer)
 		pol.Status.SetPhase(resource.PhaseDeleting, "Deleting", "rules removed")
-		if err := r.reg.Put(pol); err != nil {
+		if err := r.reg.WithContext(ctx).Put(pol); err != nil {
 			return fmt.Errorf("manager: save acl %q: %w", pol.Metadata.UID, err)
 		}
 	}
 	if len(pol.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(pol.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(pol.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete acl %q: %w", pol.Metadata.UID, err)
 		}
 	}

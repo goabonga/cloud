@@ -7,6 +7,7 @@
 package registry
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -74,6 +75,13 @@ func (r *Registry[S, ST]) Put(res *resource.Resource[S, ST]) error {
 	}
 	res.Metadata.ResourceVersion = revision(data)
 	return nil
+}
+
+// WithContext returns a request-scoped registry without modifying this instance.
+func (r *Registry[S, ST]) WithContext(ctx context.Context) *Registry[S, ST] {
+	copy := *r
+	copy.store = state.WithContext(ctx, r.store)
+	return &copy
 }
 
 // Get returns the resource with the given UID, or state.ErrNotFound if absent.

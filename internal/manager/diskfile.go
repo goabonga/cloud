@@ -124,8 +124,8 @@ func (r *DiskFileReconciler) WithCertificates(certs CertificateSource) *DiskFile
 func (r *DiskFileReconciler) Name() string { return resource.KindDiskFile }
 
 // ReconcileAll writes every disk file into the local mounts of its disk.
-func (r *DiskFileReconciler) ReconcileAll(_ context.Context) error {
-	files, err := r.reg.List()
+func (r *DiskFileReconciler) ReconcileAll(ctx context.Context) error {
+	files, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list disk files: %w", err)
 	}

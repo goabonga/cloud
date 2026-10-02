@@ -635,7 +635,7 @@ func (r *ComputeReconciler) Name() string { return resource.KindCompute }
 
 // ReconcileAll reconciles every compute instance, collecting per-instance errors.
 func (r *ComputeReconciler) ReconcileAll(ctx context.Context) error {
-	computes, err := r.reg.List()
+	computes, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list computes: %w", err)
 	}
@@ -651,7 +651,7 @@ func (r *ComputeReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile brings the compute identified by uid in line with its spec.
 func (r *ComputeReconciler) Reconcile(ctx context.Context, uid string) error {
-	c, err := r.reg.Get(uid)
+	c, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -676,12 +676,12 @@ func (r *ComputeReconciler) ensure(ctx context.Context, c *resource.Compute) err
 	req, ready, err := r.resolve(c)
 	if err != nil {
 		c.Status.SetPhase(resource.PhaseError, "ResolveError", err.Error())
-		_ = r.reg.Put(c)
+		_ = r.reg.WithContext(ctx).Put(c)
 		return err
 	}
 	if !ready {
 		// A dependency is not provisioned yet; retry on the next pass.
-		return r.reg.Put(c)
+		return r.reg.WithContext(ctx).Put(c)
 	}
 
 	// Record the address before realising the instance, so a failed attempt
@@ -691,7 +691,7 @@ func (r *ComputeReconciler) ensure(ctx context.Context, c *resource.Compute) err
 	res, err := r.backend.EnsureCompute(ctx, req)
 	if err != nil {
 		c.Status.SetPhase(resource.PhaseError, "ComputeError", err.Error())
-		_ = r.reg.Put(c)
+		_ = r.reg.WithContext(ctx).Put(c)
 		return err
 	}
 
@@ -702,7 +702,7 @@ func (r *ComputeReconciler) ensure(ctx context.Context, c *resource.Compute) err
 	c.Status.Ready = true
 	c.Status.MarkReconciled(c.Metadata.Generation)
 	c.Status.SetPhase(resource.PhaseReady, "Running", "instance ready")
-	if err := r.reg.Put(c); err != nil {
+	if err := r.reg.WithContext(ctx).Put(c); err != nil {
 		return fmt.Errorf("manager: save compute %q: %w", c.Metadata.UID, err)
 	}
 	return nil
@@ -837,7 +837,7 @@ func (r *ComputeReconciler) finalize(ctx context.Context, c *resource.Compute) e
 		}
 		if err := r.backend.DeleteCompute(ctx, td); err != nil {
 			c.Status.SetPhase(resource.PhaseError, "ComputeError", err.Error())
-			_ = r.reg.Put(c)
+			_ = r.reg.WithContext(ctx).Put(c)
 			return err
 		}
 		if r.addresses != nil && c.Status.IP != "" {
@@ -847,12 +847,12 @@ func (r *ComputeReconciler) finalize(ctx context.Context, c *resource.Compute) e
 		}
 		c.Metadata.RemoveFinalizer(resource.ComputeFinalizer)
 		c.Status.SetPhase(resource.PhaseDeleting, "Deleting", "instance removed")
-		if err := r.reg.Put(c); err != nil {
+		if err := r.reg.WithContext(ctx).Put(c); err != nil {
 			return fmt.Errorf("manager: save compute %q: %w", c.Metadata.UID, err)
 		}
 	}
 	if len(c.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(c.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(c.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete compute %q: %w", c.Metadata.UID, err)
 		}
 	}

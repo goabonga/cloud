@@ -163,7 +163,7 @@ func (r *DiskReconciler) Name() string { return resource.KindDisk }
 
 // ReconcileAll reconciles every disk, collecting per-disk errors.
 func (r *DiskReconciler) ReconcileAll(ctx context.Context) error {
-	disks, err := r.reg.List()
+	disks, err := r.reg.WithContext(ctx).List()
 	if err != nil {
 		return fmt.Errorf("manager: list disks: %w", err)
 	}
@@ -179,7 +179,7 @@ func (r *DiskReconciler) ReconcileAll(ctx context.Context) error {
 
 // Reconcile provisions the disk identified by uid.
 func (r *DiskReconciler) Reconcile(ctx context.Context, uid string) error {
-	disk, err := r.reg.Get(uid)
+	disk, err := r.reg.WithContext(ctx).Get(uid)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
@@ -206,13 +206,13 @@ func (r *DiskReconciler) ensure(ctx context.Context, disk *resource.Disk) error 
 		if len(r.master) == 0 {
 			err := fmt.Errorf("disk encryption requested but no KMS master key configured")
 			disk.Status.SetPhase(resource.PhaseError, "NoKMSKey", err.Error())
-			_ = r.reg.Put(disk)
+			_ = r.reg.WithContext(ctx).Put(disk)
 			return err
 		}
 		key, err := crypto.DeriveKey(r.master, "disk:"+disk.Spec.KMSKeyID+":"+disk.Metadata.UID, 32)
 		if err != nil {
 			disk.Status.SetPhase(resource.PhaseError, "KeyError", err.Error())
-			_ = r.reg.Put(disk)
+			_ = r.reg.WithContext(ctx).Put(disk)
 			return err
 		}
 		passphrase = key
@@ -222,7 +222,7 @@ func (r *DiskReconciler) ensure(ctx context.Context, disk *resource.Disk) error 
 	path, err := r.backend.EnsureDisk(ctx, DiskRequest{UID: disk.Metadata.UID, SizeMB: disk.Spec.SizeMB, Passphrase: passphrase})
 	if err != nil {
 		disk.Status.SetPhase(resource.PhaseError, "DiskError", err.Error())
-		_ = r.reg.Put(disk)
+		_ = r.reg.WithContext(ctx).Put(disk)
 		return err
 	}
 
@@ -230,7 +230,7 @@ func (r *DiskReconciler) ensure(ctx context.Context, disk *resource.Disk) error 
 	disk.Status.Path = path
 	disk.Status.MarkReconciled(disk.Metadata.Generation)
 	disk.Status.SetPhase(resource.PhaseReady, "Provisioned", "disk ready")
-	if err := r.reg.Put(disk); err != nil {
+	if err := r.reg.WithContext(ctx).Put(disk); err != nil {
 		return fmt.Errorf("manager: save disk %q: %w", disk.Metadata.UID, err)
 	}
 	return nil
@@ -240,17 +240,17 @@ func (r *DiskReconciler) finalize(ctx context.Context, disk *resource.Disk) erro
 	if disk.Metadata.HasFinalizer(resource.DiskFinalizer) {
 		if err := r.backend.DeleteDisk(ctx, disk.Metadata.UID); err != nil {
 			disk.Status.SetPhase(resource.PhaseError, "DiskError", err.Error())
-			_ = r.reg.Put(disk)
+			_ = r.reg.WithContext(ctx).Put(disk)
 			return err
 		}
 		disk.Metadata.RemoveFinalizer(resource.DiskFinalizer)
 		disk.Status.SetPhase(resource.PhaseDeleting, "Deleting", "disk removed")
-		if err := r.reg.Put(disk); err != nil {
+		if err := r.reg.WithContext(ctx).Put(disk); err != nil {
 			return fmt.Errorf("manager: save disk %q: %w", disk.Metadata.UID, err)
 		}
 	}
 	if len(disk.Metadata.Finalizers) == 0 {
-		if err := r.reg.Delete(disk.Metadata.UID); err != nil {
+		if err := r.reg.WithContext(ctx).Delete(disk.Metadata.UID); err != nil {
 			return fmt.Errorf("manager: delete disk %q: %w", disk.Metadata.UID, err)
 		}
 	}
