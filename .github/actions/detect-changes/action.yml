@@ -26,19 +26,30 @@ description: |
   named `deb-<component>`/`archlinux-<component>` job individually instead
   of building all nine on every run. It is the union of `multicz changed`'s
   own list (which correctly follows `depends_on` cascades - confirmed: an
-  infra-api-only change also lists terraform-provider-infra) with a plain
-  `git diff` against each component's own declared `paths`. The second half
-  exists because of multicz.toml's own documented caution: `multicz
-  changed` attributes an OVERLAPPING shared path (go.mod/go.sum, under
-  `overlap_policy = "all"`) to a single component rather than every one
-  that claims it - confirmed for real: touching only go.mod reported just
-  `infra-api` as changed, not the other eight that also depend on it. A
-  plain git diff against each component's own full path list has no such
-  cross-component arbitration - every component listing go.mod shows as
-  changed the moment go.mod differs, independently of the others. The union
-  deliberately prefers over- to under-inclusion: an extra unchanged-looking
-  package costs a few CI minutes; silently shipping one that needed a
-  dependency fix does not get noticed until it is wrong in production.
+  infra-api-only change also lists terraform-provider-infra, a release-
+  contract relationship with no actual Go import behind it) with a plain
+  `git diff` against each component's REAL transitive package set, as `go
+  list -deps` reports it for the binaries packaging/components.sh says that
+  component ships.
+
+  The git-diff half deliberately does NOT use multicz.toml's own `paths` -
+  those are hand-maintained and were found to be substantially incomplete:
+  infra-api's `paths` names 3 of its internal/ packages, but `go list -deps
+  ./cmd/api/...` reports 16, missing internal/auth, internal/crypto,
+  internal/pki, internal/secret, internal/ssl and more. A change confined to
+  any of those would have gone undetected under a `paths`-based check.
+  `go list` has no such gap: it IS the compiler's own answer to "what does
+  this binary actually link", so it cannot go stale as internal/ packages
+  gain new dependents - no hand-maintained list to update when they do.
+  multicz.toml's `paths` remain authoritative for multicz's own bump
+  planning (a different question - "should this get a new version" - this
+  action does not touch that), just not for this per-component build gate.
+
+  The union deliberately prefers over- to under-inclusion: an extra
+  unchanged-looking package costs a few CI minutes; silently shipping one
+  that needed a dependency fix does not get noticed until it is wrong in
+  production. REQUIRES Go to be set up beforehand (`go list` needs it) and
+  network access to resolve the module graph if it is not already cached.
 
   Short-circuits to an empty change set for multicz's own chore(release)
   commit or a duplicate push-event delivery - both mean "nothing here needs
@@ -107,6 +118,13 @@ runs:
     - name: Install multicz
       shell: bash
       run: uv tool install multicz
+    # really_changed's git-diff half needs `go list -deps` - see this
+    # action's own description for why it reads the real import graph
+    # instead of multicz.toml's `paths`.
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
     # The `release` job pushes multicz's own chore(release) commit back to
     # main, which re-triggers this workflow. Everything in that commit is
     # generated (version constants, changelogs, state file) and every
@@ -223,15 +241,26 @@ runs:
           echo "packaging_changed=true" >> "$GITHUB_OUTPUT"
         fi
         # really_changed: see this action's own description for why this is
-        # a union of $PACKAGES with a raw per-component git diff, rather
-        # than just $PACKAGES on its own.
+        # a union of $PACKAGES with a per-component git diff against the
+        # REAL Go import graph (not multicz.toml's hand-maintained `paths`).
+        # COMPONENTS/EXTRA_BINARIES: the same dir/binary map build-debs.sh
+        # and build-archlinux.sh already build packages from, so a
+        # component's extra binaries (infra-agent's infra-lb/infra-
+        # hypervisor) are covered too, with nothing new to keep in sync.
+        ROOT="$(pwd)"
+        source packaging/components.sh
         REALLY_CHANGED="$PACKAGES"
-        CONFIG_JSON=$(multicz config --output json)
-        for comp in infra infra-api infra-idp infra-exporter \
-            infra-controller-manager infra-agent infra-container-init \
-            terraform-provider-infra infra-www; do
-          mapfile -t comp_paths < <(echo "$CONFIG_JSON" | jq -r --arg c "$comp" '.components[$c].paths[]')
-          if ! git diff --quiet "$BASE" HEAD -- "${comp_paths[@]}"; then
+        for comp in "${!COMPONENTS[@]}"; do
+          IFS=: read -r dir _bin svc <<<"${COMPONENTS[$comp]}"
+          cmd_dirs=("./cmd/$dir/...")
+          for extra in ${EXTRA_BINARIES[$comp]:-}; do
+            cmd_dirs+=("./cmd/${extra%%:*}/...")
+          done
+          mapfile -t real_dirs < <(go list -deps -f '{{.Dir}}' "${cmd_dirs[@]}" 2>/dev/null \
+            | grep "^$ROOT/" | sed "s|^$ROOT/||" | sort -u)
+          extra_paths=(go.mod go.sum)
+          [ -n "$svc" ] && extra_paths+=("deploy/systemd/$svc.service")
+          if ! git diff --quiet "$BASE" HEAD -- "${real_dirs[@]}" "${extra_paths[@]}"; then
             REALLY_CHANGED=$(echo "$REALLY_CHANGED" | jq -c --arg c "$comp" 'if index($c) then . else . + [$c] end')
           fi
         done
