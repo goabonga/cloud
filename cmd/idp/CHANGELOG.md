@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.7.3] - 2026-10-02
+
+### Fixed
+
+- bound API and identity request admission (`660e34e`)
+
 ## [0.7.2] - 2026-10-02
 
 ### Fixed

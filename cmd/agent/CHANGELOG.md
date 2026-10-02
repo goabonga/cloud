@@ -2,6 +2,13 @@
 
 All notable changes to this component are documented here.
 
+## [0.18.8] - 2026-10-02
+
+### Fixed
+
+- secure management transports with mutual TLS (`cff2db4`)
+- enforce finite runtime resource budgets (`63d8718`)
+
 ## [0.18.7] - 2026-10-02
 
 ### Fixed

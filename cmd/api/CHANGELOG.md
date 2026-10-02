@@ -2,6 +2,14 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.8] - 2026-10-02
+
+### Fixed
+
+- bound API and identity request admission (`660e34e`)
+- bound collection responses and authorization reads (`8089775`)
+- enforce finite runtime resource budgets (`63d8718`)
+
 ## [0.13.7] - 2026-10-02
 
 ### Fixed

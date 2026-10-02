@@ -1,3 +1,11 @@
+infra-api (0.13.8-1) unstable; urgency=medium
+
+  * fix: Bound API and identity request admission
+  * fix: Bound collection responses and authorization reads
+  * fix: Enforce finite runtime resource budgets
+
+ -- Chris <goabonga@pm.me>  Fri, 02 Oct 2026 14:42:21 +0000
+
 infra-api (0.13.7-1) unstable; urgency=medium
 
   * fix: Allow authenticated reads of the public root certificate

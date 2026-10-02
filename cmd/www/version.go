@@ -5,4 +5,4 @@ package main
 
 // Version is the released version of the infra-www component. It is patched by
 // multicz on release (see multicz.toml); do not edit it by hand.
-const Version = "0.6.1"
+const Version = "0.6.2"

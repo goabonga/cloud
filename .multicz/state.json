@@ -1,17 +1,47 @@
 {
   "version": 1,
-  "git_head": "94ee638dca8060f610a73926c3031bd6bef415ca",
-  "git_head_short": "94ee638",
-  "timestamp": "2026-10-02T13:53:06Z",
+  "git_head": "63d87180b313a59f8b9264473777a31e39ce2a25",
+  "git_head_short": "63d8718",
+  "timestamp": "2026-10-02T14:42:22Z",
   "components": {
+    "infra-api": {
+      "version": "0.13.8",
+      "tag": "infra-api-v0.13.8",
+      "tag_sha": null
+    },
     "infra-controller-manager": {
-      "version": "0.9.3",
-      "tag": "infra-controller-manager-v0.9.3",
+      "version": "0.9.4",
+      "tag": "infra-controller-manager-v0.9.4",
       "tag_sha": null
     },
     "infra-agent": {
-      "version": "0.18.7",
-      "tag": "infra-agent-v0.18.7",
+      "version": "0.18.8",
+      "tag": "infra-agent-v0.18.8",
+      "tag_sha": null
+    },
+    "infra": {
+      "version": "0.7.3",
+      "tag": "infra-v0.7.3",
+      "tag_sha": null
+    },
+    "terraform-provider-infra": {
+      "version": "0.13.9",
+      "tag": "terraform-provider-infra-v0.13.9",
+      "tag_sha": null
+    },
+    "infra-idp": {
+      "version": "0.7.3",
+      "tag": "infra-idp-v0.7.3",
+      "tag_sha": null
+    },
+    "infra-spa": {
+      "version": "0.9.2",
+      "tag": "infra-spa-v0.9.2",
+      "tag_sha": null
+    },
+    "infra-www": {
+      "version": "0.6.2",
+      "tag": "infra-www-v0.6.2",
       "tag_sha": null
     }
   }

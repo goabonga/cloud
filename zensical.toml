@@ -113,16 +113,16 @@ generator = false
 # NOTE: keys use underscores, not the component's own hyphenated name - a
 # hyphen reads as subtraction inside the Jinja `{{ ... }}` macro expression.
 [project.extra.versions]
-infra = "0.7.1"
-infra_api = "0.13.7"
-infra_idp = "0.7.2"
+infra = "0.7.3"
+infra_api = "0.13.8"
+infra_idp = "0.7.3"
 infra_exporter = "0.5.2"
-infra_controller_manager = "0.9.3"
-infra_agent = "0.18.7"
+infra_controller_manager = "0.9.4"
+infra_agent = "0.18.8"
 infra_container_init = "0.5.1"
-terraform_provider_infra = "0.13.8"
-infra_spa = "0.9.1"
-infra_www = "0.6.1"
+terraform_provider_infra = "0.13.9"
+infra_spa = "0.9.2"
+infra_www = "0.6.2"
 
 # Branding. Both files are generated from `assets/infrastructure.svg` by
 # `scripts/regen-icons.sh` and committed: the docs job builds the site

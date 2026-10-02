@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.7.3] - 2026-10-02
+
+### Fixed
+
+- bound collection responses and authorization reads (`8089775`)
+
 ## [0.7.1] - 2026-10-02
 
 ### Fixed

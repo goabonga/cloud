@@ -2,6 +2,16 @@
 
 All notable changes to this component are documented here.
 
+## [0.13.9] - 2026-10-02
+
+### Fixed
+
+- enforce finite runtime resource budgets (`63d8718`)
+
+### Dependencies
+
+- Track `infra-api` `0.13.8`
+
 ## [0.13.8] - 2026-10-02
 
 ### Dependencies
