@@ -12,6 +12,13 @@ name: dependabot-auto-merge
 # only ever complete a `pull_request`-triggered run, and this listens for that
 # completion in the base-repo context instead of running PR content directly.
 #
+# The run that actually matters here is the one AFTER dependabot-rewrite.yml's
+# force-push (the rewritten, signed commits), not Dependabot's own original
+# push - and that push is authenticated as RELEASE_PAT's owner, not
+# dependabot[bot], so `workflow_run.actor` cannot identify a Dependabot PR
+# here. The step below checks the PR's actual author via the API instead,
+# which a force-push never changes.
+#
 # The label must be applied by a token that is a repository collaborator:
 # auto-merge-signed.yml's own gate re-verifies the labeller's write access via
 # `collaborators/{login}/permission`, and github-actions[bot] is not a
@@ -31,8 +38,7 @@ jobs:
     name: label green Dependabot PRs for auto-merge
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.actor.login == 'dependabot[bot]'
+      github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Add the auto-merge label
@@ -49,5 +55,10 @@ jobs:
           if [ -z "$PR_NUMBER" ]; then
             echo "::error::workflow_run carried no pull request"
             exit 1
+          fi
+          author=$(gh pr view "$PR_NUMBER" --json author --jq '.author.login')
+          if [ "$author" != "dependabot[bot]" ]; then
+            echo "PR #$PR_NUMBER was opened by $author, not dependabot[bot]; not labelling"
+            exit 0
           fi
           gh pr edit "$PR_NUMBER" --add-label auto-merge
