@@ -6,10 +6,14 @@ package state
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
+
+	"github.com/goabonga/infrastructure/internal/transporttls"
 )
 
 // EtcdStore implements Store on etcd v3, a highly available multi-instance
@@ -22,8 +26,37 @@ type EtcdStore struct {
 // NewEtcdStore connects to the given etcd endpoints (host:port). The client
 // dials lazily, so this returns without a live connection.
 func NewEtcdStore(endpoints []string) (*EtcdStore, error) {
+	config, err := transporttls.FromEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	normalized := make([]string, len(endpoints))
+	for i, endpoint := range endpoints {
+		raw := endpoint
+		if !strings.Contains(raw, "://") {
+			raw = "http://" + raw
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return nil, fmt.Errorf("state: invalid etcd endpoint")
+		}
+		if config == nil {
+			host := parsed.Hostname()
+			ip := net.ParseIP(host)
+			if parsed.Scheme == "https" || (host != "localhost" && (ip == nil || !ip.IsLoopback())) {
+				return nil, fmt.Errorf("state: remote etcd requires management TLS credentials")
+			}
+		} else {
+			if strings.HasPrefix(endpoint, "http://") {
+				return nil, fmt.Errorf("state: plaintext etcd endpoint is incompatible with management TLS")
+			}
+			parsed.Scheme = "https"
+		}
+		normalized[i] = parsed.String()
+	}
 	client, err := clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
+		Endpoints:   normalized,
+		TLS:         config,
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {

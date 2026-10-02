@@ -115,12 +115,12 @@ etcd_data_dir: "/var/lib/etcd"
 etcd_hosts: "{{ groups['infra'] }}"
 etcd_initial_cluster: >-
   {%- for h in etcd_hosts -%}
-  {{ h }}=http://{{ hostvars[h].ansible_host }}:{{ etcd_peer_port }}{{ '' if loop.last else ',' }}
+  {{ h }}=https://{{ hostvars[h].ansible_host }}:{{ etcd_peer_port }}{{ '' if loop.last else ',' }}
   {%- endfor -%}
 state_dsn: >-
   etcd://
   {%- for h in etcd_hosts -%}
-  {{ hostvars[h].ansible_host }}:{{ etcd_client_port }}{{ '' if loop.last else ',' }}
+  https://{{ hostvars[h].ansible_host }}:{{ etcd_client_port }}{{ '' if loop.last else ',' }}
   {%- endfor -%}
 
 # Credentials are generated once on the controller and reused across runs.
@@ -165,3 +165,7 @@ tooling_provider_dir: "/home/{{ vm_user }}/.terraform.d/plugins/registry.terrafo
 tooling_workspace: "/home/{{ vm_user }}/infra-demo"
 tooling_config_dir: "/home/{{ vm_user }}/.config/infra"
 tooling_examples: ["compute", "faas", "vm", "k8s"]
+
+# Management PKI is independent of the tenant/public SSL root.
+management_pki_dir: "{{ cred_dir }}/management-pki"
+management_tls_dir: /etc/infra-mtls

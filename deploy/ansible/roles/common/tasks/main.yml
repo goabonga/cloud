@@ -8,3 +8,28 @@
     owner: root
     group: root
     mode: "0750"
+
+- name: Ensure the infrastructure system group exists before package installation
+  ansible.builtin.group:
+    name: infra
+    system: true
+
+- name: Create the private management TLS directory
+  ansible.builtin.file:
+    path: "{{ management_tls_dir }}"
+    state: directory
+    owner: root
+    group: infra
+    mode: "0750"
+
+- name: Deploy the management trust root and host identity
+  ansible.builtin.copy:
+    src: "{{ management_pki_dir }}/{{ item.src }}"
+    dest: "{{ management_tls_dir }}/{{ item.dest }}"
+    owner: root
+    group: infra
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: ca.crt, dest: ca.crt, mode: '0644'}
+    - {src: '{{ inventory_hostname }}.crt', dest: node.crt, mode: '0644'}
+    - {src: '{{ inventory_hostname }}.key', dest: node.key, mode: '0640'}
