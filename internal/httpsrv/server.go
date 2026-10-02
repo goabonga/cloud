@@ -182,6 +182,9 @@ func register[S any, ST any](s *Server, kind string) {
 	var opts []handler.Option[S, ST]
 	if s.az != nil {
 		opts = append(opts, handler.WithAuthorization[S, ST](s.az))
+		if kind == resource.KindNode || kind == resource.KindNodePool {
+			opts = append(opts, handler.WithAdminOnly[S, ST]())
+		}
 	}
 	handler.New(reg, kind, opts...).Register(s.mux, APIBase)
 }

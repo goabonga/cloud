@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -231,6 +232,10 @@ func (h *Handler[S, ST]) put(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := h.authorizeReferences(r, res.Metadata, res.Spec); err != nil {
+		writeError(w, http.StatusForbidden, "reference is unavailable or outside the permitted scope")
+		return
+	}
 	if err := h.reg.Put(&res); err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			writeError(w, http.StatusConflict, "resource version conflict")
@@ -292,4 +297,109 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func (h *Handler[S, ST]) authorizeReferences(r *http.Request, meta resource.ObjectMeta, spec S) error {
+	if h.az == nil {
+		return nil
+	}
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		return fmt.Errorf("missing identity")
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		return err
+	}
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	fields := map[string]string{
+		"vpcId": resource.KindVPC, "vpc1Id": resource.KindVPC, "vpc2Id": resource.KindVPC, "vpcIds": resource.KindVPC,
+		"subnetId": resource.KindSubnet, "diskId": resource.KindDisk, "sslCertId": resource.KindSSLCert,
+		"certificateIds": resource.KindSSLCert, "caId": resource.KindSSLCA, "backendCaId": resource.KindSSLCA,
+		"securityGroupId": resource.KindSecurityGroup, "kmsKeyId": resource.KindKMSKey, "keyringId": resource.KindKMSKeyring,
+		"nodePoolId": resource.KindNodePool, "targetNodePoolId": resource.KindNodePool, "computeId": resource.KindCompute,
+		"functionId": resource.KindFunction, "targetGroupId": resource.KindLBTargetGroup, "defaultTargetGroupId": resource.KindLBTargetGroup,
+		"loadBalancerId": resource.KindLoadBalancer, "lbId": resource.KindLoadBalancer, "policyId": resource.KindWAFPolicy,
+		"zoneId": resource.KindDNSZone, "secretId": resource.KindSecret,
+	}
+	var walk func(any) error
+	check := func(kind, uid string) error {
+		if uid == "" {
+			return nil
+		}
+		target, err := h.reg.LookupMetadata(kind, uid)
+		if err != nil {
+			return err
+		}
+		if id.HasRole(AdminRole) {
+			return nil
+		}
+		if kind == resource.KindNodePool {
+			return nil
+		} // Platform placement pools are shared, not tenant data.
+		if kind == resource.KindSSLCA || kind == resource.KindSSLCert || kind == resource.KindSecret {
+			return fmt.Errorf("platform-managed reference")
+		}
+		if target.ProjectID != meta.ProjectID {
+			return fmt.Errorf("cross-project reference")
+		}
+		allowed, err := h.az.Allowed(id.Subject, false, target.OwnerUID, target.ProjectID, iam.PermissionWrite)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return fmt.Errorf("reference permission denied")
+		}
+		return nil
+	}
+	walk = func(value any) error {
+		switch v := value.(type) {
+		case map[string]any:
+			for _, pair := range [][2]string{{"targetType", "targetId"}, {"parentKind", "parentId"}} {
+				kind, _ := v[pair[0]].(string)
+				uid, _ := v[pair[1]].(string)
+				if uid != "" {
+					switch kind {
+					case "igw", "subnet", "compute", "organization", "folder":
+						if err := check(kind, uid); err != nil {
+							return err
+						}
+					default:
+						return fmt.Errorf("invalid reference kind")
+					}
+				}
+			}
+			for field, child := range v {
+				if kind, reference := fields[field]; reference {
+					switch ref := child.(type) {
+					case string:
+						if err := check(kind, ref); err != nil {
+							return err
+						}
+					case []any:
+						for _, uid := range ref {
+							if text, ok := uid.(string); ok {
+								if err := check(kind, text); err != nil {
+									return err
+								}
+							}
+						}
+					}
+				} else if err := walk(child); err != nil {
+					return err
+				}
+			}
+		case []any:
+			for _, child := range v {
+				if err := walk(child); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return walk(value)
 }
