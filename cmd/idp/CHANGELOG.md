@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.7.2] - 2026-10-02
+
+### Fixed
+
+- share and bound device authorization grants (`9413ff8`)
+
 ## [0.7.1] - 2026-10-01
 
 ### Fixed
