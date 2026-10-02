@@ -153,3 +153,29 @@ subject, project and permission; the next request observes revoked grants.
 Pagination bounds response item counts. Storage backends still materialize the
 collection before filtering, so it does not provide storage-level streaming or a
 bound on memory proportional to the total stored resource count.
+
+
+## Runtime admission limits
+
+Computes and function instances default to one CPU, 256 MiB of memory and 256
+processes when sizing values are omitted or zero. Accepted explicit shapes range
+from 0.01 to 64 CPUs, up to 262144 MiB of memory and at most 4096 processes;
+negative and non-finite values are rejected. micro-VMs require positive explicit
+CPU/memory values and share the 64 CPU/262144 MiB ceilings. A single disk is limited
+to 1048576 MiB (1 TiB).
+
+Warm-pool `minWarm` and `maxWarm` must not exceed 256. Omitted/zero `maxWarm`
+defaults to `max(32, minWarm)`. Cold starts retain their existing policy semantics
+and may exceed this warm-pool target; this is not an aggregate instance quota.
+
+Defaults also apply to legacy computes at realization and in scheduler accounting,
+so omitted requests no longer reserve zero capacity while consuming unrestricted
+host resources. Changed effective sizing can restart those workloads. The function
+controller refuses oversized legacy pools, and disk/VM realization refuses shapes
+above the ceilings. Delete/finalizer paths remain available for cleanup.
+
+Terraform validates explicit positive sizing and warm-pool caps before apply; omit
+these attributes to use defaults. Existing Terraform configuration using explicit
+zero sizing or `max_warm = 0` must remove those values. Configurations above the
+ceilings must be resized before updating. These are static per-resource limits;
+distributed aggregate project budgets are not implemented by this change.

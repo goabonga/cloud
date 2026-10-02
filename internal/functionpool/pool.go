@@ -26,6 +26,12 @@ type Computes = registry.Registry[resource.ComputeSpec, resource.ComputeStatus]
 // CAS. Warm-pool and cold-start writers share this operation; no separate
 // reservation can outlive the resource it protects.
 func CreateCompute(computes *Computes, fn *resource.Function, now time.Time) (*resource.Compute, int, error) {
+	effective := *fn
+	effective.Spec = fn.Spec.WithDefaults()
+	if err := effective.Spec.Validate(); err != nil {
+		return nil, 0, err
+	}
+	fn = &effective
 	existing, err := computes.List()
 	if err != nil {
 		return nil, 0, err

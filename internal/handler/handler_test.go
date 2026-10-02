@@ -382,3 +382,26 @@ func TestHandlerDeletePropagatesStoreErrorWithFinalizers(t *testing.T) {
 		t.Fatalf("delete status = %d, want 500", rec.Code)
 	}
 }
+
+func TestComputeAdmissionStoresFiniteDefaultsAndRejectsExcess(t *testing.T) {
+	store := state.NewFileStore(t.TempDir())
+	reg := registry.New[resource.ComputeSpec, resource.ComputeStatus](store, resource.KindCompute)
+	mux := http.NewServeMux()
+	handler.New(reg, resource.KindCompute).Register(mux, "/api/v1")
+	rec := do(t, mux, http.MethodPut, "/api/v1/compute/default", resource.Compute{Spec: resource.ComputeSpec{SubnetID: "subnet", Image: "image"}})
+	if rec.Code != http.StatusCreated {
+		t.Fatal(rec.Body.String())
+	}
+	var cp resource.Compute
+	mustDecode(t, rec, &cp)
+	if cp.Spec.CPU != 1 || cp.Spec.MemoryMB != 256 || cp.Spec.PidsMax != 256 {
+		t.Fatalf("API returned unlimited shape: %+v", cp.Spec)
+	}
+	rec = do(t, mux, http.MethodPut, "/api/v1/compute/rejected", resource.Compute{Spec: resource.ComputeSpec{SubnetID: "subnet", Image: "image", PidsMax: resource.MaxRuntimePids + 1}})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("excess accepted: %d", rec.Code)
+	}
+	if _, err := reg.Get("rejected"); err == nil {
+		t.Fatal("rejected shape was persisted")
+	}
+}

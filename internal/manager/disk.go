@@ -197,6 +197,9 @@ func (r *DiskReconciler) Reconcile(ctx context.Context, uid string) error {
 }
 
 func (r *DiskReconciler) ensure(ctx context.Context, disk *resource.Disk) error {
+	if disk.Spec.SizeMB > resource.MaxDiskSizeMB {
+		return fmt.Errorf("disk: size exceeds admission limit")
+	}
 	if !disk.Metadata.HasFinalizer(resource.DiskFinalizer) {
 		disk.Metadata.AddFinalizer(resource.DiskFinalizer)
 	}

@@ -22,7 +22,7 @@ built yet (see [Not yet built](#not-yet-built)).
 ```
 warmPool:
   minWarm: 0             # floor kept running regardless of idle time
-  maxWarm: 0             # 0 = unbounded; a hard cap that always wins over minWarm
+  maxWarm: 32            # omitted/0 defaults to max(32, minWarm); maximum 256
   idleTtlSeconds: 0      # how long an instance above minWarm may sit idle
   allowColdStart: false  # permit a fresh instance on invoke when none are warm
 ```

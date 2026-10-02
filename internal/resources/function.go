@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 
@@ -67,9 +68,9 @@ func NewFunctionResource() resource.Resource {
 				"subnet_id":         schema.StringAttribute{Required: true, MarkdownDescription: "Subnet each instance attaches to."},
 				"security_group_id": schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Security group applied to each instance."},
 				"node_pool_id":      schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Node pool to schedule instances onto; empty schedules anywhere."},
-				"cpu":               schema.Float64Attribute{Optional: true, Computed: true, MarkdownDescription: "CPU cores per instance."},
-				"memory_mb":         schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: "Memory in MB per instance."},
-				"pids_max":          schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: "Maximum processes per instance."},
+				"cpu":               schema.Float64Attribute{Validators: []validator.Float64{runtimeFloatRange{min: 0.01, max: infra.MaxRuntimeCPU}}, Optional: true, Computed: true, MarkdownDescription: "CPU cores per instance; defaults to 1, range 0.01-64."},
+				"memory_mb":         schema.Int64Attribute{Validators: []validator.Int64{runtimeIntRange{min: 1, max: infra.MaxRuntimeMemoryMB}}, Optional: true, Computed: true, MarkdownDescription: "Memory in MiB per instance; defaults to 256, maximum 262144."},
+				"pids_max":          schema.Int64Attribute{Validators: []validator.Int64{runtimeIntRange{min: 1, max: infra.MaxRuntimePids}}, Optional: true, Computed: true, MarkdownDescription: "Maximum processes per instance; defaults to 256, maximum 4096."},
 				"image":             schema.StringAttribute{Required: true, MarkdownDescription: "OCI image reference run on invocation."},
 				"command":           schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Entrypoint command."},
 				"env":               schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, MarkdownDescription: "Environment variables."},
@@ -79,8 +80,8 @@ func NewFunctionResource() resource.Resource {
 					Computed:            true,
 					MarkdownDescription: "How many instances to keep pre-started and what to do when none are available.",
 					Attributes: map[string]schema.Attribute{
-						"min_warm":         schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: "Instances kept running regardless of idle time; 0 by default."},
-						"max_warm":         schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: "Cap on concurrent warm instances; 0, the default, is unbounded."},
+						"min_warm":         schema.Int64Attribute{Validators: []validator.Int64{runtimeIntRange{min: 0, max: 256}}, Optional: true, Computed: true, MarkdownDescription: "Instances kept running regardless of idle time; defaults to 0, maximum 256."},
+						"max_warm":         schema.Int64Attribute{Validators: []validator.Int64{runtimeIntRange{min: 1, max: 256}}, Optional: true, Computed: true, MarkdownDescription: "Cap on warm instances; defaults to max(32, min_warm), maximum 256."},
 						"idle_ttl_seconds": schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: "Seconds an instance above min_warm may sit idle before eviction; 0 evicts as soon as it is idle."},
 						"allow_cold_start": schema.BoolAttribute{Optional: true, Computed: true, MarkdownDescription: "Permit creating a fresh instance on invoke when none are warm."},
 					},

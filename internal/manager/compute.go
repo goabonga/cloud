@@ -758,6 +758,10 @@ func (r *ComputeReconciler) ensure(ctx context.Context, c *resource.Compute) err
 // dependency (subnet gateway, VPC bridge, disk, security group) is not ready,
 // signalling the caller to requeue without an error.
 func (r *ComputeReconciler) resolve(c *resource.Compute) (ComputeRequest, bool, error) {
+	c.Spec = c.Spec.WithDefaults()
+	if err := c.Spec.ValidateRuntimeLimits(); err != nil {
+		return ComputeRequest{}, false, err
+	}
 	subnet, err := r.subnets.Get(c.Spec.SubnetID)
 	if errors.Is(err, state.ErrNotFound) {
 		return ComputeRequest{}, false, fmt.Errorf("subnet %q not found", c.Spec.SubnetID)

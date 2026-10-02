@@ -57,6 +57,9 @@ func (s MicroVMSpec) Validate() error {
 	if s.SubnetID == "" {
 		return fmt.Errorf("microvm: subnetId is required")
 	}
+	if s.VCPUs > MaxRuntimeCPU || s.MemoryMB > MaxRuntimeMemoryMB {
+		return fmt.Errorf("microvm: runtime sizing exceeds admission limits")
+	}
 	if s.VCPUs <= 0 {
 		return fmt.Errorf("microvm: vcpus must be positive")
 	}

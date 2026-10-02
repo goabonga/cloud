@@ -25,7 +25,7 @@ type WarmPoolPolicy struct {
 	// MinWarm is the floor of pre-started instances kept running regardless
 	// of idle time.
 	MinWarm int `json:"minWarm,omitempty"`
-	// MaxWarm caps concurrent warm instances; 0 means unbounded.
+	// MaxWarm caps warm instances; zero defaults to at least 32.
 	MaxWarm int `json:"maxWarm,omitempty"`
 	// IdleTTLSeconds is how long an instance above MinWarm may sit unused
 	// before the pool evicts it; 0 evicts as soon as it is idle.
@@ -37,6 +37,9 @@ type WarmPoolPolicy struct {
 
 // Validate reports whether the policy is well-formed.
 func (p WarmPoolPolicy) Validate() error {
+	if p.MinWarm > 256 || p.MaxWarm > 256 {
+		return fmt.Errorf("function: warm pool sizes must not exceed 256")
+	}
 	if p.MinWarm < 0 {
 		return fmt.Errorf("function: warmPool.minWarm must not be negative")
 	}
@@ -86,11 +89,8 @@ func (s FunctionSpec) Validate() error {
 	if s.Image == "" {
 		return fmt.Errorf("function: image is required")
 	}
-	if s.CPU < 0 {
-		return fmt.Errorf("function: cpu must not be negative")
-	}
-	if s.MemoryMB < 0 {
-		return fmt.Errorf("function: memoryMb must not be negative")
+	if err := (ComputeSpec{CPU: s.CPU, MemoryMB: s.MemoryMB, PidsMax: s.PidsMax}).ValidateRuntimeLimits(); err != nil {
+		return err
 	}
 	if s.Port < 1 || s.Port > 65535 {
 		return fmt.Errorf("function: port out of range")
@@ -113,3 +113,14 @@ type FunctionStatus struct {
 
 // Function is a FaaS function resource.
 type Function = Resource[FunctionSpec, FunctionStatus]
+
+// WithDefaults gives every function instance finite runtime limits and bounds
+// the warm pool even when maxWarm is omitted.
+func (s FunctionSpec) WithDefaults() FunctionSpec {
+	runtime := (ComputeSpec{CPU: s.CPU, MemoryMB: s.MemoryMB, PidsMax: s.PidsMax}).WithDefaults()
+	s.CPU, s.MemoryMB, s.PidsMax = runtime.CPU, runtime.MemoryMB, runtime.PidsMax
+	if s.WarmPool.MaxWarm == 0 {
+		s.WarmPool.MaxWarm = max(32, s.WarmPool.MinWarm)
+	}
+	return s
+}

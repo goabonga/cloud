@@ -245,3 +245,30 @@ func TestScheduleMissingPoolLeavesUnscheduled(t *testing.T) {
 		t.Fatalf("compute referencing a missing pool should stay unscheduled, got %q", c.Status.NodeName)
 	}
 }
+
+func TestSchedulerAccountsForLegacyZeroLimits(t *testing.T) {
+	env := newSchedEnv(t)
+	env.putNode(t, "node-1", 1, 256, 10, nil)
+	env.putCompute(t, "a", 0, 0, "", "")
+	env.putCompute(t, "b", 0, 0, "", "")
+	if err := env.ctrl.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assigned := 0
+	for _, uid := range []string{"a", "b"} {
+		cp, err := env.computes.Get(uid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cp.Status.NodeName != "" {
+			assigned++
+		}
+	}
+	if assigned != 1 {
+		t.Fatalf("oversubscribed default limits: %d assigned", assigned)
+	}
+	node, err := env.nodes.Get("node-1")
+	if err != nil || node.Status.Allocated.CPUs != 1 || node.Status.Allocated.MemoryMB != 256 {
+		t.Fatalf("allocation=%+v, %v", node, err)
+	}
+}
