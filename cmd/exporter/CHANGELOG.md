@@ -2,6 +2,10 @@
 
 All notable changes to this component are documented here.
 
+## [0.5.3] - 2026-10-02
+
+_No notable changes._
+
 ## [0.5.2] - 2026-10-02
 
 ### Fixed
