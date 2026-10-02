@@ -82,6 +82,10 @@ func (c *SchedulerController) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("controllers: list computes: %w", err)
 	}
+	for i := range computes {
+		computes[i].Spec = computes[i].Spec.WithDefaults()
+	}
+
 	pools, err := c.pools.List()
 	if err != nil {
 		return fmt.Errorf("controllers: list node pools: %w", err)

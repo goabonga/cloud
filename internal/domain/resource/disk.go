@@ -27,8 +27,14 @@ type DiskSpec struct {
 // header alone takes 16 MiB, and the filesystem needs room of its own.
 const MinEncryptedDiskMB = 32
 
+// MaxDiskSizeMB bounds the size of a single provisioned disk.
+const MaxDiskSizeMB = 1 << 20
+
 // Validate reports whether the spec is well-formed.
 func (s DiskSpec) Validate() error {
+	if s.SizeMB > MaxDiskSizeMB {
+		return fmt.Errorf("disk: sizeMb must not exceed 1048576 (1 TiB)")
+	}
 	if s.SizeMB <= 0 {
 		return fmt.Errorf("disk: sizeMb must be positive")
 	}

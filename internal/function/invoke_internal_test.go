@@ -322,7 +322,7 @@ func TestAllocatePort_SkipsPortsAlreadyInUse(t *testing.T) {
 	if err := env.computes.Put(used); err != nil {
 		t.Fatal(err)
 	}
-	_, port, err := functionpool.CreateCompute(env.computes, &resource.Function{}, time.Now())
+	_, port, err := functionpool.CreateCompute(env.computes, &resource.Function{Metadata: resource.ObjectMeta{UID: "port-test"}, Spec: resource.FunctionSpec{SubnetID: "subnet", Image: "image", Port: 8080}}, time.Now())
 	if err != nil {
 		t.Fatalf("allocatePort: %v", err)
 	}

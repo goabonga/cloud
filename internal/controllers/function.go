@@ -229,6 +229,11 @@ func (c *FunctionController) Reconcile(ctx context.Context) error {
 // ensureFunction resolves fn's dependencies, fills and trims its warm pool to
 // the configured policy, and records the result.
 func (c *FunctionController) ensureFunction(ctx context.Context, fn *resource.Function, insts []resource.FunctionInstance, computesByUID map[string]resource.Compute) error {
+	fn.Spec = fn.Spec.WithDefaults()
+	if err := fn.Spec.Validate(); err != nil {
+		fn.Status.SetPhase(resource.PhaseError, "InvalidSpec", err.Error())
+		return c.functions.Put(fn)
+	}
 	if !fn.Metadata.HasFinalizer(resource.FunctionFinalizer) {
 		fn.Metadata.AddFinalizer(resource.FunctionFinalizer)
 	}

@@ -435,6 +435,9 @@ func (r *MicroVMReconciler) ensure(ctx context.Context, v *resource.MicroVM) err
 // dependency (subnet gateway, VPC bridge, security group) is not ready,
 // signalling the caller to requeue without an error.
 func (r *MicroVMReconciler) resolve(v *resource.MicroVM) (MicroVMRequest, bool, error) {
+	if v.Spec.VCPUs > resource.MaxRuntimeCPU || v.Spec.MemoryMB > resource.MaxRuntimeMemoryMB {
+		return MicroVMRequest{}, false, fmt.Errorf("microvm: runtime sizing exceeds admission limits")
+	}
 	subnet, err := r.subnets.Get(v.Spec.SubnetID)
 	if errors.Is(err, state.ErrNotFound) {
 		return MicroVMRequest{}, false, fmt.Errorf("subnet %q not found", v.Spec.SubnetID)

@@ -472,3 +472,20 @@ func TestFunctionDeletionWaitsForAssignedInstance(t *testing.T) {
 		t.Fatal("active stream's compute was evicted")
 	}
 }
+
+func TestLegacyOversizedWarmPoolDoesNotProvisionWorkloads(t *testing.T) {
+	env := newFnEnv(t)
+	env.seedNetwork(t)
+	env.putFunction(t, "too-large", resource.WarmPoolPolicy{MinWarm: 257})
+	if err := env.ctrl.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	fn, err := env.functions.Get("too-large")
+	if err != nil || fn.Status.Phase != resource.PhaseError {
+		t.Fatalf("invalid function status: %+v, %v", fn, err)
+	}
+	computes, err := env.computes.List()
+	if err != nil || len(computes) != 0 {
+		t.Fatalf("invalid pool provisioned %d computes: %v", len(computes), err)
+	}
+}

@@ -480,3 +480,20 @@ func TestUnscheduledDeletingComputeIsFinalizedByScopedAgent(t *testing.T) {
 		t.Fatal("deleted pending compute was started")
 	}
 }
+
+func TestLegacyComputeReceivesFiniteRuntimeLimits(t *testing.T) {
+	env := newComputeEnv(t)
+	cp := basicCompute("legacy-zero-limits")
+	env.putCompute(t, cp)
+	be := &fakeComputeBackend{}
+	if err := env.reconciler(be).Reconcile(context.Background(), cp.Metadata.UID); err != nil {
+		t.Fatal(err)
+	}
+	if len(be.ensured) != 1 {
+		t.Fatal("compute was not realized")
+	}
+	req := be.ensured[0]
+	if req.CPU != 1 || req.MemoryMB != 256 || req.PidsMax != 256 {
+		t.Fatalf("unbounded legacy compute: %+v", req)
+	}
+}

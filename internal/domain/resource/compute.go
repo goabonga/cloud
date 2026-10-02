@@ -5,6 +5,7 @@ package resource
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -69,11 +70,8 @@ func (s ComputeSpec) Validate() error {
 	if s.Image == "" {
 		return fmt.Errorf("compute: image is required")
 	}
-	if s.CPU < 0 {
-		return fmt.Errorf("compute: cpu must not be negative")
-	}
-	if s.MemoryMB < 0 {
-		return fmt.Errorf("compute: memoryMb must not be negative")
+	if err := s.ValidateRuntimeLimits(); err != nil {
+		return err
 	}
 	for _, mapping := range s.Ports {
 		host, _, _ := strings.Cut(mapping, ":")
@@ -106,3 +104,38 @@ type ComputeStatus struct {
 
 // Compute is a compute-instance resource.
 type Compute = Resource[ComputeSpec, ComputeStatus]
+
+// Runtime admission ceilings apply equally to compute and function shapes.
+const (
+	MaxRuntimeCPU      = 64
+	MaxRuntimeMemoryMB = 262144
+	MaxRuntimePids     = 4096
+)
+
+// WithDefaults gives omitted runtime limits a finite cgroup budget.
+func (s ComputeSpec) WithDefaults() ComputeSpec {
+	if s.CPU == 0 {
+		s.CPU = 1
+	}
+	if s.MemoryMB == 0 {
+		s.MemoryMB = 256
+	}
+	if s.PidsMax == 0 {
+		s.PidsMax = 256
+	}
+	return s
+}
+
+// ValidateRuntimeLimits rejects values that cannot be safely enforced.
+func (s ComputeSpec) ValidateRuntimeLimits() error {
+	if math.IsNaN(s.CPU) || math.IsInf(s.CPU, 0) || s.CPU < 0 || s.CPU > MaxRuntimeCPU || (s.CPU > 0 && s.CPU < 0.01) {
+		return fmt.Errorf("runtime: cpu must be zero/default or between 0.01 and %d", MaxRuntimeCPU)
+	}
+	if s.MemoryMB < 0 || s.MemoryMB > MaxRuntimeMemoryMB {
+		return fmt.Errorf("runtime: memoryMb must be between 0 and %d", MaxRuntimeMemoryMB)
+	}
+	if s.PidsMax < 0 || s.PidsMax > MaxRuntimePids {
+		return fmt.Errorf("runtime: pidsMax must be between 0 and %d", MaxRuntimePids)
+	}
+	return nil
+}

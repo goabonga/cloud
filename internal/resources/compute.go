@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	infra "github.com/goabonga/infrastructure/internal/domain/resource"
@@ -69,9 +70,9 @@ func NewComputeResource() resource.Resource {
 				"security_group_id": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: replaceString(), MarkdownDescription: "Security group to apply."},
 				"node_pool_id":      schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: replaceString(), MarkdownDescription: "Node pool to schedule onto; empty schedules anywhere."},
 				"hostname":          schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: replaceString(), MarkdownDescription: "Instance hostname."},
-				"cpu":               schema.Float64Attribute{Optional: true, Computed: true, PlanModifiers: replaceFloat64(), MarkdownDescription: "CPU cores."},
-				"memory_mb":         schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: replaceInt64(), MarkdownDescription: "Memory in MB."},
-				"pids_max":          schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: replaceInt64(), MarkdownDescription: "Maximum processes."},
+				"cpu":               schema.Float64Attribute{Validators: []validator.Float64{runtimeFloatRange{min: 0.01, max: infra.MaxRuntimeCPU}}, Optional: true, Computed: true, PlanModifiers: replaceFloat64(), MarkdownDescription: "CPU cores; defaults to 1, range 0.01-64."},
+				"memory_mb":         schema.Int64Attribute{Validators: []validator.Int64{runtimeIntRange{min: 1, max: infra.MaxRuntimeMemoryMB}}, Optional: true, Computed: true, PlanModifiers: replaceInt64(), MarkdownDescription: "Memory in MiB; defaults to 256, maximum 262144."},
+				"pids_max":          schema.Int64Attribute{Validators: []validator.Int64{runtimeIntRange{min: 1, max: infra.MaxRuntimePids}}, Optional: true, Computed: true, PlanModifiers: replaceInt64(), MarkdownDescription: "Maximum processes; defaults to 256, maximum 4096."},
 				"image":             schema.StringAttribute{Required: true, PlanModifiers: replaceString(), MarkdownDescription: "OCI image reference."},
 				"command":           schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: replaceString(), MarkdownDescription: "Entrypoint command."},
 				"env":               schema.MapAttribute{Optional: true, Computed: true, PlanModifiers: replaceMap(), ElementType: types.StringType, MarkdownDescription: "Environment variables."},

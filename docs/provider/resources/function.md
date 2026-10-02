@@ -59,9 +59,9 @@ resource "infra_function" "latency_sensitive" {
 | `name` | string | no | Display name. |
 | `security_group_id` | string | no | Security group applied to each instance. |
 | `node_pool_id` | string | no | Node pool to schedule instances onto; empty schedules anywhere. |
-| `cpu` | number | no | CPU cores per instance. |
-| `memory_mb` | number | no | Memory in MB per instance. |
-| `pids_max` | number | no | Maximum processes per instance. |
+| `cpu` | number | no | CPU cores per instance; defaults to 1, allowed range 0.01–64. |
+| `memory_mb` | number | no | Memory per instance; defaults to 256 MiB, maximum 262144 MiB. |
+| `pids_max` | number | no | Maximum processes per instance; defaults to 256, maximum 4096. |
 | `command` | string | no | Entrypoint command. |
 | `env` | map of string | no | Environment variables. |
 | `port` | number | yes | Port the runtime listens on inside the instance; invoke requests are forwarded to it. |
@@ -71,8 +71,8 @@ resource "infra_function" "latency_sensitive" {
 
 | Name | Type | Required | Description |
 | --- | --- | --- | --- |
-| `min_warm` | number | no | Instances kept running regardless of idle time; 0 by default. |
-| `max_warm` | number | no | Cap on concurrent warm instances; 0, the default, is unbounded. |
+| `min_warm` | number | no | Instances kept running regardless of idle time; 0 by default, maximum 256. |
+| `max_warm` | number | no | Cap on warm instances; defaults to max(32, min_warm), maximum 256. Omit this attribute to use its default. |
 | `idle_ttl_seconds` | number | no | Seconds an instance above `min_warm` may sit idle before eviction; 0 evicts as soon as it is idle. |
 | `allow_cold_start` | bool | no | Permit creating a fresh instance on invoke when none are warm, bypassing `min_warm`/`max_warm`. |
 
@@ -91,3 +91,10 @@ In addition to the arguments above, the following are exported:
 ```shell
 terraform import infra_function.resize_image function-abc123
 ```
+
+
+Explicit zero `cpu`, `memory_mb`, `pids_max` or `max_warm` values are rejected by
+Terraform validation. Remove these attributes to use finite platform defaults.
+Existing computes with zero limits receive the same defaults on reconciliation;
+this can restart a workload when its effective runtime configuration changes.
+These are per-workload admission limits, not aggregate per-project quotas.
