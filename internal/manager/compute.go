@@ -24,8 +24,8 @@ import (
 )
 
 // containerInitBin hardens the entrypoint (drops capabilities, applies a seccomp
-// filter) when present. Its absence is not fatal.
-const containerInitBin = "/usr/local/bin/infra-container-init"
+// filter) before executing a non-privileged workload.
+const containerInitBin = "/usr/bin/infra-container-init"
 
 // ComputeMount attaches a host device or backing file to a path in the rootfs.
 type ComputeMount struct {
@@ -198,6 +198,11 @@ func (b *ExecComputeBackend) EnsureCompute(ctx context.Context, req ComputeReque
 		}
 	}
 	if cmd != "" && res.Rootfs != "" {
+		if !req.Privileged {
+			if _, err := os.Stat(containerInitBin); err != nil {
+				return res, fmt.Errorf("manager: container-init is required for unprivileged compute: %w", err)
+			}
+		}
 		b.startEntrypoint(req, ns, res.Rootfs, cmd)
 	}
 	return res, nil
@@ -517,8 +522,8 @@ func buildEntryScript(req ComputeRequest, rootfs, entryCmd, shell, pidFile, cgro
 		fmt.Fprintf(&s, "mkdir -p %s/dev/pts\nmount -t devpts -o newinstance,nosuid,noexec,mode=620,ptmxmode=666 devpts %s/dev/pts\nln -s pts/ptmx %s/dev/ptmx\n", rootfs, rootfs, rootfs)
 	}
 	if hasContainerInit {
-		fmt.Fprintf(&s, "mkdir -p %s/usr/local/bin 2>/dev/null\n", rootfs)
-		fmt.Fprintf(&s, "cp %s %s/usr/local/bin/infra-container-init 2>/dev/null\n", containerInitBin, rootfs)
+		fmt.Fprintf(&s, "mkdir -p %s/usr/bin 2>/dev/null\n", rootfs)
+		fmt.Fprintf(&s, "cp %s %s/usr/bin/infra-container-init 2>/dev/null\n", containerInitBin, rootfs)
 	}
 	fmt.Fprintf(&s, "mount --rbind %s %s\n", rootfs, rootfs)
 	fmt.Fprintf(&s, "cd %s\n", rootfs)
