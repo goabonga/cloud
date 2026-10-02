@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/goabonga/infrastructure/internal/state"
@@ -391,5 +393,32 @@ func TestFileStoreCompareAndSwapPutError(t *testing.T) {
 	// create the "newsub" subdirectory underneath it.
 	if _, err := fs.CompareAndSwap("parent/newsub/leaf", nil, []byte("v")); err == nil {
 		t.Fatal("expected cas to surface the underlying put error")
+	}
+}
+
+func TestFileCASAcrossStoreInstances(t *testing.T) {
+	dir := t.TempDir()
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var winners atomic.Int32
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			s := state.NewFileStore(dir)
+			ok, err := s.CompareAndSwap("race/key", nil, []byte("value"))
+			if err != nil {
+				t.Error(err)
+			}
+			if ok {
+				winners.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if winners.Load() != 1 {
+		t.Fatalf("%d winners", winners.Load())
 	}
 }
