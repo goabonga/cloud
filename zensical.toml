@@ -38,6 +38,7 @@ nav = [
         { "infra_function" = "provider/resources/function.md" },
     ] },
     { "Stability & deprecation" = "stability.md" },
+    { "Versions" = "versions.md" },
 ]
 
 # Footer. `copyright` renders in the highlighted slot of
@@ -50,8 +51,78 @@ Made with <span style="color: #e25555;">&#10084;</span> by
 <a href="https://github.com/goabonga" target="_blank" rel="noopener">goabonga</a>
 """
 
+# Zensical falls back to its own default extension set only when this table
+# is absent entirely - declaring it replaces the defaults rather than
+# merging into them. So every one of Zensical's own defaults (copied from
+# its `bootstrap/zensical.toml` template, zensical==0.0.67) is restated here
+# verbatim, with only `zensical.extensions.macros` added on top for
+# docs/versions.md's `{{ config.extra.versions.* }}` substitutions. Keep
+# this in step with Zensical's own defaults when upgrading it.
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+"pymdownx.betterem" = {}
+"pymdownx.caret" = {}
+"pymdownx.details" = {}
+"pymdownx.inlinehilite" = {}
+"pymdownx.keys" = {}
+"pymdownx.magiclink" = {}
+"pymdownx.mark" = {}
+"pymdownx.smartsymbols" = {}
+"pymdownx.tilde" = {}
+"zensical.extensions.macros" = {}
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions."pymdownx.arithmatex"]
+generic = true
+
+[project.markdown_extensions."pymdownx.emoji"]
+emoji_generator = "zensical.extensions.emoji.to_svg"
+emoji_index = "zensical.extensions.emoji.twemoji"
+
+[project.markdown_extensions."pymdownx.highlight"]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+
+[project.markdown_extensions."pymdownx.superfences"]
+custom_fences = [{ name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" }]
+
+[project.markdown_extensions."pymdownx.tabbed"]
+alternate_style = true
+combine_header_slug = true
+
+[project.markdown_extensions."pymdownx.tasklist"]
+custom_checkbox = true
+
 [project.extra]
 generator = false
+
+# Per-component versions surfaced on docs/versions.md through the `macros`
+# extension (`{{ config.extra.versions.* }}`). multicz rewrites each value
+# on bump: every component lists the matching key as a second `bump_files`
+# entry in multicz.toml (the first, cmd/<dir>/version.go, stays the version
+# source of truth - this is a pure write target).
+#
+# NOTE: keys use underscores, not the component's own hyphenated name - a
+# hyphen reads as subtraction inside the Jinja `{{ ... }}` macro expression.
+[project.extra.versions]
+infra = "0.1.1"
+infra_api = "0.13.0"
+infra_idp = "0.7.1"
+infra_exporter = "0.5.1"
+infra_controller_manager = "0.9.0"
+infra_agent = "0.18.0"
+infra_container_init = "0.5.1"
+terraform_provider_infra = "0.13.0"
+infra_spa = "0.7.0"
+infra_www = "0.6.0"
 
 # Branding. Both files are generated from `assets/infrastructure.svg` by
 # `scripts/regen-icons.sh` and committed: the docs job builds the site
