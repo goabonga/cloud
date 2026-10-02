@@ -20,6 +20,20 @@ render_pkgbuild() {
     extra_pkg+=$'\n'"  install -Dm755 \"$extra_name\" \"\$pkgdir/usr/bin/$extra_name\""
   done
 
+  # infra-www embeds the SPA via go:embed - unlike build-archlinux.sh's local
+  # file:// tarball, the real AUR source is a plain `git archive`-shaped
+  # snapshot (cmd/www/dist/ holds only .gitkeep), so the PKGBUILD has to
+  # stage the production build itself rather than assume it is already
+  # there. makedepends only grows for this one package; the other eight
+  # have no Node step to declare.
+  local makedepends="'go'" npm_build=""
+  if [ "$pkg" = "infra-www" ]; then
+    makedepends="'go' 'nodejs' 'npm'"
+    npm_build=$'\n'"  (cd www && npm ci && npm run build)"
+    npm_build+=$'\n'"  find cmd/www/dist -mindepth 1 ! -name .gitkeep -delete"
+    npm_build+=$'\n'"  cp -r www/dist/. cmd/www/dist/"
+  fi
+
   local unit_pkg="" extra_unit
   if [ -n "$svc" ]; then
     unit_pkg="  install -Dm644 \"deploy/systemd/$svc.service\" \"\$pkgdir/usr/lib/systemd/system/$svc.service\""
@@ -47,7 +61,7 @@ pkgdesc="${SUMMARY[$pkg]}: $extended"
 arch=('x86_64' 'aarch64')
 url="https://github.com/goabonga/infrastructure"
 license=('MIT')
-makedepends=('go')
+makedepends=($makedepends)
 # !debug: the binaries are already built -s -w (no debug symbols, the same
 # reason the .deb carries a lintian override for statically-linked-binary),
 # so makepkg's gdb-add-index step has nothing to index.
@@ -57,7 +71,7 @@ sha256sums=('$sha256')
 
 build() {
   cd "\$srcdir"/*/
-  export CGO_ENABLED=0
+  export CGO_ENABLED=0$npm_build
   # -trimpath: without it, the binary embeds \$srcdir's absolute path
   # (makepkg's build-time temp dir), which makepkg's own packaging checks
   # then flag as a leaked build-root reference.
