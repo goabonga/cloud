@@ -369,9 +369,14 @@ free host in the subnet, reserved in the shared store under `ipam/<subnet>/<ip>`
 with a create-if-absent compare-and-swap, so agents allocating at once on
 different hosts never take the same one; a reservation is released when the
 instance is deleted), the security-group chain and each disk's device path,
-then asks the backend to bring the namespace up. Creation happens once; later
-ticks only keep the firewall rules in place while the namespace exists, so an
-instance an older agent created gets the rules this one writes. The finalizer kills the cgroup,
+then asks the backend to bring the namespace up. The agent records the applied
+request and host launcher PID/start time in its private runtime state. Later
+ticks keep the firewall rules in place only when that configuration matches
+and the launcher is still running. Configuration drift, a dead process or
+missing runtime state triggers teardown and recreation. Startup errors are
+returned to the reconciler instead of reporting a ready instance. Process
+liveness is checked at reconciliation intervals; this is not an application
+health probe. The finalizer kills the cgroup,
 removes the veth, deletes the namespace and the firewall rules, and unmounts the
 disks.
 
