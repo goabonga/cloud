@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/goabonga/infrastructure/internal/domain/resource"
 	"github.com/goabonga/infrastructure/internal/state"
@@ -150,3 +151,19 @@ func (r *Registry[S, ST]) List() ([]resource.Resource[S, ST], error) {
 }
 
 func revision(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
+
+// LookupMetadata reads a referenced resource without exposing its spec or status.
+func (r *Registry[S, ST]) LookupMetadata(kind, uid string) (resource.ObjectMeta, error) {
+	if uid == "." || uid == ".." || strings.ContainsAny(uid, "/\\\x00") {
+		return resource.ObjectMeta{}, fmt.Errorf("invalid reference uid")
+	}
+	data, err := r.store.Get(kind + "/" + uid)
+	if err != nil {
+		return resource.ObjectMeta{}, err
+	}
+	var envelope struct {
+		Metadata resource.ObjectMeta `json:"metadata"`
+	}
+	err = json.Unmarshal(data, &envelope)
+	return envelope.Metadata, err
+}
