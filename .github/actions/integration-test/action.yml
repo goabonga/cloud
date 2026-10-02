@@ -4,8 +4,7 @@
 name: integration test
 description: |
   Run `go test -tags=integration` against a postgres service, with /dev/kvm
-  opened up for the hypervisor tests. The kernel-level cases (bridge,
-  firewall) self-skip without root. Expects the caller's job to define a
+  opened up for the hypervisor tests. Runs kernel-level bridge and firewall cases as root. Expects the caller's job to define a
   `postgres` service reachable at postgres-dsn.
 
 inputs:
@@ -33,11 +32,17 @@ runs:
         echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
         sudo udevadm control --reload-rules
         sudo udevadm trigger --name-match=kvm
-    # The kernel-level tests (bridge, firewall) skip without root; the
-    # hypervisor tests skip if /dev/kvm is still missing or denied after the
-    # step above; the postgres test runs against the service above.
-    - name: Run integration suite
+    - name: Install kernel test prerequisites
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y iproute2 iptables cryptsetup e2fsprogs dosfstools
+    - name: Run privileged integration suite
       shell: bash
       env:
         POSTGRES_DSN: ${{ inputs.postgres-dsn }}
-      run: go test -tags=integration ./test/integration/...
+      run: |
+        set -euo pipefail
+        sudo env "PATH=$PATH" "POSTGRES_DSN=$POSTGRES_DSN" \
+          go test -json -tags=integration ./test/integration/... | tee integration-results.json
+        python3 scripts/check-kernel-tests.py integration-results.json
