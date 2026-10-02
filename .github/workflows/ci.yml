@@ -269,32 +269,24 @@ jobs:
   # the SPA bundle is embedded into infra-www's binary rather than installed
   # on its own. The .deb the release publishes is the artifact this chain
   # cleared, not a rebuild of it.
+  #
+  # Named per component rather than matrixed, for GitHub UI visibility: a
+  # matrix job whose `if:` is false before expansion collapses into a single
+  # `deb (${{ matrix.component }})` placeholder row rather than nine, hiding
+  # exactly the per-component breakdown a reviewer needs (seen for real while
+  # debugging PR #115/#116: every leg showed one opaque `skipping` row).
   # ---------------------------------------------------------------------
 
-  deb:
-    name: deb (${{ matrix.component }})
+  deb-infra:
+    name: deb (infra)
     needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
     # Two independent reasons to build: a component changed (has_package_
     # changes), in which case every quality gate above gated on the same
-    # flag must have actually succeeded - not merely "didn't fail", which
-    # `!cancelled() && !failure()` alone would also accept for a gate GitHub
-    # marked `skipped` without this job's knowledge of why. Or the packaging
-    # scripts/actions themselves changed (packaging_changed) with no
-    # component touched, in which case those six gates are expected to have
-    # skipped (nothing Go to lint/test) and that is not a reason to refuse
-    # building - see detect-changes' own description for the PR #115 case
-    # this exists for.
-    #
-    # always(): without one of the four status-check functions literally
-    # present, GitHub silently ANDs an implicit `success()` onto this whole
-    # expression - which would require every direct need (lint, vet-build,
-    # ...) to have actually run and succeeded, defeating the
-    # packaging_changed branch below outright (those six are *expected* to
-    # be skipped on that path). `always()` opts out of the implicit default
-    # so the explicit `.result` checks below are the only gate in effect.
-    # Confirmed by reproducing against a real run: without `always()`, every
-    # leg of this matrix stayed `skipped` even with packaging_changed
-    # correctly computed `true` end to end.
+    # flag must have actually succeeded - not merely "didn't fail". Or the
+    # packaging scripts/actions themselves changed (packaging_changed) with
+    # no component touched, in which case those six gates are expected to
+    # have skipped (nothing Go to lint/test) and that is not a reason to
+    # refuse building - see detect-changes' own description.
     if: >-
       always() && (
         (
@@ -312,19 +304,6 @@ jobs:
         )
       )
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        component:
-          - infra
-          - infra-api
-          - infra-idp
-          - infra-exporter
-          - infra-controller-manager
-          - infra-agent
-          - infra-container-init
-          - terraform-provider-infra
-          - infra-www
     steps:
       - uses: actions/checkout@v7
         with:
@@ -332,96 +311,556 @@ jobs:
       # The .deb carries the version in its filename and its control file, so
       # it has to be the version the release will publish.
       - uses: ./.github/actions/bump-preview
-      # All nine, every run: a component released by cascade needs a package
-      # too, and `multicz changed` cannot tell us which those are.
       - uses: ./.github/actions/build-deb
         with:
-          component: ${{ matrix.component }}
+          component: infra
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
         with:
-          title: deb (${{ matrix.component }})
-          body: amd64 package uploaded as `${{ matrix.component }}-deb`.
+          title: deb (infra)
+          body: amd64 package uploaded as `infra-deb`.
 
-  deb-validate:
-    name: deb-validate (${{ matrix.component }})
-    needs: deb
-    # always(): GitHub's implicit success() (added because this condition
-    # names none of success()/failure()/cancelled()/always() itself) checks
-    # `deb`'s whole TRANSITIVE chain, not just this job's own direct need -
-    # including lint/vet-build/test/gosec/govulncheck/osv-scanner, which
-    # `deb` can now legitimately leave `skipped` on the packaging_changed
-    # path. Without this, deb-validate silently skipped even though `deb`
-    # itself had just succeeded (confirmed on PR #127's run).
-    if: always() && needs.deb.result == 'success'
+  deb-infra-api:
+    name: deb (infra-api)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
     runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-deb
+        with:
+          component: infra-api
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb (infra-api)
+          body: amd64 package uploaded as `infra-api-deb`.
+
+  deb-infra-idp:
+    name: deb (infra-idp)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-deb
+        with:
+          component: infra-idp
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb (infra-idp)
+          body: amd64 package uploaded as `infra-idp-deb`.
+
+  deb-infra-exporter:
+    name: deb (infra-exporter)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-deb
+        with:
+          component: infra-exporter
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb (infra-exporter)
+          body: amd64 package uploaded as `infra-exporter-deb`.
+
+  deb-infra-controller-manager:
+    name: deb (infra-controller-manager)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-deb
+        with:
+          component: infra-controller-manager
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb (infra-controller-manager)
+          body: amd64 package uploaded as `infra-controller-manager-deb`.
+
+  deb-infra-agent:
+    name: deb (infra-agent)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-deb
+        with:
+          component: infra-agent
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb (infra-agent)
+          body: amd64 package uploaded as `infra-agent-deb`.
+
+  deb-infra-container-init:
+    name: deb (infra-container-init)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-deb
+        with:
+          component: infra-container-init
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb (infra-container-init)
+          body: amd64 package uploaded as `infra-container-init-deb`.
+
+  deb-terraform-provider-infra:
+    name: deb (terraform-provider-infra)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-deb
+        with:
+          component: terraform-provider-infra
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb (terraform-provider-infra)
+          body: amd64 package uploaded as `terraform-provider-infra-deb`.
+
+  deb-infra-www:
+    name: deb (infra-www)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-deb
+        with:
+          component: infra-www
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb (infra-www)
+          body: amd64 package uploaded as `infra-www-deb`.
+
+  deb-validate-infra:
+    name: deb-validate (infra)
+    needs: deb-infra
     permissions:
       contents: read
       actions: write # delete the artifact of a package that fails validation
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - component: infra
-            has_unit: "false"
-          - component: infra-container-init
-            has_unit: "false"
-          - component: terraform-provider-infra
-            has_unit: "false"
-          - component: infra-api
-            has_unit: "true"
-          - component: infra-idp
-            has_unit: "true"
-          - component: infra-exporter
-            has_unit: "true"
-          - component: infra-controller-manager
-            has_unit: "true"
-          # infra-agent reconciles kernel state, so its unit cannot take the
-          # hardening the control-plane daemons do - see
-          # deploy/systemd/infra-agent.service for which directives would
-          # break which reconciler. 75 holds the line at its current 7.2
-          # without pretending it can reach 1.1.
-          - component: infra-agent
-            has_unit: "true"
-            security_threshold: "75"
-          - component: infra-www
-            has_unit: "true"
+    # always(): deb-<component>'s own transitive chain (lint, vet-build, ...)
+    # can legitimately be `skipped` on the packaging_changed path - without
+    # this, GitHub's implicit success() over that whole chain would skip this
+    # job too, even though deb-<component> itself just succeeded.
+    if: always() && needs.deb-infra.result == 'success'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      # No probe: `deb` builds all nine legs on every run, so a missing
-      # artifact means its leg failed - and that already skips this job
-      # through `!failure()`.
+      # No probe: a missing artifact means the build leg failed, which
+      # already skips this job via the needs.deb-X.result check above.
       - uses: ./.github/actions/validate-deb
         with:
-          component: ${{ matrix.component }}
-          has-unit: ${{ matrix.has_unit }}
-          security-threshold: ${{ matrix.security_threshold || '11' }}
+          component: infra
+          has-unit: "false"
+          security-threshold: "11"
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
         with:
-          title: deb-validate (${{ matrix.component }})
+          title: deb-validate (infra)
           body: |
             lintian (`--fail-on error`), `test/install/validate.sh` against the
             installed package, and `systemd-analyze security` at threshold
-            `${{ matrix.security_threshold || '11' }}`.
+            `11`.
+
+  deb-validate-infra-api:
+    name: deb-validate (infra-api)
+    needs: deb-infra-api
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.deb-infra-api.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-deb
+        with:
+          component: infra-api
+          has-unit: "true"
+          security-threshold: "11"
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb-validate (infra-api)
+          body: |
+            lintian (`--fail-on error`), `test/install/validate.sh` against the
+            installed package, and `systemd-analyze security` at threshold
+            `11`.
+
+  deb-validate-infra-idp:
+    name: deb-validate (infra-idp)
+    needs: deb-infra-idp
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.deb-infra-idp.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-deb
+        with:
+          component: infra-idp
+          has-unit: "true"
+          security-threshold: "11"
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb-validate (infra-idp)
+          body: |
+            lintian (`--fail-on error`), `test/install/validate.sh` against the
+            installed package, and `systemd-analyze security` at threshold
+            `11`.
+
+  deb-validate-infra-exporter:
+    name: deb-validate (infra-exporter)
+    needs: deb-infra-exporter
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.deb-infra-exporter.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-deb
+        with:
+          component: infra-exporter
+          has-unit: "true"
+          security-threshold: "11"
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb-validate (infra-exporter)
+          body: |
+            lintian (`--fail-on error`), `test/install/validate.sh` against the
+            installed package, and `systemd-analyze security` at threshold
+            `11`.
+
+  deb-validate-infra-controller-manager:
+    name: deb-validate (infra-controller-manager)
+    needs: deb-infra-controller-manager
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.deb-infra-controller-manager.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-deb
+        with:
+          component: infra-controller-manager
+          has-unit: "true"
+          security-threshold: "11"
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb-validate (infra-controller-manager)
+          body: |
+            lintian (`--fail-on error`), `test/install/validate.sh` against the
+            installed package, and `systemd-analyze security` at threshold
+            `11`.
+
+  deb-validate-infra-agent:
+    name: deb-validate (infra-agent)
+    needs: deb-infra-agent
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.deb-infra-agent.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-deb
+        with:
+          component: infra-agent
+          has-unit: "true"
+          security-threshold: "75"
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb-validate (infra-agent)
+          body: |
+            lintian (`--fail-on error`), `test/install/validate.sh` against the
+            installed package, and `systemd-analyze security` at threshold
+            `75`.
+
+  deb-validate-infra-container-init:
+    name: deb-validate (infra-container-init)
+    needs: deb-infra-container-init
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.deb-infra-container-init.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-deb
+        with:
+          component: infra-container-init
+          has-unit: "false"
+          security-threshold: "11"
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb-validate (infra-container-init)
+          body: |
+            lintian (`--fail-on error`), `test/install/validate.sh` against the
+            installed package, and `systemd-analyze security` at threshold
+            `11`.
+
+  deb-validate-terraform-provider-infra:
+    name: deb-validate (terraform-provider-infra)
+    needs: deb-terraform-provider-infra
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.deb-terraform-provider-infra.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-deb
+        with:
+          component: terraform-provider-infra
+          has-unit: "false"
+          security-threshold: "11"
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb-validate (terraform-provider-infra)
+          body: |
+            lintian (`--fail-on error`), `test/install/validate.sh` against the
+            installed package, and `systemd-analyze security` at threshold
+            `11`.
+
+  deb-validate-infra-www:
+    name: deb-validate (infra-www)
+    needs: deb-infra-www
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.deb-infra-www.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-deb
+        with:
+          component: infra-www
+          has-unit: "true"
+          security-threshold: "11"
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: deb-validate (infra-www)
+          body: |
+            lintian (`--fail-on error`), `test/install/validate.sh` against the
+            installed package, and `systemd-analyze security` at threshold
+            `11`.
 
   # ---------------------------------------------------------------------
   # Arch Linux packaging chain. Same nine components and the same
-  # has_package_changes gate as `deb`/`deb-validate`, but makepkg only exists
-  # inside an Arch userland, so these two jobs run in a `container:
-  # archlinux:base-devel` rather than on the bare ubuntu-24.04 runner `deb`
-  # uses for dpkg-deb.
+  # has_package_changes/packaging_changed gate as deb/deb-validate, but
+  # makepkg only exists inside an Arch userland, so these jobs run in a
+  # `container: archlinux:base-devel` rather than on the bare ubuntu-24.04
+  # runner deb uses for dpkg-deb. Named per component for the same visibility
+  # reason as deb above.
   # ---------------------------------------------------------------------
 
-  archlinux:
-    name: archlinux (${{ matrix.component }})
+  archlinux-infra:
+    name: archlinux (infra)
     needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
-    # See `deb`'s identical condition for why this checks each gate's result
-    # explicitly rather than the weaker `!cancelled() && !failure()`, why
-    # packaging_changed is a second, independent reason to build, and why
-    # `always()` has to lead the expression.
+    # See deb-infra's identical condition for the reasoning.
     if: >-
       always() && (
         (
@@ -440,27 +879,13 @@ jobs:
       )
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
-    strategy:
-      fail-fast: false
-      matrix:
-        component:
-          - infra
-          - infra-api
-          - infra-idp
-          - infra-exporter
-          - infra-controller-manager
-          - infra-agent
-          - infra-container-init
-          - terraform-provider-infra
-          - infra-www
     steps:
       # archlinux:base-devel ships no git (it is not actually part of the
       # base-devel group, despite the name). Must run BEFORE checkout, not
       # just before bump-preview: without git on PATH yet, checkout falls
       # back to downloading a plain tarball over the GitHub REST API - no
       # .git directory at all - and installing git afterwards would not
-      # retroactively give multicz (which needs real tag/log history) a
-      # repository to read.
+      # retroactively give multicz a repository to read.
       - name: Install git
         shell: bash
         run: pacman -Sy --noconfirm --needed git
@@ -468,69 +893,582 @@ jobs:
         with:
           fetch-depth: 0
       # checkout's own "detected dubious ownership" workaround is scoped to
-      # a temporary HOME it restores afterwards (see its "Temporarily
-      # overriding HOME ... before making global git config changes" log
-      # line), so the safe.directory exception it adds never reaches the
-      # real $HOME subsequent steps run with. multicz's own `git` calls hit
-      # that bare, since nothing else in this container-based job sets it.
+      # a temporary HOME it restores afterwards, so the safe.directory
+      # exception it adds never reaches the real $HOME subsequent steps run
+      # with. multicz's own `git` calls hit that bare.
       - name: Trust the checkout for subsequent git commands
         shell: bash
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      # The .pkg.tar.zst carries the version in its PKGBUILD-rendered
-      # filename, so it has to be the version the release will publish.
       - uses: ./.github/actions/bump-preview
-      # All nine, every run: a component released by cascade needs a package
-      # too, and `multicz changed` cannot tell us which those are.
       - uses: ./.github/actions/build-archlinux
         with:
-          component: ${{ matrix.component }}
+          component: infra
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
         with:
-          title: archlinux (${{ matrix.component }})
-          body: x86_64 package uploaded as `${{ matrix.component }}-archlinux`.
+          title: archlinux (infra)
+          body: x86_64 package uploaded as `infra-archlinux`.
 
-  archlinux-validate:
-    name: archlinux-validate (${{ matrix.component }})
-    needs: archlinux
-    # See deb-validate's identical condition for why always() is needed.
-    if: always() && needs.archlinux.result == 'success'
+  archlinux-infra-api:
+    name: archlinux (infra-api)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
+    steps:
+      - name: Install git
+        shell: bash
+        run: pacman -Sy --noconfirm --needed git
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Trust the checkout for subsequent git commands
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-archlinux
+        with:
+          component: infra-api
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux (infra-api)
+          body: x86_64 package uploaded as `infra-api-archlinux`.
+
+  archlinux-infra-idp:
+    name: archlinux (infra-idp)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install git
+        shell: bash
+        run: pacman -Sy --noconfirm --needed git
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Trust the checkout for subsequent git commands
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-archlinux
+        with:
+          component: infra-idp
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux (infra-idp)
+          body: x86_64 package uploaded as `infra-idp-archlinux`.
+
+  archlinux-infra-exporter:
+    name: archlinux (infra-exporter)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install git
+        shell: bash
+        run: pacman -Sy --noconfirm --needed git
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Trust the checkout for subsequent git commands
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-archlinux
+        with:
+          component: infra-exporter
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux (infra-exporter)
+          body: x86_64 package uploaded as `infra-exporter-archlinux`.
+
+  archlinux-infra-controller-manager:
+    name: archlinux (infra-controller-manager)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install git
+        shell: bash
+        run: pacman -Sy --noconfirm --needed git
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Trust the checkout for subsequent git commands
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-archlinux
+        with:
+          component: infra-controller-manager
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux (infra-controller-manager)
+          body: x86_64 package uploaded as `infra-controller-manager-archlinux`.
+
+  archlinux-infra-agent:
+    name: archlinux (infra-agent)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install git
+        shell: bash
+        run: pacman -Sy --noconfirm --needed git
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Trust the checkout for subsequent git commands
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-archlinux
+        with:
+          component: infra-agent
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux (infra-agent)
+          body: x86_64 package uploaded as `infra-agent-archlinux`.
+
+  archlinux-infra-container-init:
+    name: archlinux (infra-container-init)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install git
+        shell: bash
+        run: pacman -Sy --noconfirm --needed git
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Trust the checkout for subsequent git commands
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-archlinux
+        with:
+          component: infra-container-init
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux (infra-container-init)
+          body: x86_64 package uploaded as `infra-container-init-archlinux`.
+
+  archlinux-terraform-provider-infra:
+    name: archlinux (terraform-provider-infra)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install git
+        shell: bash
+        run: pacman -Sy --noconfirm --needed git
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Trust the checkout for subsequent git commands
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-archlinux
+        with:
+          component: terraform-provider-infra
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux (terraform-provider-infra)
+          body: x86_64 package uploaded as `terraform-provider-infra-archlinux`.
+
+  archlinux-infra-www:
+    name: archlinux (infra-www)
+    needs: [detect, lint, vet-build, test, gosec, govulncheck, osv-scanner]
+    # See deb-infra's identical condition for the reasoning.
+    if: >-
+      always() && (
+        (
+          needs.detect.outputs.has_package_changes == 'true'
+          && needs.lint.result == 'success'
+          && needs.vet-build.result == 'success'
+          && needs.test.result == 'success'
+          && needs.gosec.result == 'success'
+          && needs.govulncheck.result == 'success'
+          && needs.osv-scanner.result == 'success'
+        )
+        || (
+          needs.detect.outputs.has_package_changes != 'true'
+          && needs.detect.outputs.packaging_changed == 'true'
+        )
+      )
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install git
+        shell: bash
+        run: pacman -Sy --noconfirm --needed git
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Trust the checkout for subsequent git commands
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bump-preview
+      - uses: ./.github/actions/build-archlinux
+        with:
+          component: infra-www
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux (infra-www)
+          body: x86_64 package uploaded as `infra-www-archlinux`.
+
+  archlinux-validate-infra:
+    name: archlinux-validate (infra)
+    needs: archlinux-infra
     permissions:
       contents: read
       actions: write # delete the artifact of a package that fails validation
-    strategy:
-      fail-fast: false
-      matrix:
-        component:
-          - infra
-          - infra-api
-          - infra-idp
-          - infra-exporter
-          - infra-controller-manager
-          - infra-agent
-          - infra-container-init
-          - terraform-provider-infra
-          - infra-www
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.archlinux-infra.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
     steps:
       - uses: actions/checkout@v7
-      # No probe: `archlinux` builds all nine legs on every run, so a missing
-      # artifact means its leg failed - and that already skips this job
-      # through `!failure()`.
       - uses: ./.github/actions/validate-archlinux
         with:
-          component: ${{ matrix.component }}
+          component: infra
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
         with:
-          title: archlinux-validate (${{ matrix.component }})
+          title: archlinux-validate (infra)
           body: |
             namcap and `test/install/validate-archlinux.sh` against the
             installed package.
 
+  archlinux-validate-infra-api:
+    name: archlinux-validate (infra-api)
+    needs: archlinux-infra-api
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.archlinux-infra-api.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-archlinux
+        with:
+          component: infra-api
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux-validate (infra-api)
+          body: |
+            namcap and `test/install/validate-archlinux.sh` against the
+            installed package.
+
+  archlinux-validate-infra-idp:
+    name: archlinux-validate (infra-idp)
+    needs: archlinux-infra-idp
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.archlinux-infra-idp.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-archlinux
+        with:
+          component: infra-idp
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux-validate (infra-idp)
+          body: |
+            namcap and `test/install/validate-archlinux.sh` against the
+            installed package.
+
+  archlinux-validate-infra-exporter:
+    name: archlinux-validate (infra-exporter)
+    needs: archlinux-infra-exporter
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.archlinux-infra-exporter.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-archlinux
+        with:
+          component: infra-exporter
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux-validate (infra-exporter)
+          body: |
+            namcap and `test/install/validate-archlinux.sh` against the
+            installed package.
+
+  archlinux-validate-infra-controller-manager:
+    name: archlinux-validate (infra-controller-manager)
+    needs: archlinux-infra-controller-manager
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.archlinux-infra-controller-manager.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-archlinux
+        with:
+          component: infra-controller-manager
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux-validate (infra-controller-manager)
+          body: |
+            namcap and `test/install/validate-archlinux.sh` against the
+            installed package.
+
+  archlinux-validate-infra-agent:
+    name: archlinux-validate (infra-agent)
+    needs: archlinux-infra-agent
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.archlinux-infra-agent.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-archlinux
+        with:
+          component: infra-agent
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux-validate (infra-agent)
+          body: |
+            namcap and `test/install/validate-archlinux.sh` against the
+            installed package.
+
+  archlinux-validate-infra-container-init:
+    name: archlinux-validate (infra-container-init)
+    needs: archlinux-infra-container-init
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.archlinux-infra-container-init.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-archlinux
+        with:
+          component: infra-container-init
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux-validate (infra-container-init)
+          body: |
+            namcap and `test/install/validate-archlinux.sh` against the
+            installed package.
+
+  archlinux-validate-terraform-provider-infra:
+    name: archlinux-validate (terraform-provider-infra)
+    needs: archlinux-terraform-provider-infra
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.archlinux-terraform-provider-infra.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-archlinux
+        with:
+          component: terraform-provider-infra
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux-validate (terraform-provider-infra)
+          body: |
+            namcap and `test/install/validate-archlinux.sh` against the
+            installed package.
+
+  archlinux-validate-infra-www:
+    name: archlinux-validate (infra-www)
+    needs: archlinux-infra-www
+    permissions:
+      contents: read
+      actions: write # delete the artifact of a package that fails validation
+    # See deb-validate-infra's identical condition for the reasoning.
+    if: always() && needs.archlinux-infra-www.result == 'success'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/validate-archlinux
+        with:
+          component: infra-www
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: archlinux-validate (infra-www)
+          body: |
+            namcap and `test/install/validate-archlinux.sh` against the
+            installed package.
   # ---------------------------------------------------------------------
   # End-to-end and DAST. Both bring the control plane up from source as plain
   # processes against PostgreSQL - the same five binaries `deploy/ansible`
@@ -584,15 +1522,21 @@ jobs:
             `test/e2e/smoke.sh` over the API, identity provider, exporter and
             dashboard.
 
-  owasp:
-    name: owasp (${{ matrix.name }})
+  # ---------------------------------------------------------------------
+  # DAST. Named per target for the same visibility reason as deb/archlinux
+  # above - previously a 2-leg matrix, small enough that this mostly just
+  # drops the matrix boilerplate rather than changing much.
+  # ---------------------------------------------------------------------
+
+  owasp-api:
+    name: owasp (api)
     needs: [detect, e2e]
     # has_package_changes is repeated from `e2e` on purpose: a docs-only push
     # must not stand up two stacks to scan a control plane nothing changed.
     # Checking `needs.e2e.result` explicitly, rather than the job-wide
-    # `!cancelled() && !failure()`, means a real e2e failure or an e2e
-    # GitHub otherwise marks anything other than `success` both block this -
-    # no reliance on how a cancellation happens to be attributed upstream.
+    # `!cancelled() && !failure()`, means a real e2e failure or anything
+    # other than `success` blocks this - no reliance on how a cancellation
+    # happens to be attributed upstream.
     if: >-
       needs.detect.result == 'success'
       && needs.detect.outputs.has_package_changes == 'true'
@@ -613,14 +1557,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: api
-            port: 8080
-          - name: www
-            port: 8088
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/stack-up
@@ -628,18 +1564,59 @@ jobs:
           postgres-dsn: postgres://postgres:postgres@localhost:5432/infra?sslmode=disable
       - uses: ./.github/actions/owasp-scan
         with:
-          target: http://127.0.0.1:${{ matrix.port }}
-          name: ${{ matrix.name }}
+          target: http://127.0.0.1:8080
+          name: api
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
         with:
-          title: owasp (${{ matrix.name }})
+          title: owasp (api)
           body: |
-            ZAP baseline against `${{ matrix.name }}` on port
-            `${{ matrix.port }}`, gated by `.zap/rules.tsv`. Full report in
-            artifact `zap-${{ matrix.name }}`.
+            ZAP baseline against `api` on port `8080`, gated by
+            `.zap/rules.tsv`. Full report in artifact `zap-api`.
 
+  owasp-www:
+    name: owasp (www)
+    needs: [detect, e2e]
+    if: >-
+      needs.detect.result == 'success'
+      && needs.detect.outputs.has_package_changes == 'true'
+      && needs.e2e.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: infra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/stack-up
+        with:
+          postgres-dsn: postgres://postgres:postgres@localhost:5432/infra?sslmode=disable
+      - uses: ./.github/actions/owasp-scan
+        with:
+          target: http://127.0.0.1:8088
+          name: www
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: owasp (www)
+          body: |
+            ZAP baseline against `www` on port `8088`, gated by
+            `.zap/rules.tsv`. Full report in artifact `zap-www`.
+
+  # ---------------------------------------------------------------------
   # Release on main only. multicz bumps cmd/<dir>/version.go, writes
   # changelogs, creates the release commit and per-component tags, and pushes
   # back to main. Artifact distribution is handled by the `publish` job.
@@ -656,10 +1633,27 @@ jobs:
       - govulncheck
       - osv-scanner
       - integration
-      - deb-validate
-      - archlinux-validate
+      - deb-validate-infra
+      - deb-validate-infra-api
+      - deb-validate-infra-idp
+      - deb-validate-infra-exporter
+      - deb-validate-infra-controller-manager
+      - deb-validate-infra-agent
+      - deb-validate-infra-container-init
+      - deb-validate-terraform-provider-infra
+      - deb-validate-infra-www
+      - archlinux-validate-infra
+      - archlinux-validate-infra-api
+      - archlinux-validate-infra-idp
+      - archlinux-validate-infra-exporter
+      - archlinux-validate-infra-controller-manager
+      - archlinux-validate-infra-agent
+      - archlinux-validate-infra-container-init
+      - archlinux-validate-terraform-provider-infra
+      - archlinux-validate-infra-www
       - e2e
-      - owasp
+      - owasp-api
+      - owasp-www
     # Every need below shares has_package_changes' own gate except `www`
     # (gated independently on www_changed, legitimately skipped on a
     # non-frontend push) - so every one of them is required to have actually
@@ -692,10 +1686,27 @@ jobs:
       && needs.govulncheck.result == 'success'
       && needs.osv-scanner.result == 'success'
       && needs.integration.result == 'success'
-      && needs.deb-validate.result == 'success'
-      && needs.archlinux-validate.result == 'success'
+      && needs.deb-validate-infra.result == 'success'
+      && needs.deb-validate-infra-api.result == 'success'
+      && needs.deb-validate-infra-idp.result == 'success'
+      && needs.deb-validate-infra-exporter.result == 'success'
+      && needs.deb-validate-infra-controller-manager.result == 'success'
+      && needs.deb-validate-infra-agent.result == 'success'
+      && needs.deb-validate-infra-container-init.result == 'success'
+      && needs.deb-validate-terraform-provider-infra.result == 'success'
+      && needs.deb-validate-infra-www.result == 'success'
+      && needs.archlinux-validate-infra.result == 'success'
+      && needs.archlinux-validate-infra-api.result == 'success'
+      && needs.archlinux-validate-infra-idp.result == 'success'
+      && needs.archlinux-validate-infra-exporter.result == 'success'
+      && needs.archlinux-validate-infra-controller-manager.result == 'success'
+      && needs.archlinux-validate-infra-agent.result == 'success'
+      && needs.archlinux-validate-infra-container-init.result == 'success'
+      && needs.archlinux-validate-terraform-provider-infra.result == 'success'
+      && needs.archlinux-validate-infra-www.result == 'success'
       && needs.e2e.result == 'success'
-      && needs.owasp.result == 'success'
+      && needs.owasp-api.result == 'success'
+      && needs.owasp-www.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -730,22 +1741,28 @@ jobs:
             signing: `${{ steps.release.outputs.gpg_available }}`. `multicz
             plan` and `multicz bump` append their own detail above.
 
-  # Build and publish the bumped components: cross-compiled binaries and .deb
-  # packages attached to a per-component GitHub Release. Matrix over each
-  # bumped component so one failure does not abort the others.
-  publish:
-    name: publish (${{ matrix.component }})
+  # Build and publish the bumped components: cross-compiled binaries, .deb
+  # and Arch packages attached to a per-component GitHub Release, and an AUR
+  # push when configured. Named per component (one job per possible release,
+  # gated on whether it actually bumped) rather than a matrix over the
+  # dynamic bumped_json list, for the same visibility reason as deb/archlinux
+  # above - most runs bump zero or one component, so this mostly shows as a
+  # short list of skipped jobs plus the one or two that actually ran.
+  # ---------------------------------------------------------------------
+
+  publish-infra:
+    name: publish (infra)
     needs: [detect, release]
+    # contains(): bumped_json lists only the components that actually bumped
+    # this run - everything else in this group skips, same as the matrix
+    # version's per-component `include` entries never ran for an untouched
+    # component.
     if: >-
       github.event_name == 'push'
       && github.ref == 'refs/heads/main'
       && needs.release.result == 'success'
-      && needs.release.outputs.no_bumps == 'false'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra')
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        component: ${{ fromJson(needs.release.outputs.bumped_json) }}
     permissions:
       contents: write
       actions: write # delete the consumed CI artifacts
@@ -756,24 +1773,321 @@ jobs:
       - id: publish
         uses: ./.github/actions/publish-component
         with:
-          component: ${{ matrix.component }}
-      # infra-spa is a standalone SPA tarball, not one of the nine Arch
-      # packages - see publish-component's own infra-spa branch.
-      - if: matrix.component != 'infra-spa'
-        uses: ./.github/actions/push-aur
+          component: infra
+      - uses: ./.github/actions/push-aur
         with:
-          component: ${{ matrix.component }}
+          component: infra
           aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
       - name: Summary
         if: always()
         uses: ./.github/actions/summary
         with:
-          title: publish (${{ matrix.component }})
+          title: publish (infra)
           body: |
-            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`s
-            and cut the GitHub Release for `${{ matrix.component }}`. Published
-            the validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
+            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`
+            and Arch package, and cut the GitHub Release. Published the
+            validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
 
+  publish-infra-api:
+    name: publish (infra-api)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-api')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write # delete the consumed CI artifacts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-api
+      - uses: ./.github/actions/push-aur
+        with:
+          component: infra-api
+          aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-api)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`
+            and Arch package, and cut the GitHub Release. Published the
+            validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
+
+  publish-infra-idp:
+    name: publish (infra-idp)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-idp')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write # delete the consumed CI artifacts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-idp
+      - uses: ./.github/actions/push-aur
+        with:
+          component: infra-idp
+          aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-idp)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`
+            and Arch package, and cut the GitHub Release. Published the
+            validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
+
+  publish-infra-exporter:
+    name: publish (infra-exporter)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-exporter')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write # delete the consumed CI artifacts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-exporter
+      - uses: ./.github/actions/push-aur
+        with:
+          component: infra-exporter
+          aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-exporter)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`
+            and Arch package, and cut the GitHub Release. Published the
+            validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
+
+  publish-infra-controller-manager:
+    name: publish (infra-controller-manager)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-controller-manager')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write # delete the consumed CI artifacts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-controller-manager
+      - uses: ./.github/actions/push-aur
+        with:
+          component: infra-controller-manager
+          aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-controller-manager)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`
+            and Arch package, and cut the GitHub Release. Published the
+            validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
+
+  publish-infra-agent:
+    name: publish (infra-agent)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-agent')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write # delete the consumed CI artifacts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-agent
+      - uses: ./.github/actions/push-aur
+        with:
+          component: infra-agent
+          aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-agent)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`
+            and Arch package, and cut the GitHub Release. Published the
+            validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
+
+  publish-infra-container-init:
+    name: publish (infra-container-init)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-container-init')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write # delete the consumed CI artifacts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-container-init
+      - uses: ./.github/actions/push-aur
+        with:
+          component: infra-container-init
+          aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-container-init)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`
+            and Arch package, and cut the GitHub Release. Published the
+            validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
+
+  publish-terraform-provider-infra:
+    name: publish (terraform-provider-infra)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'terraform-provider-infra')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write # delete the consumed CI artifacts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: terraform-provider-infra
+      - uses: ./.github/actions/push-aur
+        with:
+          component: terraform-provider-infra
+          aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (terraform-provider-infra)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`
+            and Arch package, and cut the GitHub Release. Published the
+            validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
+
+  publish-infra-www:
+    name: publish (infra-www)
+    needs: [detect, release]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-www')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write # delete the consumed CI artifacts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-www
+      - uses: ./.github/actions/push-aur
+        with:
+          component: infra-www
+          aur-ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-www)
+          body: |
+            Cross-compiled `linux/amd64` + `linux/arm64`, packaged the `.deb`
+            and Arch package, and cut the GitHub Release. Published the
+            validated amd64 `.deb`: `${{ steps.publish.outputs.has_deb }}`.
+
+  publish-infra-spa:
+    name: publish (infra-spa)
+    needs: [detect, release]
+    # No push-aur step below: infra-spa has no archlinux leg or AUR
+    # package, unlike every other component here.
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.release.result == 'success'
+      && contains(fromJson(needs.release.outputs.bumped_json), 'infra-spa')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write # delete the consumed CI artifacts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - id: publish
+        uses: ./.github/actions/publish-component
+        with:
+          component: infra-spa
+      - name: Summary
+        if: always()
+        uses: ./.github/actions/summary
+        with:
+          title: publish (infra-spa)
+          body: Standalone SPA tarball attached to the GitHub Release.
   # Build the Zensical site and deploy to GitHub Pages. Runs on either signal
   # that can change the published output: a direct edit under docs/ or
   # zensical.toml (`docs_changed`), or a release bump (the site embeds
@@ -800,10 +2114,27 @@ jobs:
       - govulncheck
       - osv-scanner
       - integration
-      - deb-validate
-      - archlinux-validate
+      - deb-validate-infra
+      - deb-validate-infra-api
+      - deb-validate-infra-idp
+      - deb-validate-infra-exporter
+      - deb-validate-infra-controller-manager
+      - deb-validate-infra-agent
+      - deb-validate-infra-container-init
+      - deb-validate-terraform-provider-infra
+      - deb-validate-infra-www
+      - archlinux-validate-infra
+      - archlinux-validate-infra-api
+      - archlinux-validate-infra-idp
+      - archlinux-validate-infra-exporter
+      - archlinux-validate-infra-controller-manager
+      - archlinux-validate-infra-agent
+      - archlinux-validate-infra-container-init
+      - archlinux-validate-terraform-provider-infra
+      - archlinux-validate-infra-www
       - e2e
-      - owasp
+      - owasp-api
+      - owasp-www
       - release
     # Unlike `release`, EVERY one of these may legitimately come back
     # `skipped` here - a docs-only push skips every one of them, by design,
@@ -838,10 +2169,27 @@ jobs:
       && (needs.govulncheck.result == 'success' || needs.govulncheck.result == 'skipped')
       && (needs.osv-scanner.result == 'success' || needs.osv-scanner.result == 'skipped')
       && (needs.integration.result == 'success' || needs.integration.result == 'skipped')
-      && (needs.deb-validate.result == 'success' || needs.deb-validate.result == 'skipped')
-      && (needs.archlinux-validate.result == 'success' || needs.archlinux-validate.result == 'skipped')
+      && (needs.deb-validate-infra.result == 'success' || needs.deb-validate-infra.result == 'skipped')
+      && (needs.deb-validate-infra-api.result == 'success' || needs.deb-validate-infra-api.result == 'skipped')
+      && (needs.deb-validate-infra-idp.result == 'success' || needs.deb-validate-infra-idp.result == 'skipped')
+      && (needs.deb-validate-infra-exporter.result == 'success' || needs.deb-validate-infra-exporter.result == 'skipped')
+      && (needs.deb-validate-infra-controller-manager.result == 'success' || needs.deb-validate-infra-controller-manager.result == 'skipped')
+      && (needs.deb-validate-infra-agent.result == 'success' || needs.deb-validate-infra-agent.result == 'skipped')
+      && (needs.deb-validate-infra-container-init.result == 'success' || needs.deb-validate-infra-container-init.result == 'skipped')
+      && (needs.deb-validate-terraform-provider-infra.result == 'success' || needs.deb-validate-terraform-provider-infra.result == 'skipped')
+      && (needs.deb-validate-infra-www.result == 'success' || needs.deb-validate-infra-www.result == 'skipped')
+      && (needs.archlinux-validate-infra.result == 'success' || needs.archlinux-validate-infra.result == 'skipped')
+      && (needs.archlinux-validate-infra-api.result == 'success' || needs.archlinux-validate-infra-api.result == 'skipped')
+      && (needs.archlinux-validate-infra-idp.result == 'success' || needs.archlinux-validate-infra-idp.result == 'skipped')
+      && (needs.archlinux-validate-infra-exporter.result == 'success' || needs.archlinux-validate-infra-exporter.result == 'skipped')
+      && (needs.archlinux-validate-infra-controller-manager.result == 'success' || needs.archlinux-validate-infra-controller-manager.result == 'skipped')
+      && (needs.archlinux-validate-infra-agent.result == 'success' || needs.archlinux-validate-infra-agent.result == 'skipped')
+      && (needs.archlinux-validate-infra-container-init.result == 'success' || needs.archlinux-validate-infra-container-init.result == 'skipped')
+      && (needs.archlinux-validate-terraform-provider-infra.result == 'success' || needs.archlinux-validate-terraform-provider-infra.result == 'skipped')
+      && (needs.archlinux-validate-infra-www.result == 'success' || needs.archlinux-validate-infra-www.result == 'skipped')
       && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped')
-      && (needs.owasp.result == 'success' || needs.owasp.result == 'skipped')
+      && (needs.owasp-api.result == 'success' || needs.owasp-api.result == 'skipped')
+      && (needs.owasp-www.result == 'success' || needs.owasp-www.result == 'skipped')
       && (needs.release.result == 'success' || needs.release.result == 'skipped')
     runs-on: ubuntu-24.04
     environment:
