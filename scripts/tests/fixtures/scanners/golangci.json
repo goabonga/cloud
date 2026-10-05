@@ -1,0 +1,3 @@
+{"Issues": [{"FromLinter": "unused", "Text": "func unusedHelper is unused", "Severity": "", "SourceLines": ["func unusedHelper() string {"], "Pos": {"Filename": "internal/cli/cli.go", "Offset": 2097, "Line": 71, "Column": 6}, "ExpectNoLint": false, "ExpectedNoLintLinter": ""}], "Report": {}}
+1 issues:
+* unused: 1
