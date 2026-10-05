@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: Release promotion
+description: Propose develop for release on main
+title: Promote develop to main
+labels: [release]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Opening this issue runs the promotion workflow: it adds the release plan and
+        the commits develop has that main lacks, then opens the promotion pull request.
+        It is never merged automatically.
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything reviewers should know about this release.
+    validations:
+      required: false
