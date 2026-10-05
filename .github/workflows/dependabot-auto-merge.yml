@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: dependabot-auto-merge
+
+# Queue Dependabot pull requests for auto-merge-signed: automatically once CI
+# passed on the rewritten, signed head, or on a maintainer's `/auto-merge`
+# comment for major updates. Only trusted code from main runs here, never PR code.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    name: queue dependabot pull request
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # The major-update notice is posted with the workflow token.
+      pull-requests: write
+    concurrency:
+      group: dependabot-auto-merge-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.AUTO_MERGE_PAT }}
+      PR_WRITE_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      MERGE_LABEL: auto-merge
+      RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+    steps:
+      - name: Checkout trusted code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Label the pull request when CI passed on its signed head
+        run: python3 scripts/ci_automation.py label-dependabot
+
+  approve:
+    name: approve major dependabot update
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      github.event.comment.body == '/auto-merge'
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.AUTO_MERGE_PAT }}
+      GH_REPO: ${{ github.repository }}
+      MERGE_LABEL: auto-merge
+      PR: ${{ github.event.issue.number }}
+      LABELLER: ${{ github.event.comment.user.login }}
+      COMMENT_BODY: ${{ github.event.comment.body }}
+    steps:
+      - name: Checkout trusted code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Label the pull request for a maintainer's approval
+        run: python3 scripts/ci_automation.py approve-major
