@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: exception
+
+# Add the dated exceptions requested by `/exception <days>d <reason>` replies to
+# scanner findings, in a signed commit on the pull request branch. workflow_run
+# gives this job the signing key; it checks out the pull request only to edit
+# .github/exceptions.toml with trusted code from main and never executes it.
+on:  # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: [exception-signal]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  exception:
+    name: add requested exceptions
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: exception-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    env:
+      GH_REPO: ${{ github.repository }}
+      BASE_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Checkout trusted code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
+      - name: Find the exception requests still to answer
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_MERGE_PAT }}
+          SIGNAL_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: python3 trusted/scripts/ci_automation.py exception-pending
+      - name: Checkout the pull request head
+        if: steps.pr.outputs.needed == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Configure the maintainer signing identity
+        if: steps.pr.outputs.needed == 'true'
+        working-directory: pr
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          PUSH_TOKEN: ${{ secrets.AUTO_MERGE_PAT }}
+          GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL }}
+          GIT_SIGNING_KEY: ${{ vars.GIT_SIGNING_KEY }}
+        run: python3 "$GITHUB_WORKSPACE/trusted/scripts/ci_automation.py" configure-signing
+      - name: Add the exceptions in a signed commit and answer each request
+        if: steps.pr.outputs.needed == 'true'
+        working-directory: pr
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_MERGE_PAT }}
+          PR_WRITE_TOKEN: ${{ secrets.AUTO_MERGE_PAT }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+          EXPECTED_SHA: ${{ steps.pr.outputs.sha }}
+        run: python3 "$GITHUB_WORKSPACE/trusted/scripts/ci_automation.py" exception-apply
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          if [ -f trusted/scripts/ci_automation.py ]; then
+            python3 trusted/scripts/ci_automation.py cleanup
+          fi
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: python3 trusted/scripts/ci_automation.py summary --title "Scanner exceptions"
