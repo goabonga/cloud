@@ -71,3 +71,5 @@ func status(ctx context.Context, args []string, output io.Writer) error {
 	_, err = io.Copy(output, io.LimitReader(response.Body, 1<<16))
 	return err
 }
+
+// Pipeline test: internal-cli flow.
