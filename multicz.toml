@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+[project]
+commit_convention = "conventional"
+tag_format = "{component}-v{version}"
+initial_version = "0.0.0"
+post_bump_policy = "allow"
+overlap_policy = "all"
+# The [skip ci] footer keeps the pushed release commit from starting another pipeline.
+release_commit_message = "chore(release): bump changed components\n\n{body}\n\n[skip ci]"
+
+[plugins.go-deps.packages]
+cloud = "./cmd/cli"
+cloud-svc = "./cmd/svc"
+
+[components.cloud-docs]
+paths = ["docs/**", "zensical.toml", "assets/cloud.svg"]
+bump_files = [
+    { file = "zensical.toml", key = "project.extra.versions.cloud_docs" },
+]
+# The site publishes every version, so any component release patches it.
+depends_on = ["cloud", "cloud-svc", "cloud-scripts"]
+changelog = "docs/CHANGELOG.md"
+
+[components.cloud-docs.bump_rules]
+docs = "patch"
+ci = "patch"
+refactor = "patch"
+style = "patch"
+test = "patch"
+build = "patch"
+revert = "patch"
+
+[components.cloud-scripts]
+paths = ["scripts/**", "pytest.ini", "Makefile", "multicz.toml", ".github/workflows/**"]
+bump_files = [{ file = "scripts/pyproject.toml", key = "project.version" }, { file = "zensical.toml", key = "project.extra.versions.cloud_scripts" }]
+changelog = "scripts/CHANGELOG.md"
+post_bump = ["uv lock --project scripts"]
+
+[components.cloud-scripts.bump_rules]
+docs = "patch"
+ci = "patch"
+refactor = "patch"
+style = "patch"
+test = "patch"
+build = "patch"
+revert = "patch"
+
+[components.cloud]
+paths = ["cmd/cli/**", "go.mod", "go.sum", ".github/workflows/ci.yml", "Makefile"]
+bump_files = [
+    { file = "cmd/cli/version.go", key = 'regex:Version\s*=\s*"([^"]+)"' },
+    { file = "zensical.toml", key = "project.extra.versions.cloud" },
+]
+changelog = "cmd/cli/CHANGELOG.md"
+
+[components.cloud.bump_rules]
+ci = "patch"
+refactor = "patch"
+test = "patch"
+build = "patch"
+revert = "patch"
+
+[components.cloud-svc]
+paths = ["cmd/svc/**", "go.mod", "go.sum", ".github/workflows/ci.yml", "Makefile"]
+bump_files = [
+    { file = "cmd/svc/version.go", key = 'regex:Version\s*=\s*"([^"]+)"' },
+    { file = "zensical.toml", key = "project.extra.versions.cloud_svc" },
+]
+changelog = "cmd/svc/CHANGELOG.md"
+
+[components.cloud-svc.bump_rules]
+ci = "patch"
+refactor = "patch"
+test = "patch"
+build = "patch"
+revert = "patch"
