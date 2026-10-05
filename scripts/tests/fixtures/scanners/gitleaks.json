@@ -1,0 +1,23 @@
+[
+ {
+  "RuleID": "generic-api-key",
+  "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+  "StartLine": 1,
+  "EndLine": 1,
+  "StartColumn": 1,
+  "EndColumn": 49,
+  "Match": "CLOUD_API_KEY=\"REDACTED\"",
+  "Secret": "REDACTED",
+  "File": "config/example.env",
+  "SymlinkFile": "",
+  "Commit": "853a9b21e13fc0362862d3a10a4b0348b3896fef",
+  "Link": "https://github.com/goabonga/cloud/blob/853a9b21e13fc0362862d3a10a4b0348b3896fef/config/example.env#L1",
+  "Entropy": 4.983788,
+  "Author": "Chris",
+  "Email": "goabonga@pm.me",
+  "Date": "2026-10-06T22:41:21Z",
+  "Message": "chore: add an example environment file",
+  "Tags": [],
+  "Fingerprint": "853a9b21e13fc0362862d3a10a4b0348b3896fef:config/example.env:generic-api-key:1"
+ }
+]
