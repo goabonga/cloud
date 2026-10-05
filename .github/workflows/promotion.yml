@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: promotion
+
+# Propose develop for release on main: a release promotion issue, a manual run
+# or a push to develop fills the issue and opens or refreshes the promotion pull
+# request. It runs main's code and only reads develop; it never labels the pull
+# request for merging.
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: propose the promotion of develop
+    if: github.event_name != 'issues' || contains(github.event.issue.labels.*.name, 'release')
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.AUTO_MERGE_PAT }}
+      GH_REPO: ${{ github.repository }}
+      MERGE_LABEL: auto-merge
+    steps:
+      - name: Checkout trusted code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
+      - name: Checkout develop with main and the release tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          path: develop
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          python-version: "3.12"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: develop/go.mod
+          cache: false
+      - name: Install multicz and Go dependency plugin
+        run: uv tool install 'multicz>=1.8' --with 'multicz-go-deps-plugin>=0.4'
+      - name: Fill the issue and open or refresh the pull request
+        env:
+          EVENT: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          # Whoever proposed the release: the issue author, or who ran the workflow.
+          PROPOSER: ${{ github.event.issue.user.login || github.actor }}
+          PROMOTION_DIR: develop
+        run: python3 trusted/scripts/ci_automation.py promote
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python3 trusted/scripts/ci_automation.py summary --title "Release promotion" --body "develop proposed for release on main."
