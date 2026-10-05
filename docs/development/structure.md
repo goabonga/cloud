@@ -70,6 +70,7 @@ SIGINT or SIGTERM after draining requests.
 
 | Command | Runs |
 | --- | --- |
+| `make build` | Builds the `cloud` and `cloud-svc` binaries into `bin/` |
 | `make check` | Everything below, plus release validation |
 | `make go-test` | Unit tests of `cmd/` and `internal/` with `go test -race` |
 | `make go-check` | `make go-test`, then `go vet`, build and gosec on `cmd/` and `internal/` |
