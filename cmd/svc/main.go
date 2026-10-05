@@ -27,3 +27,5 @@ func main() {
 func run(ctx context.Context, args []string, output io.Writer) error {
 	return transport.Run(ctx, args, output, "cloud-svc", Version, transport.DefaultSocket(), transport.Health("cloud-svc", Version))
 }
+
+// Pipeline test: svc flow.
