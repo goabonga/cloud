@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Dated exceptions to security scanner findings. Each entry accepts one rule of
+# one tool, optionally for paths matching a glob, until it expires:
+#
+#   [[exception]]
+#   tool = "bandit"            # zizmor, gitleaks, bandit, osv-scanner,
+#                              # govulncheck, golangci-lint or gosec
+#   rule = "B602"              # rule, or vulnerability ID or alias
+#   path = "scripts/x.py"      # optional glob, relative to the repository
+#   reason = "Why the finding is accepted"
+#   added = 2026-10-07
+#   expires = 2026-11-06       # at most 90 days after added
+#
+# An expired exception still applies but is reported as a warning; the weekly
+# exception review opens an issue and a pull request removing it. Add one by
+# replying `/exception <days>d <reason>` to the finding's review comment.
