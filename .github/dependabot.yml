@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+version: 2
+
+# The trusted rewrite workflow replaces bot authorship and signs commits.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 1000000
+    groups:
+      go-dependencies:
+        applies-to: version-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "fix(deps)"
+    labels:
+      - dependencies
+      - go
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 1000000
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+      - github-actions
+
+  # Runtime and development dependencies of scripts/ get separate pull
+  # requests: runtime updates release cloud-scripts, development ones do not.
+  - package-ecosystem: uv
+    directory: /scripts
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 1000000
+    groups:
+      python-runtime:
+        applies-to: version-updates
+        dependency-type: production
+      python-development:
+        applies-to: version-updates
+        dependency-type: development
+    commit-message:
+      prefix: "fix(deps)"
+      prefix-development: "chore(deps)"
+    labels:
+      - dependencies
+      - python

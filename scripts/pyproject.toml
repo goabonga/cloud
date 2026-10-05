@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+[project]
+name = "cloud-scripts"
+version = "0.0.0"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["cairosvg==2.9.1", "pillow==12.3.0"]
+
+[dependency-groups]
+dev = ["pytest==9.0.3"]
+
+[tool.uv]
+package = false
+
+[tool.bandit]
+# The scripts drive git, gh, go and gpg with argument lists, never a shell:
+# importing subprocess (B404), calling it without a shell (B603) and resolving
+# those tools on PATH (B607) are the design. B602 still rejects shell=True.
+skips = ["B404", "B603", "B607"]
