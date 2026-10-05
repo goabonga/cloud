@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+rules:
+  bot-conditions:
+    ignore:
+      # github.actor is a loop guard, not authorization: the rewrite's own
+      # signed push must not start it again. Authorization is the pull request
+      # author and source repository checked on the next lines.
+      - dependabot-rewrite-signal.yml:17
