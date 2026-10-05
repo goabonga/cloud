@@ -1,0 +1,116 @@
+{
+ "config": {
+  "protocol_version": "v1.0.0",
+  "scanner_name": "govulncheck",
+  "scanner_version": "v1.8.0",
+  "db": "https://vuln.go.dev",
+  "db_last_modified": "2026-10-01T20:24:15Z",
+  "go_version": "go1.26.8",
+  "scan_level": "symbol",
+  "scan_mode": "source"
+ }
+}
+{
+ "finding": {
+  "osv": "GO-2021-0113",
+  "fixed_version": "v0.3.7",
+  "trace": [
+   {
+    "module": "golang.org/x/text",
+    "version": "v0.3.5"
+   }
+  ]
+ }
+}
+{
+ "finding": {
+  "osv": "GO-2022-1059",
+  "fixed_version": "v0.3.8",
+  "trace": [
+   {
+    "module": "golang.org/x/text",
+    "version": "v0.3.5"
+   }
+  ]
+ }
+}
+{
+ "finding": {
+  "osv": "GO-2026-5970",
+  "fixed_version": "v0.39.0",
+  "trace": [
+   {
+    "module": "golang.org/x/text",
+    "version": "v0.3.5"
+   }
+  ]
+ }
+}
+{
+ "finding": {
+  "osv": "GO-2021-0113",
+  "fixed_version": "v0.3.7",
+  "trace": [
+   {
+    "module": "golang.org/x/text",
+    "version": "v0.3.5",
+    "package": "golang.org/x/text/language"
+   }
+  ]
+ }
+}
+{
+ "finding": {
+  "osv": "GO-2022-1059",
+  "fixed_version": "v0.3.8",
+  "trace": [
+   {
+    "module": "golang.org/x/text",
+    "version": "v0.3.5",
+    "package": "golang.org/x/text/language"
+   }
+  ]
+ }
+}
+{
+ "finding": {
+  "osv": "GO-2021-0113",
+  "fixed_version": "v0.3.7",
+  "trace": [
+   {
+    "module": "golang.org/x/text",
+    "version": "v0.3.5",
+    "package": "golang.org/x/text/language",
+    "function": "Parse",
+    "position": {
+     "filename": "language/parse.go",
+     "offset": 1121,
+     "line": 33,
+     "column": 6
+    }
+   },
+   {
+    "module": "github.com/goabonga/cloud",
+    "package": "github.com/goabonga/cloud/internal/cli",
+    "function": "command",
+    "position": {
+     "filename": "internal/cli/cli.go",
+     "offset": 1094,
+     "line": 40,
+     "column": 23
+    }
+   },
+   {
+    "module": "github.com/goabonga/cloud",
+    "package": "github.com/goabonga/cloud/internal/cli",
+    "function": "Run",
+    "position": {
+     "filename": "internal/cli/cli.go",
+     "offset": 561,
+     "line": 22,
+     "column": 17
+    }
+   }
+  ]
+ }
+}

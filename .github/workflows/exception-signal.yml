@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: exception-signal
+
+# A `/exception` reply to a scanner finding's review comment. This job has no
+# secrets and runs no pull request code; it only starts exception, which
+# decides with trusted code from main.
+on:
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  signal:
+    if: >-
+      startsWith(github.event.comment.body, '/exception') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Signal an exception request
+        run: echo "Exception requested on a scanner finding; exception checks and applies it."
