@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: Dependency update
+description: Track the update of one or more dependencies
+labels: [dependencies]
+body:
+  - type: dropdown
+    id: ecosystem
+    attributes:
+      label: Ecosystem
+      options:
+        - Go modules
+        - Python (scripts)
+        - GitHub Actions
+    validations:
+      required: true
+
+  - type: textarea
+    id: updates
+    attributes:
+      label: Updates
+      description: One line per dependency, with its current and new version.
+      placeholder: "- `github.com/spf13/cobra` from 1.9.1 to 1.10.2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: release-notes
+    attributes:
+      label: Release notes
+      description: What the update changes, from the release notes, changelog or commits.
+    validations:
+      required: false
+
+  - type: input
+    id: pull-request
+    attributes:
+      label: Pull request
+      description: The pull request applying the update, if any.
+      placeholder: "#123"
+    validations:
+      required: false

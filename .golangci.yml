@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+version: "2"
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck and unused; gosec runs on its own
+  # in make go-check.
+  default: standard
