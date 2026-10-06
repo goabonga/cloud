@@ -16,3 +16,11 @@
 # An expired exception still applies but is reported as a warning; the weekly
 # exception review opens an issue and a pull request removing it. Add one by
 # replying `/exception <days>d <reason>` to the finding's review comment.
+
+[[exception]]
+tool = "gitleaks"
+rule = "generic-api-key"
+path = "config/example.env"
+reason = "this is a fake api key (requested by goabonga in #357)"
+added = 2026-10-06
+expires = 2026-10-13
