@@ -2,6 +2,12 @@
 
 All notable changes to the documentation are recorded in this file.
 
+## [0.0.5] - 2026-10-06
+
+### Dependencies
+
+- Track `cloud` `0.0.3`
+
 ## [0.0.4] - 2026-10-06
 
 ### Dependencies
