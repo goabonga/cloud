@@ -46,7 +46,7 @@ jobs:
       - name: Scan the history for secrets with gitleaks
         run: python3 scripts/ci_automation.py security gitleaks -- make gitleaks
       - name: Run Plumber compliance audit
-        uses: getplumber/plumber@d85d3b54f9be5b2a5de072e203209de865e6139c # v0.5.15
+        uses: getplumber/plumber@fb943e4efba61cf7b0a0c56f6648710a7453519b # v0.5.20
         with:
           min-points: "100"
           config-file: .plumber.yaml
