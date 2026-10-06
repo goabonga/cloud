@@ -75,3 +75,5 @@ func Client(path string) *http.Client {
 		},
 	}
 }
+
+// Pipeline test: transport flow.
