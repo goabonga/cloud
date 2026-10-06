@@ -34,3 +34,5 @@ subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "commit", "--amend",
                 "--reset-author", f"--gpg-sign={signing_key}", "--file=-", "--quiet"],
                input=message.encode(), check=True)
 subprocess.run(["git", "verify-commit", "HEAD"], check=True)
+
+# Pipeline test: scripts flow.
