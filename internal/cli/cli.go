@@ -66,3 +66,8 @@ func statusCommand() *cobra.Command {
 	status.Flags().StringVar(&socket, "socket", transport.DefaultSocket(), "daemon Unix socket path")
 	return status
 }
+
+// unusedHelper is never called; golangci-lint's unused linter reports it.
+func unusedHelper() string {
+	return "unused"
+}
