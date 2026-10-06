@@ -27,3 +27,5 @@ func main() {
 func run(ctx context.Context, args []string, output io.Writer) error {
 	return cli.Run(ctx, args, output, Version)
 }
+
+// Pipeline test: cli flow.
