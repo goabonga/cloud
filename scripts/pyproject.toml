@@ -9,7 +9,7 @@ license = "MIT"
 dependencies = ["cairosvg==2.9.1", "pillow==12.3.0"]
 
 [dependency-groups]
-dev = ["pytest==9.0.3"]
+dev = ["pytest==9.1.1"]
 
 [tool.uv]
 package = false
