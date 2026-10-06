@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/text/language"
 
 	"github.com/goabonga/cloud/internal/transport"
 )
@@ -35,6 +36,8 @@ func command(version string) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	root.SetVersionTemplate("cloud {{.Version}}\n")
+	// Pipeline test: reaches a vulnerable golang.org/x/text symbol.
+	_, _ = language.Parse("en")
 	root.AddCommand(statusCommand())
 	return root
 }
