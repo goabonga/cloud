@@ -66,3 +66,5 @@ func statusCommand() *cobra.Command {
 	status.Flags().StringVar(&socket, "socket", transport.DefaultSocket(), "daemon Unix socket path")
 	return status
 }
+
+// Pipeline test: internal-cli flow.
