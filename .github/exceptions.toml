@@ -16,3 +16,11 @@
 # An expired exception still applies but is reported as a warning; the weekly
 # exception review opens an issue and a pull request removing it. Add one by
 # replying `/exception <days>d <reason>` to the finding's review comment.
+
+[[exception]]
+tool = "osv-scanner"
+rule = "PYSEC-2026-2122"
+path = "scripts/uv.lock"
+reason = "test PR: cairosvg 2.8.2 is pinned on purpose to exercise osv-scanner (requested by goabonga in #359)"
+added = 2026-10-06
+expires = 2026-10-13
