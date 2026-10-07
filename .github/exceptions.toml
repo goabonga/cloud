@@ -16,3 +16,11 @@
 # An expired exception still applies but is reported as a warning; the weekly
 # exception review opens an issue and a pull request removing it. Add one by
 # replying `/exception <days>d <reason>` to the finding's review comment.
+
+[[exception]]
+tool = "zizmor"
+rule = "unpinned-uses"
+path = ".github/workflows/zizmor-example.yml"
+reason = "test PR: the unpinned action is intentional to exercise zizmor, the workflow only runs manually (requested by goabonga in #428)"
+added = 2026-10-07
+expires = 2026-10-14
