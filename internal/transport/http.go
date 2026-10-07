@@ -80,3 +80,5 @@ func Run(ctx context.Context, args []string, output io.Writer, service, version,
 	}
 	return Serve(ctx, listener, handler)
 }
+
+// Hotfix test: a fix merged straight into main.
