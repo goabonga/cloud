@@ -16,3 +16,27 @@
 # An expired exception still applies but is reported as a warning; the weekly
 # exception review opens an issue and a pull request removing it. Add one by
 # replying `/exception <days>d <reason>` to the finding's review comment.
+
+[[exception]]
+tool = "osv-scanner"
+rule = "GO-2021-0113"
+path = "go.mod"
+reason = "test PR: golang.org/x/text 0.3.5 is required on purpose to exercise osv-scanner, nothing imports it (requested by goabonga in #370)"
+added = 2026-10-07
+expires = 2026-10-14
+
+[[exception]]
+tool = "osv-scanner"
+rule = "GO-2022-1059"
+path = "go.mod"
+reason = "test PR: golang.org/x/text 0.3.5 is required on purpose to exercise osv-scanner, nothing imports it (requested by goabonga in #370)"
+added = 2026-10-07
+expires = 2026-10-14
+
+[[exception]]
+tool = "osv-scanner"
+rule = "GO-2026-5970"
+path = "go.mod"
+reason = "test PR: golang.org/x/text 0.3.5 is required on purpose to exercise osv-scanner, nothing imports it (requested by goabonga in #370)"
+added = 2026-10-07
+expires = 2026-10-14
