@@ -52,3 +52,5 @@ subprocess.run(
     check=True,
 )
 subprocess.run(["git", "verify-commit", "HEAD"], check=True)
+
+# Pipeline test: scripts flow.
