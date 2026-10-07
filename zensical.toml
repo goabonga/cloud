@@ -69,10 +69,10 @@ custom_checkbox = true
 generator = false
 
 [project.extra.versions]
-cloud_docs = "0.0.4"
+cloud_docs = "0.0.5"
 cloud_scripts = "0.0.1"
-cloud = "0.0.1"
-cloud_svc = "0.0.1"
+cloud = "0.0.2"
+cloud_svc = "0.0.2"
 
 [project.theme]
 custom_dir = "docs/overrides"
