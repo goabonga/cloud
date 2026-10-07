@@ -16,3 +16,11 @@
 # An expired exception still applies but is reported as a warning; the weekly
 # exception review opens an issue and a pull request removing it. Add one by
 # replying `/exception <days>d <reason>` to the finding's review comment.
+
+[[exception]]
+tool = "golangci-lint"
+rule = "unused"
+path = "internal/cli/cli.go"
+reason = "test PR: the unused helper is intentional to exercise golangci-lint (requested by goabonga in #372)"
+added = 2026-10-07
+expires = 2026-10-14
