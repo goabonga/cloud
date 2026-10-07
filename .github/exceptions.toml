@@ -17,3 +17,10 @@
 # exception review opens an issue and a pull request removing it. Add one by
 # replying `/exception <days>d <reason>` to the finding's review comment.
 
+[[exception]]
+tool = "bandit"
+rule = "B602"
+path = "scripts/shell_example.py"
+reason = "renewed after review: the test script runs a constant command (requested by goabonga in #456)"
+added = 2026-10-07
+expires = 2026-11-06
