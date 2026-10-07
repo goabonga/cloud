@@ -2,6 +2,12 @@
 
 All notable changes to the documentation are recorded in this file.
 
+## [0.0.4] - 2026-10-07
+
+### Docs
+
+- **docs**: exercise the documentation pipeline (`b74fd59`)
+
 ## [0.0.3] - 2026-10-07
 
 ### Dependencies

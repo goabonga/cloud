@@ -69,7 +69,7 @@ custom_checkbox = true
 generator = false
 
 [project.extra.versions]
-cloud_docs = "0.0.3"
+cloud_docs = "0.0.4"
 cloud_scripts = "0.0.1"
 cloud = "0.0.1"
 cloud_svc = "0.0.1"
