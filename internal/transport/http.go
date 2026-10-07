@@ -80,3 +80,5 @@ func Run(ctx context.Context, args []string, output io.Writer, service, version,
 	}
 	return Serve(ctx, listener, handler)
 }
+
+// Pipeline test: unsigned push.
