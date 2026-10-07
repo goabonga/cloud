@@ -24,3 +24,27 @@ path = "internal/cli/cli.go"
 reason = "test PR: the vulnerable language.Parse call is intentional to exercise govulncheck (requested by goabonga in #371)"
 added = 2026-10-07
 expires = 2026-10-14
+
+[[exception]]
+tool = "osv-scanner"
+rule = "GO-2021-0113"
+path = "go.mod"
+reason = "test PR: golang.org/x/text 0.3.5 is required on purpose to exercise govulncheck on the language.Parse call (requested by goabonga in #371)"
+added = 2026-10-07
+expires = 2026-10-14
+
+[[exception]]
+tool = "osv-scanner"
+rule = "GO-2022-1059"
+path = "go.mod"
+reason = "test PR: golang.org/x/text 0.3.5 is required on purpose to exercise govulncheck on the language.Parse call (requested by goabonga in #371)"
+added = 2026-10-07
+expires = 2026-10-14
+
+[[exception]]
+tool = "osv-scanner"
+rule = "GO-2026-5970"
+path = "go.mod"
+reason = "test PR: golang.org/x/text 0.3.5 is required on purpose to exercise govulncheck on the language.Parse call (requested by goabonga in #371)"
+added = 2026-10-07
+expires = 2026-10-14
