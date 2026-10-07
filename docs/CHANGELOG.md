@@ -2,6 +2,12 @@
 
 All notable changes to the documentation are recorded in this file.
 
+## [0.0.3] - 2026-10-07
+
+### Dependencies
+
+- Track `cloud-svc` `0.0.1`
+
 ## [0.0.2] - 2026-10-07
 
 ### Dependencies
