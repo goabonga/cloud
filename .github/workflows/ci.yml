@@ -60,7 +60,7 @@ jobs:
           fi
           make gitleaks
       - name: Run Plumber compliance audit
-        uses: getplumber/plumber@fb943e4efba61cf7b0a0c56f6648710a7453519b # v0.5.20
+        uses: getplumber/plumber@d3536bae4727b9290d9e69ee25c4350ddbcd91cd # v0.6.0
         with:
           min-points: "100"
           config-file: .plumber.yaml
